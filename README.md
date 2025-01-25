@@ -8,22 +8,30 @@ Here are some of my design goals with migrator:
 
 - Handle history of functions/stored procs, so we can see proper history.
 - Ability to write custom hand-crafted migrations.
-- Rollback potentially in case of breaking change.
+- Support for rollback scripts as an optional feature.
+- Migration status checking, to see what's been applied to a database.
 - Easy to spin up new tenant schema.
 - Easy to migrate each tenant schema.
 - Supporting migrations from multiple folders.  E.g., if a separate project provided some of your migrations, then you can apply migrations from both folders.
 - Plain SQL mostly, or rather generates plain SQL that can be modified.
-- Possibly support tests, thought that may be out of scope of this tool.
+- Find a good way for testing SQL/unit testing.
+- Store full schema changes applied in a migration table in database, so we have a record of what was done.
 - Variables supported, for substitution, as well as matrices to generate migrations for a bunch of sites.  Or maybe we never generate and store the files, since there are many tenants, and instead run them against each schema somehow without generating stored/saved files for each schema.
+- Allow a migration to have some parts that apply to shared schema, and some that apply to tenant schemas (e.g., via matrix).  But even more complicated, allow us to reapply that change again, with different tenants, and it will only apply the tenant related changes to the new tenants, and not the shared schema changes.
 - Keep track of which migrations have been applied, so that when targeting a schema it will check which need to be applied and then apply all.
-- Watch a particular function or view, and re-apply automatically upon file change, for local testing.
- - Support a jinja template watch, where if the rendered jinja template changes it gets re-applied.  Useful in cases where we're updating views that depend on each other, and want to automatically recreate all those views as we edit files.
+- Handle secrets
+- Watch a particular function or view, and re-apply automatically upon file change, to help with local testing.
+ - Support a jinja template watch for local dev against local database, where if the rendered jinja template changes it gets re-applied.  Useful in cases where we're updating views that depend on each other, and want to automatically recreate all those views as we edit files.
 - Stretch goals:
  - Some clever way to watch changes in the view/function folder, and automatically update.  Functions are easier, but views will fail when columns change or they have dependencies.
   - I've tried having a schema dedicated to these things that are easy to throw away and rectrate, but the two problems are (a) it can get slow when there's more, making it hard to do in transactoin, and (b) I suspect we'll hit cases where can't be fully done inside transaction or rolled back.
  - Handle migration of views properly (e.g., when they depend on each other).
  - Reverting.  For now, likely this will assume you're performing DDL in a transaction in most cases.  Later, want to support something more official, particularly for cases where transactions are not possible or feasible.
  - Flatten schema.  E.g., deploy to local db with unique random values for variables (e.g., schema and user names), export again, and replace all references to the unique schema name with template variables again.
+ - Examine view dependencies, so that when these are updated we can check if the child views need to be deleted and recreated.
+ - SQL validation, perhaps similar to sqlx in Rust.
+ - Custom plugins or extensions.
+ - Inspect postgresql to learn dependencies of views, to make it easy to drop and recreate exactly the ones needed when creating a new migration.
 
 # Design
 
@@ -31,8 +39,9 @@ We have four primary folders:
 
 1. `<base>/migrator/components`.  This contains standalone SQL snippets that can be modified and reused.  These are minijinja templates, but they could be plain SQL.  Typically, this is for DDL changes that don't affect data.  E.g., views or stored procedures.  The goal is to have proper change tracking for these, so that we can look at the history in git for that file and see how it has changed over time.
 2. `<base>/migrator/templates`.  This folder contains migration templates.  E.g., `20240802030220-support-roles.sql.jinja`.  These are minijinja templates, designed to produce plain SQL migration scripts.  In these templates, you can import components.
-3. `<base>/migrator/migrations`.  This contains the generated migration file based on the template and components.  E.g., `20240802030220-support-roles.sql`.  These can then be applied to the database.
-4. `<base>/migrator/archive`.  Contains a copy of components used in a migration script, as they were at that time.  This is a reference, but also serves as a way to reuse at a later time if an older migration script needs to be updated for some reason, so it can use the version of the component as it was at that time.
+3. `<base>/migrator/archive`.  Contains a copy of components used in a migration script, as they were at that time.  This is a reference, but also serves as a way to reuse at a later time if an older migration script needs to be updated for some reason, so it can use the version of the component as it was at that time.
+
+Migrations are produced dynamically when needed, and not stored.
 
 
 Design goals:
@@ -42,3 +51,5 @@ Design goals:
 - Support for variables, so that things such as schema names can be configurable (e.g., generating migrations for multiple tenancies in a schema-per-tenant setup).
 - Support plain PostgreSQL SQL, so that we aren't locked out of any database features.
 - Track migrations that have been applied to database in a table.
+
+# Commands
