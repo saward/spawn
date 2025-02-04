@@ -53,3 +53,15 @@ Design goals:
 - Track migrations that have been applied to database in a table.
 
 # Commands
+
+
+# Thoughts
+
+Think about this: can I version stored procedures in a clever way that involves automatically creating and referencing new version of stored procedures, but only when updated.  E.g., add_func_v1 calls other_func_v1.  We update add_func and now have add_func_v2, but other_func_v1 hasn't changed so add_func_v2 points to old.  Advantage: when we do an update, we're only updating a small number of stored procs.  Downside: very complex to work with without tooling.
+
+Alternatively, put everything in app code by default, and send the whole procedure over as an anonymous function each call.
+
+Another:
+- For example, have your application setup a schema to contain its version-specific database components. The schema will contain an immutable application version, such as its commit hash, in its name. This allows a given version of the application to only use its own set of sprocs and views. On deploy, run the SQL scripts to create the sprocs and views for that version.
+
+Have been recommended to  avoiding having views depend on other views.  And particularly, not having views depend on materialised views.
