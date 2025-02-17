@@ -35,14 +35,12 @@ Here are some of my design goals with migrator:
 
 # Design
 
-We have four primary folders:
+We have three primary folders:
 
-1. `<base>/migrator/components`.  This contains standalone SQL snippets that can be modified and reused.  These are minijinja templates, but they could be plain SQL.  Typically, this is for DDL changes that don't affect data.  E.g., views or stored procedures.  The goal is to have proper change tracking for these, so that we can look at the history in git for that file and see how it has changed over time.
-2. `<base>/migrator/templates`.  This folder contains migration templates.  E.g., `20240802030220-support-roles.sql.jinja`.  These are minijinja templates, designed to produce plain SQL migration scripts.  In these templates, you can import components.
-3. `<base>/migrator/archive`.  Contains a copy of components used in a migration script, as they were at that time.  This is a reference, but also serves as a way to reuse at a later time if an older migration script needs to be updated for some reason, so it can use the version of the component as it was at that time.
-
-Migrations are produced dynamically when needed, and not stored.
-
+1. `<base>/migrator/components`.  This contains standalone SQL snippets that can be modified and reused.  These are minijinja templates, but they could be plain SQL.  The goal is to have proper change tracking for these, so that we can look at the history in git for that file and see how it has changed over time.
+  - A subfolder may be `<base>/migrator/idempotent_schemas`, containing schemas that are safe to destroy and reapply.  They operate the same as components for now, but one day we may add special functionality around them.
+2. `<base>/migrator/migrations`.  This folder contains subfolders, one for each migration, and those folders contain the migration script.  E.g., `20240802030220-support-roles/up.sql.jinja`.  These are minijinja templates, designed to produce plain SQL migration scripts.  In these templates, you can import components.
+3. `<base>/migrator/migrations/<migration>/pinned_components`.  E.g., `<base>/migrator/migrations/20240802030220-support-roles/pinned_components`.  Contains a copy of the components as they were for that migration.  Note that git, as I understand it, will not store multiple copies of files with identical content, so this should not obviously cause git to use too much storage repeating the same files in components, as is likely to happen.
 
 Design goals:
 
@@ -54,6 +52,12 @@ Design goals:
 
 # Commands
 
+Proposal of commands:
+
+- `migrator init`
+- `migrator migration new <name in kebab case>` creates a new migration with the provided name, picking an appropriate datetime.
+- `migrator migration freeze <migration>` pins the migration with the current components.
+- `migrator migration build <migration> --pinned=<true|false>` builds the migration into the needed SQL.  `--pinned is required`.
 
 # Thoughts
 
