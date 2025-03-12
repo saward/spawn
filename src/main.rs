@@ -126,7 +126,7 @@ fn generate(script: &String, config: GenerateConfig) -> Result<()> {
     
     // Add our migration script to environment:
     let script_path = config.base_path
-        .join("templates")
+        .join("migrations")
         .join(script)
         .canonicalize()
         .context(format!("Invalid script path for '{}'", script))?;
@@ -135,9 +135,10 @@ fn generate(script: &String, config: GenerateConfig) -> Result<()> {
         .context(format!("Failed to read migration script '{}'", script_path.display()))?;
     env.add_template("migration.sql", &contents)?;
 
-    // Load components based on whether we're using pinned or current versions
+    // Load components based on whether we're using pinned or current versions.
+    // Currently not implemented correctly for pinned migrations.
     let components_path = if config.use_pinned {
-        config.base_path.join("migrations/pinned_components")
+        config.base_path.join("pinned")
     } else {
         config.base_path.join("components")
     };
