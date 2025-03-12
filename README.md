@@ -40,7 +40,8 @@ We have three primary folders:
 1. `<base>/migrator/components`.  This contains standalone SQL snippets that can be modified and reused.  These are minijinja templates, but they could be plain SQL.  The goal is to have proper change tracking for these, so that we can look at the history in git for that file and see how it has changed over time.
   - A subfolder may be `<base>/migrator/idempotent_schemas`, containing schemas that are safe to destroy and reapply.  They operate the same as components for now, but one day we may add special functionality around them.
 2. `<base>/migrator/migrations`.  This folder contains subfolders, one for each migration, and those folders contain the migration script.  E.g., `20240802030220-support-roles/up.sql.jinja`.  These are minijinja templates, designed to produce plain SQL migration scripts.  In these templates, you can import components.
-3. `<base>/migrator/migrations/<migration>/pinned_components`.  E.g., `<base>/migrator/migrations/20240802030220-support-roles/pinned_components`.  Contains a copy of the components as they were for that migration.  Note that git, as I understand it, will not store multiple copies of files with identical content, so this should not obviously cause git to use too much storage repeating the same files in components, as is likely to happen.
+   - Containes a `pinned_files` file, which is a list of file names to their sha256 pinned file (see 3. below).
+3. `<base>/migrator/migrations/pinned_components`.  This folder contains a copy of files as they were at a particular time that the migration was made.  This allows the migration to be rerun/recreated even if the referenced file has changed.  Each migration, when pinned, creates (if it does not exist) a file for each referenced component, whose name is its sha256 sum, and whose location is within a subfolder with a prefix of the first two character.  E.g., `c8/c8fa8f7395e8e0c5e6a457a7c6cd4a1adf87e09cbcc99aa683b0c2eea7368a89`.  The `pinned_files` for the migration may then include `c8fa8f7395e8e0c5e6a457a7c6cd4a1adf87e09cbcc99aa683b0c2eea7368a89 mycomponent.sql` as an entry.
 
 Design goals:
 
@@ -56,7 +57,7 @@ Proposal of commands:
 
 - `migrator init`
 - `migrator migration new <name in kebab case>` creates a new migration with the provided name, picking an appropriate datetime.
-- `migrator migration freeze <migration>` pins the migration with the current components.
+- `migrator migration pin <migration>` pins the migration with the current components.
 - `migrator migration build <migration> --pinned=<true|false>` builds the migration into the needed SQL.  `--pinned is required`.
 
 # Thoughts

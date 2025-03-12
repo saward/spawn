@@ -19,9 +19,33 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Generate {
-        #[arg(short, long)]
-        script: Option<String>,
+    /// Initialize a new migration environment
+    Init,
+    Migration {
+        #[command(subcommand)]
+        command: Option<MigrationCommands>,
+    },
+}
+
+#[derive(Subcommand)]
+enum MigrationCommands {
+    /// Create a new migration with the provided name
+    New {
+        /// Name of the migration in kebab-case
+        name: String,
+    },
+    /// Pin a migration with current components
+    Pin {
+        /// Migration to pin
+        migration: String,
+    },
+    /// Build a migration into SQL
+    Build {
+        /// Migration to build
+        migration: String,
+        /// Whether to use pinned components
+        #[arg(long, required = true)]
+        pinned: bool,
     },
 }
 
@@ -29,23 +53,33 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.debug {
-        false => println!("Debug mode is off"),
-        true => println!("Debug mode is on"),
+        false => eprintln!("Debug mode is off"),
+        true => eprintln!("Debug mode is on"),
     }
 
     match &cli.command {
-        Some(Commands::Generate { script }) => {
-            if let Some(script) = script {
-                println!("Generating migration script for file '{}'", script);
-                generate(script)?;
-            } else {
-                println!("No script specified, generating all")
+        Some(Commands::Init) => {
+            todo!("Implement init command")
+        }
+        Some(Commands::Migration { command }) => {
+            match command {
+                Some(MigrationCommands::New { name }) => {
+                    todo!("Implement migration new command for {}", name)
+                }
+                Some(MigrationCommands::Pin { migration }) => {
+                    todo!("Implement migration pin command for {}", migration)
+                }
+                Some(MigrationCommands::Build { migration, pinned }) => {
+                    todo!("Implement migration build command for {} (pinned: {})", migration, pinned)
+                }
+                None => {
+                    eprintln!("No migration subcommand specified");
+                    Ok(())
+                }
             }
         }
-        None => {}
+        None => Ok(())
     }
-
-    Ok(())
 }
 
 fn is_hidden(entry: &DirEntry) -> bool {
@@ -79,7 +113,6 @@ fn generate(script: &String) -> Result<()> {
                 .to_str()
                 .ok_or(anyhow!("could not strip base path from path"))?
                 .to_string();
-            println!("{}", &stripped_path);
             let contents =
                 std::fs::read_to_string(entry.into_path()).context("could not open script")?;
             env.add_template_owned(stripped_path, contents)?;
