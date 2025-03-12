@@ -41,11 +41,11 @@ enum MigrationCommands {
     },
     /// Build a migration into SQL
     Build {
+        /// Whether to use pinned components
+        #[arg(long)]
+        pinned: bool,
         /// Migration to build
         migration: String,
-        /// Whether to use pinned components
-        #[arg(long, required = true)]
-        pinned: bool,
     },
 }
 
@@ -70,7 +70,10 @@ fn main() -> Result<()> {
                     todo!("Implement migration pin command for {}", migration)
                 }
                 Some(MigrationCommands::Build { migration, pinned }) => {
-                    todo!("Implement migration build command for {} (pinned: {})", migration, pinned)
+                    if *pinned {
+                        todo!("Pinned migrations not yet implemented")
+                    }
+                    generate(migration)
                 }
                 None => {
                     eprintln!("No migration subcommand specified");
