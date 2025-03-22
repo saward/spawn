@@ -8,6 +8,9 @@ edition = "2021"
 [dependencies]
 clap = { version = "4.5.13", features = ["color", "derive"] }
 minijinja = { version = "2.6.0", features = ["loader"] }
+toml = "0.8"
+
+twox-hash = { version = "2", features = ["xxhash3_128"] }
 
 anyhow = "1.0"
 walkdir = "2"
