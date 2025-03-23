@@ -20,18 +20,19 @@ Here are some of my design goals with migrator:
 - Allow a migration to have some parts that apply to shared schema, and some that apply to tenant schemas (e.g., via matrix).  But even more complicated, allow us to reapply that change again, with different tenants, and it will only apply the tenant related changes to the new tenants, and not the shared schema changes.
 - Keep track of which migrations have been applied, so that when targeting a schema it will check which need to be applied and then apply all.
 - Handle secrets
+- Ability to preview in neovim and/or vscode the outputted sql, as you make changes to the migration template.
 - Watch a particular function or view, and re-apply automatically upon file change, to help with local testing.
- - Support a jinja template watch for local dev against local database, where if the rendered jinja template changes it gets re-applied.  Useful in cases where we're updating views that depend on each other, and want to automatically recreate all those views as we edit files.
+  - Support a jinja template watch for local dev against local database, where if the rendered jinja template changes it gets re-applied.  Useful in cases where we're updating views that depend on each other, and want to automatically recreate all those views as we edit files.
 - Stretch goals:
- - Some clever way to watch changes in the view/function folder, and automatically update.  Functions are easier, but views will fail when columns change or they have dependencies.
-  - I've tried having a schema dedicated to these things that are easy to throw away and rectrate, but the two problems are (a) it can get slow when there's more, making it hard to do in transactoin, and (b) I suspect we'll hit cases where can't be fully done inside transaction or rolled back.
- - Handle migration of views properly (e.g., when they depend on each other).
- - Reverting.  For now, likely this will assume you're performing DDL in a transaction in most cases.  Later, want to support something more official, particularly for cases where transactions are not possible or feasible.
- - Flatten schema.  E.g., deploy to local db with unique random values for variables (e.g., schema and user names), export again, and replace all references to the unique schema name with template variables again.
- - Examine view dependencies, so that when these are updated we can check if the child views need to be deleted and recreated.
- - SQL validation, perhaps similar to sqlx in Rust.
- - Custom plugins or extensions.
- - Inspect postgresql to learn dependencies of views, to make it easy to drop and recreate exactly the ones needed when creating a new migration.
+  - Some clever way to watch changes in the view/function folder, and automatically update.  Functions are easier, but views will fail when columns change or they have dependencies.
+    - I've tried having a schema dedicated to these things that are easy to throw away and rectrate, but the two problems are (a) it can get slow when there's more, making it hard to do in transactoin, and (b) I suspect we'll hit cases where can't be fully done inside transaction or rolled back.
+  - Handle migration of views properly (e.g., when they depend on each other).
+  - Reverting.  For now, likely this will assume you're performing DDL in a transaction in most cases.  Later, want to support something more official, particularly for cases where transactions are not possible or feasible.
+  - Flatten schema.  E.g., deploy to local db with unique random values for variables (e.g., schema and user names), export again, and replace all references to the unique schema name with template variables again.
+  - Examine view dependencies, so that when these are updated we can check if the child views need to be deleted and recreated.
+  - SQL validation, perhaps similar to sqlx in Rust.
+  - Custom plugins or extensions.
+  - Inspect postgresql to learn dependencies of views, to make it easy to drop and recreate exactly the ones needed when creating a new migration.
 
 # Design
 
