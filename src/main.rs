@@ -8,6 +8,7 @@ use twox_hash::xxhash3_128;
 
 use anyhow::{Context, Result};
 use minijinja::{context, Environment};
+use serde::{Deserialize, Serialize};
 
 use clap::{Parser, Subcommand};
 
@@ -49,9 +50,22 @@ enum MigrationCommands {
         /// Whether to use pinned components
         #[arg(long)]
         pinned: bool,
-        /// Migration to build
+        /// Migration to build.  Looks for script.sql inside this specified
+        /// migration folder.
         migration: OsString,
     },
+}
+
+// A single file entry with its hash.
+#[derive(Debug, Deserialize, Serialize)]
+struct LockEntry {
+    hash: String,
+}
+
+// The overall config, containing a map from filename → FileEntry.
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct LockData {
+    entries: HashMap<String, LockEntry>,
 }
 
 /// Configuration for template generation
@@ -108,16 +122,20 @@ impl GenerateConfig {
     }
 
     fn script_file_path(&self) -> PathBuf {
-        self.migrations_folder().join(self.script_path.clone())
+        self.migrations_folder()
+            .join(self.script_path.clone())
+            .join("script.sql")
     }
 
     fn lock_file_path(&self) -> PathBuf {
         // Nightly has an add_extension that might be good to use one day if it
         // enters stable.
         let mut lock_file_name = self.script_path.clone();
-        lock_file_name.push(".lock");
+        lock_file_name.push("components.lock");
 
-        self.migrations_folder().join(&lock_file_name)
+        self.migrations_folder()
+            .join(self.script_path.clone())
+            .join("components.lock")
     }
 }
 
@@ -208,13 +226,14 @@ fn main() -> Result<()> {
                 let config = GenerateConfig::temp_config(migration, false);
                 match generate(&config) {
                     Ok(result) => {
-                        for (_name, content) in result.files {
+                        let mut lock_data: LockData = Default::default();
+                        for (name, content) in result.files {
                             let hash = xxhash3_128::Hasher::oneshot(result.content.as_bytes());
                             let hash = format!("{:032x}", hash);
                             let dir = config.pinned_folder().join(&hash[..2]);
                             let file = PathBuf::from(&hash[2..]);
 
-                            let lock_file = config.lock_file_path();
+                            lock_data.entries.insert(name, LockEntry { hash });
 
                             fs::create_dir_all(&dir)
                                 .context(format!("could not create all dir at {:?}", &dir))?;
@@ -227,6 +246,9 @@ fn main() -> Result<()> {
                                     .context("could not write bytes")?;
                             }
                         }
+                        let lock_file = config.lock_file_path();
+                        let toml_str = toml::to_string_pretty(&lock_data)?;
+                        fs::write(lock_file, toml_str)?;
                         ()
                     }
                     Err(e) => return Err(e),
