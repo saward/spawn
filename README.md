@@ -33,6 +33,7 @@ Here are some of my design goals with migrator:
   - SQL validation, perhaps similar to sqlx in Rust.
   - Custom plugins or extensions.
   - Inspect postgresql to learn dependencies of views, to make it easy to drop and recreate exactly the ones needed when creating a new migration.
+  - Syntax highlighting like bat (may be excessive, particularly since bat and other tools can be used)
 
 # Design
 
