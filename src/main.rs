@@ -137,6 +137,14 @@ impl GenerateConfig {
             .join(self.script_path.clone())
             .join("components.lock")
     }
+
+    fn load_lock_file(&self) -> Result<LockData> {
+        let lock_file = self.lock_file_path();
+        let contents = fs::read_to_string(lock_file)?;
+        let lock_data: LockData = toml::from_str(&contents)?;
+
+        Ok(lock_data)
+    }
 }
 
 #[cfg(test)]
@@ -176,14 +184,18 @@ mod tests {
 #[derive(Debug)]
 struct ComponentLoader {
     components_path: PathBuf,
+    pinned_path: PathBuf,
+    lock_data: Option<LockData>,
     loaded_files: Mutex<HashMap<String, String>>,
 }
 
 impl ComponentLoader {
-    fn new(components_path: PathBuf) -> Self {
+    fn new(components_path: PathBuf, pinned_path: PathBuf, lock_data: Option<LockData>) -> Self {
         Self {
             components_path,
+            pinned_path,
             loaded_files: Mutex::new(HashMap::new()),
+            lock_data,
         }
     }
 
@@ -192,7 +204,13 @@ impl ComponentLoader {
     }
 
     fn load(&self, name: &str) -> Result<Option<String>, minijinja::Error> {
-        let file_path = self.components_path.join(name);
+        let file_path = match &self.lock_data {
+            Some(lock_data) => {
+                let hash = &lock_data.entries.get(name).unwrap().hash;
+                self.pinned_path.join(&hash[..2]).join(&hash[2..])
+            }
+            None => self.components_path.join(name),
+        };
         if let Ok(contents) = std::fs::read_to_string(&file_path) {
             // Track that we loaded this file
             self.loaded_files
@@ -256,10 +274,7 @@ fn main() -> Result<()> {
                 Ok(())
             }
             Some(MigrationCommands::Build { migration, pinned }) => {
-                if *pinned {
-                    todo!("Pinned migrations not yet implemented")
-                }
-                let config = GenerateConfig::temp_config(migration, false);
+                let config = GenerateConfig::temp_config(migration, *pinned);
                 match generate(&config) {
                     Ok(result) => {
                         println!("{}", result.content);
@@ -301,13 +316,21 @@ fn generate(config: &GenerateConfig) -> Result<Generation> {
     env.add_template("migration.sql", &contents)?;
 
     // Create and set up the component loader
-    let components_path = if config.use_pinned {
-        config.pinned_folder()
+    let lock_data = if config.use_pinned {
+        Some(
+            config
+                .load_lock_file()
+                .context("could not load pinned files lock file")?,
+        )
     } else {
-        config.components_folder()
+        None
     };
 
-    let loader = Arc::new(ComponentLoader::new(components_path));
+    let loader = Arc::new(ComponentLoader::new(
+        config.components_folder(),
+        config.pinned_folder(),
+        lock_data,
+    ));
     let loader_for_closure = loader.clone();
     env.set_loader(move |name| loader_for_closure.load(name));
 
