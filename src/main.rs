@@ -1,14 +1,15 @@
+use migrator::pinfile::{LockData, LockEntry};
+use migrator::template::ComponentLoader;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use twox_hash::xxhash3_128;
 
 use anyhow::{Context, Result};
 use minijinja::{context, Environment};
-use serde::{Deserialize, Serialize};
 
 use clap::{Parser, Subcommand};
 
@@ -54,18 +55,6 @@ enum MigrationCommands {
         /// migration folder.
         migration: OsString,
     },
-}
-
-// A single file entry with its hash.
-#[derive(Debug, Deserialize, Serialize)]
-struct LockEntry {
-    hash: String,
-}
-
-// The overall config, containing a map from filename → FileEntry.
-#[derive(Debug, Default, Deserialize, Serialize)]
-struct LockData {
-    entries: HashMap<String, LockEntry>,
 }
 
 /// Configuration for template generation
@@ -177,50 +166,6 @@ mod tests {
             PathBuf::from("./base_folder/migrations/subfolder/migration_script.lock"),
             config.lock_file_path(),
         );
-    }
-}
-
-/// A custom template loader that loads templates on demand and tracks which ones were loaded
-#[derive(Debug)]
-struct ComponentLoader {
-    components_path: PathBuf,
-    pinned_path: PathBuf,
-    lock_data: Option<LockData>,
-    loaded_files: Mutex<HashMap<String, String>>,
-}
-
-impl ComponentLoader {
-    fn new(components_path: PathBuf, pinned_path: PathBuf, lock_data: Option<LockData>) -> Self {
-        Self {
-            components_path,
-            pinned_path,
-            loaded_files: Mutex::new(HashMap::new()),
-            lock_data,
-        }
-    }
-
-    fn get_loaded_files(&self) -> HashMap<String, String> {
-        self.loaded_files.lock().unwrap().clone()
-    }
-
-    fn load(&self, name: &str) -> Result<Option<String>, minijinja::Error> {
-        let file_path = match &self.lock_data {
-            Some(lock_data) => {
-                let hash = &lock_data.entries.get(name).unwrap().hash;
-                self.pinned_path.join(&hash[..2]).join(&hash[2..])
-            }
-            None => self.components_path.join(name),
-        };
-        if let Ok(contents) = std::fs::read_to_string(&file_path) {
-            // Track that we loaded this file
-            self.loaded_files
-                .lock()
-                .unwrap()
-                .insert(name.to_string(), contents.clone());
-            Ok(Some(contents))
-        } else {
-            Ok(None)
-        }
     }
 }
 

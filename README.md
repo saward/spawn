@@ -71,3 +71,7 @@ Another:
 - For example, have your application setup a schema to contain its version-specific database components. The schema will contain an immutable application version, such as its commit hash, in its name. This allows a given version of the application to only use its own set of sprocs and views. On deploy, run the SQL scripts to create the sprocs and views for that version.
 
 Have been recommended to  avoiding having views depend on other views.  And particularly, not having views depend on materialised views.
+
+# Next
+
+- Clean up how the components loader data is passed in?  Feels messy providing it two separate paths, not sure if it should be passed the whole config.
