@@ -1,5 +1,5 @@
 BEGIN;
-Some template {{ name }}
+-- Some template
 
 {% include "util/add_func.sql" %}
 
