@@ -6,35 +6,37 @@ There are plenty of other migration solutions out there, but this one's mine.  T
 
 Here are some of my design goals with migrator:
 
-- Handle history of functions/stored procs, so we can see proper history.
-- Ability to write custom hand-crafted migrations.
-- Support for rollback scripts as an optional feature.
-- Migration status checking, to see what's been applied to a database.
-- Easy to spin up new tenant schema.
-- Easy to migrate each tenant schema.
-- Supporting migrations from multiple folders.  E.g., if a separate project provided some of your migrations, then you can apply migrations from both folders.
-- Plain SQL mostly, or rather generates plain SQL that can be modified.
-- Find a good way for testing SQL/unit testing.
-- Report on which components have changes that have never been included in a migration.  Basically, check for the hash of that component and see if it's in any lock files, and if the migration includes that file in its SQL.
-- Store full schema changes applied in a migration table in database, so we have a record of what was done.
-- Variables supported, for substitution, as well as matrices to generate migrations for a bunch of sites.  Or maybe we never generate and store the files, since there are many tenants, and instead run them against each schema somehow without generating stored/saved files for each schema.
-- Allow a migration to have some parts that apply to shared schema, and some that apply to tenant schemas (e.g., via matrix).  But even more complicated, allow us to reapply that change again, with different tenants, and it will only apply the tenant related changes to the new tenants, and not the shared schema changes.
-- Keep track of which migrations have been applied, so that when targeting a schema it will check which need to be applied and then apply all.
-- Handle secrets
-- Ability to preview in neovim and/or vscode the outputted sql, as you make changes to the migration template.
-- Watch a particular function or view, and re-apply automatically upon file change, to help with local testing.
-  - Support a jinja template watch for local dev against local database, where if the rendered jinja template changes it gets re-applied.  Useful in cases where we're updating views that depend on each other, and want to automatically recreate all those views as we edit files.
-- Stretch goals:
-  - Some clever way to watch changes in the view/function folder, and automatically update.  Functions are easier, but views will fail when columns change or they have dependencies.
-    - I've tried having a schema dedicated to these things that are easy to throw away and rectrate, but the two problems are (a) it can get slow when there's more, making it hard to do in transactoin, and (b) I suspect we'll hit cases where can't be fully done inside transaction or rolled back.
-  - Handle migration of views properly (e.g., when they depend on each other).
-  - Reverting.  For now, likely this will assume you're performing DDL in a transaction in most cases.  Later, want to support something more official, particularly for cases where transactions are not possible or feasible.
-  - Flatten schema.  E.g., deploy to local db with unique random values for variables (e.g., schema and user names), export again, and replace all references to the unique schema name with template variables again.
-  - Examine view dependencies, so that when these are updated we can check if the child views need to be deleted and recreated.
-  - SQL validation, perhaps similar to sqlx in Rust.
-  - Custom plugins or extensions.
-  - Inspect postgresql to learn dependencies of views, to make it easy to drop and recreate exactly the ones needed when creating a new migration.
-  - Syntax highlighting like bat (may be excessive, particularly since bat and other tools can be used)
+- [x] Handle history of functions/stored procs, so we can see proper history.
+- [x] Ability to write custom hand-crafted migrations.
+- [x] Plain SQL mostly, or rather generates plain SQL that can be modified.
+- [ ] Create empty migrations.
+- [ ] Idempotently apply migrations to database.
+- [ ] Support for rollback scripts as an optional feature.
+- [ ] Migration status checking, to see what's been applied to a database.
+- [ ] Easy to spin up new tenant schema.
+- [ ] Easy to migrate each tenant schema.
+- [ ] Supporting migrations from multiple folders.  E.g., if a separate project provided some of your migrations, then you can apply migrations from both folders.
+- [ ] Find a good way for testing SQL/unit testing.
+- [ ] Report on which components have changes that have never been included in a migration.  Basically, check for the hash of that component and see if it's in any lock files, and if the migration includes that file in its SQL.
+- [ ] Store full schema changes applied in a migration table in database, so we have a record of what was done.
+- [ ] Variables supported, for substitution, as well as matrices to generate migrations for a bunch of sites.  Or maybe we never generate and store the files, since there are many tenants, and instead run them against each schema somehow without generating stored/saved files for each schema.
+- [ ] Allow a migration to have some parts that apply to shared schema, and some that apply to tenant schemas (e.g., via matrix).  But even more complicated, allow us to reapply that change again, with different tenants, and it will only apply the tenant related changes to the new tenants, and not the shared schema changes.
+- [ ] Keep track of which migrations have been applied, so that when targeting a schema it will check which need to be applied and then apply all.
+- [ ] Handle secrets
+- [ ] Ability to preview in neovim and/or vscode the outputted sql, as you make changes to the migration template.
+- [ ] Watch a particular function or view, and re-apply automatically upon file change, to help with local testing.
+  - [ ] Support a jinja template watch for local dev against local database, where if the rendered jinja template changes it gets re-applied.  Useful in cases where we're updating views that depend on each other, and want to automatically recreate all those views as we edit files.
+- [ ] Stretch goals:
+  - [ ] Some clever way to watch changes in the view/function folder, and automatically update.  Functions are easier, but views will fail when columns change or they have dependencies.
+    - [ ] I've tried having a schema dedicated to these things that are easy to throw away and rectrate, but the two problems are (a) it can get slow when there's more, making it hard to do in transactoin, and (b) I suspect we'll hit cases where can't be fully done inside transaction or rolled back.
+  - [ ] Handle migration of views properly (e.g., when they depend on each other).
+  - [ ] Reverting.  For now, likely this will assume you're performing DDL in a transaction in most cases.  Later, want to support something more official, particularly for cases where transactions are not possible or feasible.
+  - [ ] Flatten schema.  E.g., deploy to local db with unique random values for variables (e.g., schema and user names), export again, and replace all references to the unique schema name with template variables again.
+  - [ ] Examine view dependencies, so that when these are updated we can check if the child views need to be deleted and recreated.
+  - [ ] SQL validation, perhaps similar to sqlx in Rust.
+  - [ ] Custom plugins or extensions.
+  - [ ] Inspect postgresql to learn dependencies of views, to make it easy to drop and recreate exactly the ones needed when creating a new migration.
+  - [ ] Syntax highlighting/themes like bat (may be excessive, particularly since bat and other tools can be used -- e.g., `migrator migration build 20240907212659-initial | bat -l sql`)
 
 # Design
 
@@ -44,7 +46,7 @@ We have three primary folders:
   - A subfolder may be `<base migrator folder>/idempotent_schemas`, containing schemas that are safe to destroy and reapply.  They operate the same as components for now, but one day we may add special functionality around them.
 2. `<base migrator folder>/migrations`.  This folder contains subfolders, one for each migration, and those folders contain the migration script.  E.g., `20240802030220-support-roles/up.sql.jinja`.  These are minijinja templates, designed to produce plain SQL migration scripts.  In these templates, you can import components.
    - Containes a `pinned` file, which is a list of file names to their sha256 pinned file (see 3. below).
-3. `<base migrator folder>/migrations/pinned`.  This folder contains a copy of files as they were at a particular time that the migration was made.  This allows the migration to be rerun/recreated even if the referenced file has changed.  Each migration, when pinned, creates (if it does not exist) a file for each referenced component, whose name is its sha256 sum, and whose location is within a subfolder with a prefix of the first two character.  E.g., `c8/c8fa8f7395e8e0c5e6a457a7c6cd4a1adf87e09cbcc99aa683b0c2eea7368a89`.  The `pinned_files` file for the migration may then include `c8fa8f7395e8e0c5e6a457a7c6cd4a1adf87e09cbcc99aa683b0c2eea7368a89 mycomponent.sql` as an entry.
+3. `<base migrator folder>/pinned`.  This folder contains a copy of files as they were at a particular time that the migration was made stored by hash.  This allows the migration to be rerun/recreated even if the referenced file has changed.  Each migration, when pinned, creates (if it does not exist) a file for each referenced component, whose name is its sha256 sum, and whose location is within a subfolder with a prefix of the first two character.  E.g., `c8/c8fa8f7395e8e0c5e6a457a7c6cd4a1adf87e09cbcc99aa683b0c2eea7368a89`.  The `components.lock` file for the migration then includes the hash and name to be able to load the version from that time.
 
 Design goals:
 

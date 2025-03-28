@@ -1,4 +1,4 @@
-use migrator::generate::GenerateConfig;
+use migrator::generate::Config;
 use migrator::pinfile::{LockData, LockEntry};
 use std::ffi::OsString;
 use std::fs;
@@ -71,7 +71,7 @@ fn main() -> Result<()> {
                 todo!("Implement migration new command for {}", name)
             }
             Some(MigrationCommands::Pin { migration }) => {
-                let config = GenerateConfig::temp_config(migration, false);
+                let config = Config::temp_config(migration, false);
                 match config.generate() {
                     Ok(result) => {
                         let mut lock_data: LockData = Default::default();
@@ -104,7 +104,7 @@ fn main() -> Result<()> {
                 Ok(())
             }
             Some(MigrationCommands::Build { migration, pinned }) => {
-                let config = GenerateConfig::temp_config(migration, *pinned);
+                let config = Config::temp_config(migration, *pinned);
                 match config.generate() {
                     Ok(result) => {
                         println!("{}", result.content);

@@ -11,7 +11,7 @@ use minijinja::{context, Environment};
 
 /// Configuration for template generation
 #[derive(Debug)]
-pub struct GenerateConfig {
+pub struct Config {
     /// Base path for all migration related files
     base_path: PathBuf,
     /// Path for the script itself, set to the location under the migrations
@@ -23,14 +23,14 @@ pub struct GenerateConfig {
     use_pinned: bool,
 }
 
-impl GenerateConfig {
+impl Config {
     pub fn new(
         base_path: PathBuf,
         script_path: OsString,
         variables: Option<HashMap<String, String>>,
         use_pinned: bool,
     ) -> Self {
-        GenerateConfig {
+        Config {
             base_path,
             script_path,
             variables: variables.unwrap_or_default(),
@@ -42,7 +42,7 @@ impl GenerateConfig {
     // this out.  For now, a single function that returns the config so that we
     // can test, and easily find all places to replace later.
     pub fn temp_config(migration: &OsString, use_pinned: bool) -> Self {
-        GenerateConfig::new(
+        Config::new(
             PathBuf::from("./static/example"),
             migration.clone(),
             None,
@@ -145,11 +145,11 @@ impl GenerateConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::generate::GenerateConfig;
+    use crate::generate::Config;
     use std::{ffi::OsString, path::PathBuf};
 
-    fn test_config() -> GenerateConfig {
-        GenerateConfig::new(
+    fn test_config() -> Config {
+        Config::new(
             PathBuf::from("./base_folder"),
             OsString::from("subfolder/migration_script"),
             None,
