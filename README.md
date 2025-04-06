@@ -12,6 +12,8 @@ Here are some of my design goals with migrator:
 - [ ] Create empty migrations.
 - [ ] Idempotently apply migrations to database.
 - [ ] Support for rollback scripts as an optional feature.
+  - [ ] Key template functions so that you can begin a transaction, but at the end you can optionally commit or rollback, based on a migration apply flag.  This allows running 'apply' to test that there's no errors, but rollback afterwards in test mode.
+  - [ ] Predefined way of expressing a section in a migration for rollback.  Gets called under specific conditions.
 - [ ] Migration status checking, to see what's been applied to a database.
 - [ ] Easy to spin up new tenant schema.
 - [ ] Easy to migrate each tenant schema.
