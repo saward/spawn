@@ -76,6 +76,12 @@ Another:
 
 Have been recommended to  avoiding having views depend on other views.  And particularly, not having views depend on materialised views.
 
+# Testing
+
+```
+docker exec -ti migrator-db psql -U migrator
+```
+
 # Next
 
 - Clean up how the components loader data is passed in?  Feels messy providing it two separate paths, not sure if it should be passed the whole config.

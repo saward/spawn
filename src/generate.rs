@@ -9,9 +9,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use minijinja::{context, Environment};
 
-/// Configuration for template generation
+/// Final SQL output generator
 #[derive(Debug)]
-pub struct Config {
+pub struct Generator {
     /// Base path for all migration related files
     base_path: PathBuf,
     /// Path for the script itself, set to the location under the migrations
@@ -23,14 +23,14 @@ pub struct Config {
     use_pinned: bool,
 }
 
-impl Config {
+impl Generator {
     pub fn new(
         base_path: PathBuf,
         script_path: OsString,
         variables: Option<HashMap<String, String>>,
         use_pinned: bool,
     ) -> Self {
-        Config {
+        Generator {
             base_path,
             script_path,
             variables: variables.unwrap_or_default(),
@@ -42,7 +42,7 @@ impl Config {
     // this out.  For now, a single function that returns the config so that we
     // can test, and easily find all places to replace later.
     pub fn temp_config(migration: &OsString, use_pinned: bool) -> Self {
-        Config::new(
+        Generator::new(
             PathBuf::from("./static/example"),
             migration.clone(),
             None,
@@ -145,11 +145,11 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
-    use crate::generate::Config;
+    use crate::generate::Generator;
     use std::{ffi::OsString, path::PathBuf};
 
-    fn test_config() -> Config {
-        Config::new(
+    fn test_config() -> Generator {
+        Generator::new(
             PathBuf::from("./base_folder"),
             OsString::from("subfolder/migration_script"),
             None,

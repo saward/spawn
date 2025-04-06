@@ -1,0 +1,18 @@
+version: '3'
+services:
+  postgres:
+    image: postgres:15
+    container_name: migrator-db
+    networks:
+      - migrator
+    ports:
+      - '7654:5432'
+    restart: always
+    environment:
+      POSTGRES_USER: migrator
+      POSTGRES_PASSWORD: migrator
+    command: ['postgres', '-c', 'log_statement=all']
+
+networks:
+  migrator:
+    name: migrator

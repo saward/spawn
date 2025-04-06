@@ -1,5 +1,7 @@
-use migrator::generate::Config;
+use migrator::config::{self, Config};
+use migrator::generate::Generator;
 use migrator::pinfile::{LockData, LockEntry};
+use sqlx::postgres::PgPoolOptions;
 use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
@@ -52,9 +54,13 @@ enum MigrationCommands {
         /// migration folder.
         migration: OsString,
     },
+    /// Apply will apply this migration to the database if not already applied,
+    /// or all migrations if called without argument.
+    Apply { migration: Option<OsString> },
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.debug {
@@ -71,7 +77,7 @@ fn main() -> Result<()> {
                 todo!("Implement migration new command for {}", name)
             }
             Some(MigrationCommands::Pin { migration }) => {
-                let config = Config::temp_config(migration, false);
+                let config = Generator::temp_config(migration, false);
                 match config.generate() {
                     Ok(result) => {
                         let mut lock_data: LockData = Default::default();
@@ -104,7 +110,7 @@ fn main() -> Result<()> {
                 Ok(())
             }
             Some(MigrationCommands::Build { migration, pinned }) => {
-                let config = Config::temp_config(migration, *pinned);
+                let config = Generator::temp_config(migration, *pinned);
                 match config.generate() {
                     Ok(result) => {
                         println!("{}", result.content);
@@ -112,6 +118,23 @@ fn main() -> Result<()> {
                     }
                     Err(e) => return Err(e),
                 };
+                Ok(())
+            }
+            Some(MigrationCommands::Apply { migration }) => {
+                // Load config from file:
+                let main_config = Config::load().context(format!(
+                    "could not load config from {}",
+                    config::MIGRATION_FILE
+                ))?;
+
+                let pool = PgPoolOptions::new()
+                    .max_connections(5)
+                    .connect(&main_config.db_connstring)
+                    .await?;
+
+                let m = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations")).await?;
+                m.run(&pool).await?;
+
                 Ok(())
             }
             None => {
