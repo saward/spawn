@@ -1,5 +1,5 @@
 use migrator::config::{self, Config};
-use migrator::generate::Generator;
+use migrator::migrator::Migrator;
 use migrator::pinfile::{LockData, LockEntry};
 use sqlx::postgres::PgPoolOptions;
 use std::ffi::OsString;
@@ -37,7 +37,7 @@ enum Commands {
 enum MigrationCommands {
     /// Create a new migration with the provided name
     New {
-        /// Name of the migration in kebab-case
+        /// Name of the migration.
         name: String,
     },
     /// Pin a migration with current components
@@ -74,10 +74,15 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Migration { command }) => match command {
             Some(MigrationCommands::New { name }) => {
-                todo!("Implement migration new command for {}", name)
+                let migration_name: String =
+                    format!("{}-{}", chrono::Utc::now().format("%Y%m%d%H%M%S"), name);
+                println!("creating migration with name {}", &migration_name);
+                let mg = Migrator::temp_config(&migration_name.into(), false);
+
+                mg.create_migration()
             }
             Some(MigrationCommands::Pin { migration }) => {
-                let config = Generator::temp_config(migration, false);
+                let config = Migrator::temp_config(migration, false);
                 match config.generate() {
                     Ok(result) => {
                         let mut lock_data: LockData = Default::default();
@@ -110,7 +115,7 @@ async fn main() -> Result<()> {
                 Ok(())
             }
             Some(MigrationCommands::Build { migration, pinned }) => {
-                let config = Generator::temp_config(migration, *pinned);
+                let config = Migrator::temp_config(migration, *pinned);
                 match config.generate() {
                     Ok(result) => {
                         println!("{}", result.content);

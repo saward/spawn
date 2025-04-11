@@ -9,9 +9,14 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use minijinja::{context, Environment};
 
+static BASE_MIGRATION: &str = "BEGIN;
+
+COMMIT;
+";
+
 /// Final SQL output generator
 #[derive(Debug)]
-pub struct Generator {
+pub struct Migrator {
     /// Base path for all migration related files
     base_path: PathBuf,
     /// Path for the script itself, set to the location under the migrations
@@ -23,14 +28,14 @@ pub struct Generator {
     use_pinned: bool,
 }
 
-impl Generator {
+impl Migrator {
     pub fn new(
         base_path: PathBuf,
         script_path: OsString,
         variables: Option<HashMap<String, String>>,
         use_pinned: bool,
     ) -> Self {
-        Generator {
+        Migrator {
             base_path,
             script_path,
             variables: variables.unwrap_or_default(),
@@ -42,12 +47,30 @@ impl Generator {
     // this out.  For now, a single function that returns the config so that we
     // can test, and easily find all places to replace later.
     pub fn temp_config(migration: &OsString, use_pinned: bool) -> Self {
-        Generator::new(
+        Migrator::new(
             PathBuf::from("./static/example"),
             migration.clone(),
             None,
             use_pinned,
         )
+    }
+
+    /// Creates the migration folder with blank setup.
+    pub fn create_migration(&self) -> Result<()> {
+        // Todo: return error if migration already exists.
+        let path = self.migration_folder();
+        if path.exists() {
+            return Err(anyhow::anyhow!(
+                "folder for migration {:?} already exists, aborting.",
+                path,
+            ));
+        }
+        fs::create_dir_all(self.migration_folder())?;
+
+        // Create our blank script file:
+        fs::write(path.join("script.sql"), BASE_MIGRATION)?;
+
+        Ok(())
     }
 
     pub fn pinned_folder(&self) -> PathBuf {
@@ -60,6 +83,10 @@ impl Generator {
 
     pub fn migrations_folder(&self) -> PathBuf {
         self.base_path.join("migrations")
+    }
+
+    pub fn migration_folder(&self) -> PathBuf {
+        self.migrations_folder().join(&self.script_path)
     }
 
     pub fn script_file_path(&self) -> PathBuf {
@@ -145,11 +172,11 @@ impl Generator {
 
 #[cfg(test)]
 mod tests {
-    use crate::generate::Generator;
+    use crate::migrator::Migrator;
     use std::{ffi::OsString, path::PathBuf};
 
-    fn test_config() -> Generator {
-        Generator::new(
+    fn test_config() -> Migrator {
+        Migrator::new(
             PathBuf::from("./base_folder"),
             OsString::from("subfolder/migration_script"),
             None,

@@ -1,4 +1,4 @@
 pub mod config;
-pub mod generate;
+pub mod migrator;
 pub mod pinfile;
 pub mod template;

@@ -9,7 +9,7 @@ Here are some of my design goals with migrator:
 - [x] Handle history of functions/stored procs, so we can see proper history.
 - [x] Ability to write custom hand-crafted migrations.
 - [x] Plain SQL mostly, or rather generates plain SQL that can be modified.
-- [ ] Create empty migrations.
+- [x] Create empty migrations.
 - [ ] Idempotently apply migrations to database.
   - [ ] Allow for 'adopting' a migration, where you record in the database that it's been applied, without doing anything.  Useful for if you're bringing in existing migrations from another system that have already been applied to the database.
   - [ ] List migrations in database
@@ -69,6 +69,22 @@ Proposal of commands:
 - `migrator migration new <name in kebab case>` creates a new migration with the provided name, picking an appropriate datetime.
 - `migrator migration pin <migration>` pins the migration with the current components.
 - `migrator migration build <migration> --pinned=<true|false>` builds the migration into the needed SQL.  `--pinned is required`.
+
+## Create a new migration
+
+Last parameter is the name of the migration:
+
+```
+migrator migration new "is-the-best"
+```
+
+Creates a migration folder with a timestamp followed by the name, along with a ready to go `script.sql` file for the migration.
+
+## Apply migration to database
+
+```
+migrator migration apply 20240907212659-initial
+```
 
 # Thoughts
 
