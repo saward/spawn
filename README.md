@@ -11,6 +11,7 @@ Here are some of my design goals with migrator:
 - [x] Plain SQL mostly, or rather generates plain SQL that can be modified.
 - [ ] Create empty migrations.
 - [ ] Idempotently apply migrations to database.
+  - [ ] Allow for 'adopting' a migration, where you record in the database that it's been applied, without doing anything.  Useful for if you're bringing in existing migrations from another system that have already been applied to the database.
 - [ ] Support for rollback scripts as an optional feature.
   - [ ] Key template functions so that you can begin a transaction, but at the end you can optionally commit or rollback, based on a migration apply flag.  This allows running 'apply' to test that there's no errors, but rollback afterwards in test mode.
   - [ ] Predefined way of expressing a section in a migration for rollback.  Gets called under specific conditions.
