@@ -10,6 +10,7 @@ Here are some of my design goals with migrator:
 - [x] Ability to write custom hand-crafted migrations.
 - [x] Plain SQL mostly, or rather generates plain SQL that can be modified.
 - [x] Create empty migrations.
+- [ ] Allow migrations bundled in another package, like a framework.  See [Multiple package migrations design](#multiple-package-migrations-design) below.
 - [ ] Idempotently apply migrations to database.
   - [ ] Allow for 'adopting' a migration, where you record in the database that it's been applied, without doing anything.  Useful for if you're bringing in existing migrations from another system that have already been applied to the database.
   - [ ] List migrations in database
@@ -106,3 +107,15 @@ docker exec -ti migrator-db psql -U migrator
 # Next
 
 - Clean up how the components loader data is passed in?  Feels messy providing it two separate paths, not sure if it should be passed the whole config.
+
+# Multiple package migrations design
+
+Provide a standardised way for a package to expose its db migrations.  Then, when another package with a binary imports it, it ensures there is a way to run the binary so that it outputs the migrations in the standardised way.
+
+The migrator tool can then be configured to call that binary too, and operate in all the usual ways for things that make sense (e.g., can't pin?).  So you can see which migrations are unapplied, and which have been applied, etc.
+
+1. Framework has public function that returns embedded migrations
+2. Project that imports the framework has a subcommand that outputs the migrations when invoked in an expected format, to the terminal.
+3. Migrator can be told this command, and will allow you to run normal migration commands except treating the output from this binary as a pseudo file system rather than actual folder.
+
+**Important**: Make sure this supports variables, and custom passing in of schema, etc.

@@ -137,6 +137,7 @@ async fn main() -> Result<()> {
                     .connect(&main_config.db_connstring)
                     .await?;
 
+                // Use the sqlx migrator
                 let m = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations")).await?;
                 m.run(&pool).await?;
 
