@@ -1,5 +1,5 @@
 use migrator::config::{self, Config};
-use migrator::migrator::Migrator;
+use migrator::migrator::{Migrator, Variables};
 use migrator::pinfile::{LockData, LockEntry};
 use sqlx::postgres::PgPoolOptions;
 use std::ffi::OsString;
@@ -44,6 +44,7 @@ enum MigrationCommands {
     Pin {
         /// Migration to pin
         migration: OsString,
+        variables: Option<Variables>,
     },
     /// Build a migration into SQL
     Build {
@@ -53,10 +54,14 @@ enum MigrationCommands {
         /// Migration to build.  Looks for script.sql inside this specified
         /// migration folder.
         migration: OsString,
+        variables: Option<Variables>,
     },
     /// Apply will apply this migration to the database if not already applied,
     /// or all migrations if called without argument.
-    Apply { migration: Option<OsString> },
+    Apply {
+        migration: Option<OsString>,
+        variables: Option<Variables>,
+    },
 }
 
 #[tokio::main]
@@ -81,9 +86,12 @@ async fn main() -> Result<()> {
 
                 mg.create_migration()
             }
-            Some(MigrationCommands::Pin { migration }) => {
+            Some(MigrationCommands::Pin {
+                migration,
+                variables,
+            }) => {
                 let config = Migrator::temp_config(migration, false);
-                match config.generate() {
+                match config.generate(variables.clone()) {
                     Ok(result) => {
                         let mut lock_data: LockData = Default::default();
                         for (name, content) in result.files {
@@ -114,9 +122,13 @@ async fn main() -> Result<()> {
                 };
                 Ok(())
             }
-            Some(MigrationCommands::Build { migration, pinned }) => {
+            Some(MigrationCommands::Build {
+                migration,
+                pinned,
+                variables,
+            }) => {
                 let config = Migrator::temp_config(migration, *pinned);
-                match config.generate() {
+                match config.generate(variables.clone()) {
                     Ok(result) => {
                         println!("{}", result.content);
                         ()
@@ -125,7 +137,10 @@ async fn main() -> Result<()> {
                 };
                 Ok(())
             }
-            Some(MigrationCommands::Apply { migration }) => {
+            Some(MigrationCommands::Apply {
+                migration,
+                variables,
+            }) => {
                 // Load config from file:
                 let main_config = Config::load().context(format!(
                     "could not load config from {}",

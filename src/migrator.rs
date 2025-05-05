@@ -3,11 +3,14 @@ use crate::template::ComponentLoader;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use minijinja::{context, Environment};
+use serde::Serialize;
 
 static BASE_MIGRATION: &str = "BEGIN;
 
@@ -22,23 +25,70 @@ pub struct Migrator {
     /// Path for the script itself, set to the location under the migrations
     /// folder.
     script_path: OsString,
-    /// Variables to pass to the template
-    variables: HashMap<String, String>,
     /// Whether to use pinned components
     use_pinned: bool,
 }
 
+#[derive(Clone, Debug)]
+pub enum Variables {
+    Json(serde_json::Value),
+    Toml(toml::Value),
+    Yaml(serde_yaml::Value),
+}
+
+impl Serialize for Variables {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Variables::Json(v) => v.serialize(serializer),
+            Variables::Toml(v) => v.serialize(serializer),
+            Variables::Yaml(v) => v.serialize(serializer),
+        }
+    }
+}
+
+impl Default for Variables {
+    fn default() -> Self {
+        Self::Json(serde_json::Value::default())
+    }
+}
+
+impl FromStr for Variables {
+    type Err = String;
+
+    fn from_str(path_str: &str) -> Result<Self, Self::Err> {
+        let path = Path::new(path_str);
+        let content = fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read file {}: {}", path_str, e))?;
+
+        match path.extension().and_then(|s| s.to_str()) {
+            Some("json") => {
+                let value: serde_json::Value =
+                    serde_json::from_str(&content).map_err(|e| format!("Invalid JSON: {}", e))?;
+                Ok(Variables::Json(value))
+            }
+            Some("toml") => {
+                let value: toml::Value =
+                    toml::from_str(&content).map_err(|e| format!("Invalid TOML: {}", e))?;
+                Ok(Variables::Toml(value))
+            }
+            Some("yaml") | Some("yml") => {
+                let value: serde_yaml::Value =
+                    serde_yaml::from_str(&content).map_err(|e| format!("Invalid YAML: {}", e))?;
+                Ok(Variables::Yaml(value))
+            }
+            _ => Err("Unsupported file format (expected .json, .toml, or .yaml)".into()),
+        }
+    }
+}
+
 impl Migrator {
-    pub fn new(
-        base_path: PathBuf,
-        script_path: OsString,
-        variables: Option<HashMap<String, String>>,
-        use_pinned: bool,
-    ) -> Self {
+    pub fn new(base_path: PathBuf, script_path: OsString, use_pinned: bool) -> Self {
         Migrator {
             base_path,
             script_path,
-            variables: variables.unwrap_or_default(),
             use_pinned,
         }
     }
@@ -50,7 +100,6 @@ impl Migrator {
         Migrator::new(
             PathBuf::from("./static/example"),
             migration.clone(),
-            None,
             use_pinned,
         )
     }
@@ -116,7 +165,7 @@ impl Migrator {
 
     /// Opens the specified script file and generates a migration script, compiled
     /// using minijinja.
-    pub fn generate(&self) -> Result<Generation> {
+    pub fn generate(&self, variables: Option<Variables>) -> Result<Generation> {
         let mut env = Environment::new();
 
         // Add our migration script to environment:
@@ -151,7 +200,7 @@ impl Migrator {
 
         // Render with provided variables
         let tmpl = env.get_template("migration.sql")?;
-        let content = tmpl.render(context!(variables => self.variables))?;
+        let content = tmpl.render(context!(variables => variables.unwrap_or_default()))?;
 
         // Print which files were loaded (for debugging/verification)
         if cfg!(debug_assertions) {
@@ -179,7 +228,6 @@ mod tests {
         Migrator::new(
             PathBuf::from("./base_folder"),
             OsString::from("subfolder/migration_script"),
-            None,
             false,
         )
     }

@@ -10,6 +10,8 @@ clap = { version = "4.5.13", features = ["color", "derive"] }
 minijinja = { version = "2.6.0", features = ["loader"] }
 toml = "0.8"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9.34+deprecated"
 tokio = { version = "1.44", features = ["full"] }
 sqlx = { version = "0.8", features = [ "runtime-tokio", "tls-native-tls", "postgres" ] }
 chrono = "0.4.40"
