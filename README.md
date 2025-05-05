@@ -119,3 +119,5 @@ The migrator tool can then be configured to call that binary too, and operate in
 3. Migrator can be told this command, and will allow you to run normal migration commands except treating the output from this binary as a pseudo file system rather than actual folder.
 
 **Important**: Make sure this supports variables, and custom passing in of schema, etc.
+
+TODO: think about how to handle ordering.  Scenario: someone uses another package with its own migrations, version 2.3.0.  It then does its own migrations for a while on its own schema, some of which interact with tables from the other package.  Later, they update the upstream package from 2.3.0 to 3.1.4, where a number of migrations need to be applied.  Those migrations should be considered to take place after any local migrations that have been done to date.  How do we handle this?  E.g., do we have a local file in repo that specifies what order to apply upstream package migrations?  Maybe when you run it, it can check existing migrations, and specify new ones to be done at that point.
