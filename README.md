@@ -10,6 +10,7 @@ Here are some of my design goals with migrator:
 - [x] Ability to write custom hand-crafted migrations.
 - [x] Plain SQL mostly, or rather generates plain SQL that can be modified.
 - [x] Create empty migrations.
+- [ ] Pin variables in addition to SQL components
 - [ ] Allow migrations bundled in another package, like a framework.  See [Multiple package migrations design](#multiple-package-migrations-design) below.
 - [ ] Idempotently apply migrations to database.
   - [ ] Allow for 'adopting' a migration, where you record in the database that it's been applied, without doing anything.  Useful for if you're bringing in existing migrations from another system that have already been applied to the database.
@@ -25,7 +26,9 @@ Here are some of my design goals with migrator:
 - [ ] Find a good way for testing SQL/unit testing.
 - [ ] Report on which components have changes that have never been included in a migration.  Basically, check for the hash of that component and see if it's in any lock files, and if the migration includes that file in its SQL.
 - [ ] Store full schema changes applied in a migration table in database, so we have a record of what was done.
-- [ ] Variables supported, for substitution, as well as matrices to generate migrations for a bunch of sites.  Or maybe we never generate and store the files, since there are many tenants, and instead run them against each schema somehow without generating stored/saved files for each schema.
+- [ ] Variables supported, for substitution, as well as matrices to generate migrations for a bunch of sites.
+- [ ] Store variables used for execution within the database migration table.
+  - [ ] Allow encryption of variables in case they contain sensitive data.
 - [ ] Allow a migration to have some parts that apply to shared schema, and some that apply to tenant schemas (e.g., via matrix).  But even more complicated, allow us to reapply that change again, with different tenants, and it will only apply the tenant related changes to the new tenants, and not the shared schema changes.
 - [ ] Keep track of which migrations have been applied, so that when targeting a schema it will check which need to be applied and then apply all.
 - [ ] Handle secrets
@@ -33,6 +36,7 @@ Here are some of my design goals with migrator:
 - [ ] Watch a particular function or view, and re-apply automatically upon file change, to help with local testing.
   - [ ] Support a jinja template watch for local dev against local database, where if the rendered jinja template changes it gets re-applied.  Useful in cases where we're updating views that depend on each other, and want to automatically recreate all those views as we edit files.
 - [ ] Stretch goals:
+  - [ ] Allow reading data from file types like csv's and use in templates, so you can loop over csv data to create insert(s), updates, whatever.
   - [ ] Some clever way to watch changes in the view/function folder, and automatically update.  Functions are easier, but views will fail when columns change or they have dependencies.
     - [ ] I've tried having a schema dedicated to these things that are easy to throw away and rectrate, but the two problems are (a) it can get slow when there's more, making it hard to do in transactoin, and (b) I suspect we'll hit cases where can't be fully done inside transaction or rolled back.
   - [ ] Handle migration of views properly (e.g., when they depend on each other).
