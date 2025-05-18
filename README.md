@@ -10,7 +10,6 @@ Here are some of my design goals with migrator:
 - [x] Ability to write custom hand-crafted migrations.
 - [x] Plain SQL mostly, or rather generates plain SQL that can be modified.
 - [x] Create empty migrations.
-- [ ] Pin variables in addition to SQL components
 - [ ] Allow migrations bundled in another package, like a framework.  See [Multiple package migrations design](#multiple-package-migrations-design) below.
 - [ ] Idempotently apply migrations to database.
   - [ ] Allow for 'adopting' a migration, where you record in the database that it's been applied, without doing anything.  Useful for if you're bringing in existing migrations from another system that have already been applied to the database.
@@ -47,6 +46,7 @@ Here are some of my design goals with migrator:
   - [ ] Custom plugins or extensions.
   - [ ] Inspect postgresql to learn dependencies of views, to make it easy to drop and recreate exactly the ones needed when creating a new migration.
   - [ ] Syntax highlighting/themes like bat (may be excessive, particularly since bat and other tools can be used -- e.g., `migrator migration build 20240907212659-initial | bat -l sql`)
+  - [ ] Pin variables inside database (optionally encrypted?) in addition to SQL components, for audit/replay reasons.
 
 # Design
 
@@ -56,7 +56,7 @@ We have three primary folders:
   - A subfolder may be `<base migrator folder>/idempotent_schemas`, containing schemas that are safe to destroy and reapply.  They operate the same as components for now, but one day we may add special functionality around them.
 2. `<base migrator folder>/migrations`.  This folder contains subfolders, one for each migration, and those folders contain the migration script.  E.g., `20240802030220-support-roles/up.sql.jinja`.  These are minijinja templates, designed to produce plain SQL migration scripts.  In these templates, you can import components.
    - Containes a `pinned` file, which is a list of file names to their sha256 pinned file (see 3. below).
-3. `<base migrator folder>/pinned`.  This folder contains a copy of files as they were at a particular time that the migration was made stored by hash.  This allows the migration to be rerun/recreated even if the referenced file has changed.  Each migration, when pinned, creates (if it does not exist) a file for each referenced component, whose name is its sha256 sum, and whose location is within a subfolder with a prefix of the first two character.  E.g., `c8/c8fa8f7395e8e0c5e6a457a7c6cd4a1adf87e09cbcc99aa683b0c2eea7368a89`.  The `components.lock` file for the migration then includes the hash and name to be able to load the version from that time.
+3. `<base migrator folder>/objects`.  This folder contains a copy of files as they were at a particular time that the migration was made stored by hash.  This allows the migration to be rerun/recreated even if the referenced file has changed.  Check [Pinnig](#pinning) below for more details.
 
 Design goals:
 
@@ -133,3 +133,15 @@ The migrator tool can then be configured to call that binary too, and operate in
 **Important**: Make sure this supports variables, and custom passing in of schema, etc.
 
 TODO: think about how to handle ordering.  Scenario: someone uses another package with its own migrations, version 2.3.0.  It then does its own migrations for a while on its own schema, some of which interact with tables from the other package.  Later, they update the upstream package from 2.3.0 to 3.1.4, where a number of migrations need to be applied.  Those migrations should be considered to take place after any local migrations that have been done to date.  How do we handle this?  E.g., do we have a local file in repo that specifies what order to apply upstream package migrations?  Maybe when you run it, it can check existing migrations, and specify new ones to be done at that point.
+
+# Pinning
+
+A new pinning design is being worked on, that's intended to work a lot closer to the way git works.  Originally, I was going to allow minijinja to list which files/components were used as part of the migration, ensure we had an object (filename as hash, with contents) for each, and list them in a lock file for the migration.  However, my thoughts on handling variables has moved on to the point where I think they should be a runtime setting.  And being a runtime setting, there is no easy way to determine which path will be followed in a migration template, and therefore which files will or will not be included.
+
+In order to solve this, we'll use an implementation very similar to git, which allows us to list *every* file as it was at the time that migration was finalised.  Steps:
+
+1. Ensure an object (filename as hash with contents) exists for each component in an objects folder.
+2. Create (if it doesn't exist), a file that has a list of all files and their hashes as they were at that time in the root components folder.  For each folder, point that to a file in the objects folder that contains the same thing -- a list of all files and hashes, and for folders a reference to a new file that lists that folder's contents.
+3. Point the migration's lock file to the file that is the root list of all versions of the file used at the time of migration.
+
+In this way, we effectively pin *every* file with a mgiration, but in cases where folders don't change much, most files and folders will point to already existing objects.
