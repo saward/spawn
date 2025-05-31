@@ -94,16 +94,33 @@ impl PinStore {
     pub fn new(store_path: PathBuf, root: String) -> Result<Self> {
         // Loop over our root and read into memory the entire tree for this root:
         let mut files = HashMap::<String, PathBuf>::new();
-        Self::read_root("", &root, &mut files)?;
 
-        Ok(Self {
+        let mut store = Self {
             files,
-            root,
+            root: root.clone(),
             store_path,
-        })
+        };
+        store.read_root("", &root)?;
+
+        Ok(store)
     }
 
-    fn read_root(base_path: &str, root: &str, files: &mut HashMap<String, PathBuf>) -> Result<()> {
+    fn read_root(&mut self, base_path: &Path, root: &str) -> Result<()> {
+        let contents = read_hash_file(&self.store_path, root).context("cannot read root file")?;
+        let tree: Tree = toml::from_str(&contents)?;
+        println!("{:?}", tree);
+
+        for entry in tree.entries {
+            match entry.kind {
+                EntryKind::Blob => {
+                    let full_name = format!("{}/{}", base_path, &entry.name);
+                    self.files.insert(full_name.to_string(), v)
+                }
+                EntryKind::Tree => {
+                    self.read_root(base_path.join(PathBuf::from_str(entry.name)), &entry.hash)?;
+                }
+            };
+        }
         Ok(())
     }
 }
@@ -120,13 +137,26 @@ impl Store for PinStore {
     }
 }
 
+fn read_hash_file(base_path: &Path, hash: &str) -> std::io::Result<String> {
+    if hash.len() < 3 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Hash too short",
+        ));
+    }
+
+    let (first_two, rest) = hash.split_at(2);
+    let file_path = base_path.join(first_two).join(rest);
+
+    fs::read_to_string(file_path)
+}
+
 pub fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
     if dir.is_dir() {
-        let mut tree = String::new();
         let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(Result::ok).collect();
         entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
 
-        let mut built_tree = Tree::default();
+        let mut tree = Tree::default();
 
         for entry in entries {
             let path = entry.path();
@@ -137,16 +167,14 @@ pub fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
                 .unwrap_or_default();
             if path.is_dir() {
                 let branch = snapshot(store_path, &path)?;
-                tree.push_str(&format!("tree\t{}\t{}\n", branch, name));
-                built_tree.entries.push(Entry {
+                tree.entries.push(Entry {
                     kind: EntryKind::Tree,
                     name: name.to_string(),
                     hash: branch,
                 });
             } else {
                 let hash = pin_file(store_path, &path)?;
-                tree.push_str(&format!("blob\t{}\t{}\n", hash, name,));
-                built_tree.entries.push(Entry {
+                tree.entries.push(Entry {
                     kind: EntryKind::Blob,
                     name: name.to_string(),
                     hash,
@@ -154,7 +182,7 @@ pub fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
             }
         }
 
-        let contents = toml::to_string(&built_tree).unwrap();
+        let contents = toml::to_string(&tree).unwrap();
         let hash = pin_contents(store_path, contents)?;
 
         return Ok(hash);

@@ -181,10 +181,11 @@ impl Migrator {
 
         // Create and set up the component loader
         let store = if self.use_pinned {
+            println!("using pinned");
             let lock = self
                 .load_lock_file()
                 .context("could not load pinned files lock file")?;
-            let store = store::PinStore::new(self.components_folder(), lock.pin)?;
+            let store = store::PinStore::new(self.pinned_folder(), lock.pin)?;
             let store: Arc<dyn Store + Send + Sync> = Arc::new(store);
             store
         } else {
