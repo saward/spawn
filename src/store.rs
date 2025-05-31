@@ -5,39 +5,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use twox_hash::xxhash3_128;
 
-#[derive(Clone, Debug)]
-enum Node {
-    File { detail: NodeDetail, hash: String },
-    Folder { detail: NodeDetail, tree: Vec<Node> },
-}
-
-impl Node {
-    fn print_node(&self, depth: u16) {
-        match self {
-            Node::File { detail, hash } => {
-                println!("{} {:?}", "-".repeat(depth as usize), detail.name);
-            }
-            Node::Folder { detail, tree } => {
-                println!("{} {:?}", "-".repeat(depth as usize), detail.name);
-                for node in tree {
-                    node.print_node(depth + 1);
-                }
-            }
-        };
-    }
-
-    // /// Store will write this node's contents or tree to a file and then return
-    // /// a reference to its hash.
-    // fn store(&self) -> Result<String> {}
-}
-
-#[derive(Clone, Debug)]
-pub struct NodeDetail {
-    name: String,  // TODO: Symbolic filesystem location (e.g., "./components/blah.sql")
-    path: PathBuf, // Real filesystem location, which could be archive (e.g., "ab/cdefghijklmnop")
-}
-
-/// Stores the
 fn pin_file(store_path: &Path, file_path: &Path) -> Result<String> {
     let contents = fs::read_to_string(file_path)?;
 
@@ -144,50 +111,6 @@ pub fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
     Err(anyhow::anyhow!("wtf this isn't a folder?!?"))
 }
 
-// fn visit_dirs(dir: &Path) -> Result<Node> {
-//     if dir.is_dir() {
-//         let tree_detail = NodeDetail {
-//             name: dir
-//                 .file_name()
-//                 .unwrap_or_default()
-//                 .to_str()
-//                 .unwrap_or_default()
-//                 .to_string(),
-//             path: dir.to_path_buf(),
-//         };
-//         let mut tree: Vec<Node> = Vec::new();
-//         let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(Result::ok).collect();
-//         entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-//
-//         for entry in entries {
-//             let path = entry.path();
-//             if path.is_dir() {
-//                 println!("* {:?}", entry.path());
-//                 let branch = visit_dirs(&path)?;
-//                 tree.push(branch);
-//             } else {
-//                 let detail = NodeDetail {
-//                     name: path.to_str().unwrap_or_default().to_string(),
-//                     path: path.to_path_buf(),
-//                 };
-//
-//                 tree.push(Node::File {
-//                     detail,
-//                     hash: "Fake hash".to_string(),
-//                 });
-//                 println!("* {:?}", entry.path());
-//             }
-//         }
-//
-//         let root = Node::Folder {
-//             detail: tree_detail,
-//             tree,
-//         };
-//         return Ok(root);
-//     }
-//     Err(anyhow::anyhow!("wtf this isn't a folder?!?"))
-// }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,18 +128,3 @@ mod tests {
         Ok(())
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use std::path::PathBuf;
-//
-//     #[test]
-//     fn test_store_new() {
-//         let path = PathBuf::from("./static/example");
-//         let store = Store::new(path.clone()).unwrap();
-//
-//         store.tree.print_node(0);
-//         assert_eq!(store.folder, path);
-//     }
-// }
