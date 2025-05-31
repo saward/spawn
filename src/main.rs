@@ -1,12 +1,10 @@
 use migrator::config::{self, Config};
 use migrator::migrator::{Migrator, Variables};
-use migrator::pinfile::{LockData, LockEntry};
+use migrator::pinfile::LockData;
+use migrator::store;
 use sqlx::postgres::PgPoolOptions;
 use std::ffi::OsString;
 use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
-use twox_hash::xxhash3_128;
 
 use anyhow::{Context, Result};
 
@@ -44,7 +42,6 @@ enum MigrationCommands {
     Pin {
         /// Migration to pin
         migration: OsString,
-        variables: Option<Variables>,
     },
     /// Build a migration into SQL
     Build {
@@ -86,40 +83,13 @@ async fn main() -> Result<()> {
 
                 mg.create_migration()
             }
-            Some(MigrationCommands::Pin {
-                migration,
-                variables,
-            }) => {
+            Some(MigrationCommands::Pin { migration }) => {
                 let config = Migrator::temp_config(migration, false);
-                match config.generate(variables.clone()) {
-                    Ok(result) => {
-                        // let mut lock_data: LockData = Default::default();
-                        // for (name, content) in result.files {
-                        //     let hash = xxhash3_128::Hasher::oneshot(result.content.as_bytes());
-                        //     let hash = format!("{:032x}", hash);
-                        //     let dir = config.pinned_folder().join(&hash[..2]);
-                        //     let file = PathBuf::from(&hash[2..]);
-                        //
-                        //     lock_data.entries.insert(name, LockEntry { hash });
-                        //
-                        //     fs::create_dir_all(&dir)
-                        //         .context(format!("could not create all dir at {:?}", &dir))?;
-                        //     let path = dir.join(file);
-                        //
-                        //     if !std::path::Path::new(&path).exists() {
-                        //         let mut f = fs::File::create(&path)
-                        //             .context(format!("could not create file at {:?}", &path))?;
-                        //         f.write_all(content.as_bytes())
-                        //             .context("could not write bytes")?;
-                        //     }
-                        // }
-                        // let lock_file = config.lock_file_path();
-                        // let toml_str = toml::to_string_pretty(&lock_data)?;
-                        // fs::write(lock_file, toml_str)?;
-                        ()
-                    }
-                    Err(e) => return Err(e),
-                };
+                let root = store::snapshot(&config.pinned_folder(), &config.components_folder())?;
+                let lock_file = config.lock_file_path();
+                let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
+                fs::write(lock_file, toml_str)?;
+
                 Ok(())
             }
             Some(MigrationCommands::Build {

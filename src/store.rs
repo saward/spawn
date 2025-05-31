@@ -1,6 +1,4 @@
 use anyhow::{Context, Result};
-use std::collections::HashMap;
-use std::fmt;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -108,7 +106,7 @@ impl ArchiveStore {
     }
 }
 
-fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
+pub fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
     if dir.is_dir() {
         let mut tree = String::new();
         let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(Result::ok).collect();
