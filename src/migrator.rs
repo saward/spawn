@@ -16,6 +16,8 @@ static BASE_MIGRATION: &str = "BEGIN;
 COMMIT;
 ";
 
+static PINFILE_LOCK_NAME: &str = "lock.toml";
+
 /// Final SQL output generator
 #[derive(Debug)]
 pub struct Migrator {
@@ -147,11 +149,11 @@ impl Migrator {
         // Nightly has an add_extension that might be good to use one day if it
         // enters stable.
         let mut lock_file_name = self.script_path.clone();
-        lock_file_name.push("components.lock");
+        lock_file_name.push(PINFILE_LOCK_NAME);
 
         self.migrations_folder()
             .join(self.script_path.clone())
-            .join("components.lock")
+            .join(PINFILE_LOCK_NAME)
     }
 
     fn load_lock_file(&self) -> Result<LockData> {
