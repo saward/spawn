@@ -197,10 +197,15 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn test_snapshot() {
+    fn test_snapshot() -> Result<()> {
+        // Simple test to ensure it runs without error.
         let source = PathBuf::from("./static/example/components");
-        let root = snapshot(&PathBuf::from("./store"), &source).unwrap();
-        println!("root: {}", root);
+        let store_loc = PathBuf::from("./test-store");
+        let root = snapshot(&store_loc, &source)?;
+        assert!(root.len() > 0);
+        // Cleanup:
+        fs::remove_dir_all(&store_loc)?;
+        Ok(())
     }
 }
 
