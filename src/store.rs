@@ -86,20 +86,15 @@ impl Store for LiveStore {
 #[derive(Debug)]
 pub struct PinStore {
     files: HashMap<String, PathBuf>,
-    root: String,
     store_path: PathBuf,
 }
 
 impl PinStore {
     pub fn new(store_path: PathBuf, root: String) -> Result<Self> {
         // Loop over our root and read into memory the entire tree for this root:
-        let mut files = HashMap::<String, PathBuf>::new();
+        let files = HashMap::<String, PathBuf>::new();
 
-        let mut store = Self {
-            files,
-            root: root.clone(),
-            store_path,
-        };
+        let mut store = Self { files, store_path };
         store.read_root(&PathBuf::new(), &root)?;
 
         println!("{:?}", store.files);
