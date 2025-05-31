@@ -180,20 +180,19 @@ impl Migrator {
         env.add_template("migration.sql", &contents)?;
 
         // Create and set up the component loader
-        let lock_data = if self.use_pinned {
-            Some(
-                self.load_lock_file()
-                    .context("could not load pinned files lock file")?,
-            )
+        let store = if self.use_pinned {
+            let lock = self
+                .load_lock_file()
+                .context("could not load pinned files lock file")?;
+            let store = store::PinStore::new(self.components_folder(), lock.pin);
+            let store: Arc<dyn Store + Send + Sync> = Arc::new(store);
+            store
         } else {
-            None
+            let store = store::LiveStore::new(self.components_folder())?;
+            let store: Arc<dyn Store + Send + Sync> = Arc::new(store);
+            store
         };
 
-        // Create the store first
-        let live_store = store::LiveStore::new(self.components_folder());
-
-        // Then wrap it in Arc
-        let store: Arc<dyn Store + Send + Sync> = Arc::new(live_store?);
         let store_clone = store.clone();
 
         env.set_loader(move |name: &str| store_clone.load(name));

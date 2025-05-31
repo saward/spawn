@@ -63,13 +63,26 @@ impl Store for LiveStore {
 }
 
 #[derive(Debug)]
-pub struct ArchiveStore {
-    root: PathBuf,
+pub struct PinStore {
+    store_path: PathBuf,
+    root: String,
 }
 
-impl ArchiveStore {
-    pub fn new(folder: PathBuf, commit: String) -> Result<Self> {
-        Err(anyhow::anyhow!("not implemented"))
+impl PinStore {
+    pub fn new(store_path: PathBuf, root: String) -> Self {
+        Self { store_path, root }
+    }
+}
+
+impl Store for PinStore {
+    /// Returns the file from the live file system if it exists.
+    fn load(&self, name: &str) -> std::result::Result<Option<String>, minijinja::Error> {
+        Ok(None)
+        // if let Ok(contents) = std::fs::read_to_string(self.folder.join(name)) {
+        //     Ok(Some(contents))
+        // } else {
+        //     Ok(None)
+        // }
     }
 }
 
