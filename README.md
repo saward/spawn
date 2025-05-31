@@ -21,6 +21,7 @@ Here are some of my design goals with migrator:
 - [ ] Migration status checking, to see what's been applied to a database.
 - [ ] Easy to spin up new tenant schema.
 - [ ] Easy to migrate each tenant schema.
+- [ ] If you have a view or function that depends on components that have changed, it would be nice to have a way to alert that the view or function should be recreated because it will now be different.
 - [ ] Supporting migrations from multiple folders.  E.g., if a separate project provided some of your migrations, then you can apply migrations from both folders.
 - [ ] Find a good way for testing SQL/unit testing.
 - [ ] Report on which components have changes that have never been included in a migration.  Basically, check for the hash of that component and see if it's in any lock files, and if the migration includes that file in its SQL.
