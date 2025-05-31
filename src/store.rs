@@ -100,55 +100,67 @@ impl PinStore {
             root: root.clone(),
             store_path,
         };
-        store.read_root("", &root)?;
+        store.read_root(&PathBuf::new(), &root)?;
+
+        println!("{:?}", store.files);
 
         Ok(store)
     }
 
     fn read_root(&mut self, base_path: &Path, root: &str) -> Result<()> {
         let contents = read_hash_file(&self.store_path, root).context("cannot read root file")?;
-        let tree: Tree = toml::from_str(&contents)?;
-        println!("{:?}", tree);
+        let tree: Tree = toml::from_str(&contents).context("failed to parse tree TOML")?;
 
         for entry in tree.entries {
             match entry.kind {
                 EntryKind::Blob => {
-                    let full_name = format!("{}/{}", base_path, &entry.name);
-                    self.files.insert(full_name.to_string(), v)
+                    let full_name = format!("{}/{}", base_path.display(), &entry.name);
+                    let full_path = self.store_path.join(&hash_to_path(&entry.hash)?);
+                    self.files.insert(full_name, full_path);
                 }
                 EntryKind::Tree => {
-                    self.read_root(base_path.join(PathBuf::from_str(entry.name)), &entry.hash)?;
+                    let new_base = base_path.join(&entry.name);
+                    self.read_root(&new_base, &entry.hash)?;
                 }
-            };
+            }
         }
+
         Ok(())
     }
 }
 
 impl Store for PinStore {
-    /// Returns the file from the live file system if it exists.
+    /// Returns the file from the store if it exists.
     fn load(&self, name: &str) -> std::result::Result<Option<String>, minijinja::Error> {
-        Ok(None)
-        // if let Ok(contents) = std::fs::read_to_string(self.folder.join(name)) {
-        //     Ok(Some(contents))
-        // } else {
-        //     Ok(None)
-        // }
+        if let Some(path) = self.files.get(name) {
+            if let Ok(contents) = std::fs::read_to_string(path) {
+                Ok(Some(contents))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
     }
 }
 
-fn read_hash_file(base_path: &Path, hash: &str) -> std::io::Result<String> {
+/// Converts a hash string into a relative path like `c6/b8e869fa533155bbf2f0dd8fda9c68`.
+fn hash_to_path(hash: &str) -> Result<PathBuf> {
     if hash.len() < 3 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "Hash too short",
-        ));
+        return Err(anyhow::anyhow!("Hash too short"));
     }
 
     let (first_two, rest) = hash.split_at(2);
-    let file_path = base_path.join(first_two).join(rest);
+    Ok(PathBuf::from(first_two).join(rest))
+}
 
-    fs::read_to_string(file_path)
+/// Reads the file corresponding to the hash from the given base path.
+fn read_hash_file(base_path: &Path, hash: &str) -> Result<String> {
+    let relative_path = hash_to_path(hash)?;
+    let file_path = base_path.join(relative_path);
+    let contents = fs::read_to_string(file_path)?;
+
+    Ok(contents)
 }
 
 pub fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
