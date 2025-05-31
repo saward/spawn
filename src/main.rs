@@ -93,29 +93,29 @@ async fn main() -> Result<()> {
                 let config = Migrator::temp_config(migration, false);
                 match config.generate(variables.clone()) {
                     Ok(result) => {
-                        let mut lock_data: LockData = Default::default();
-                        for (name, content) in result.files {
-                            let hash = xxhash3_128::Hasher::oneshot(result.content.as_bytes());
-                            let hash = format!("{:032x}", hash);
-                            let dir = config.pinned_folder().join(&hash[..2]);
-                            let file = PathBuf::from(&hash[2..]);
-
-                            lock_data.entries.insert(name, LockEntry { hash });
-
-                            fs::create_dir_all(&dir)
-                                .context(format!("could not create all dir at {:?}", &dir))?;
-                            let path = dir.join(file);
-
-                            if !std::path::Path::new(&path).exists() {
-                                let mut f = fs::File::create(&path)
-                                    .context(format!("could not create file at {:?}", &path))?;
-                                f.write_all(content.as_bytes())
-                                    .context("could not write bytes")?;
-                            }
-                        }
-                        let lock_file = config.lock_file_path();
-                        let toml_str = toml::to_string_pretty(&lock_data)?;
-                        fs::write(lock_file, toml_str)?;
+                        // let mut lock_data: LockData = Default::default();
+                        // for (name, content) in result.files {
+                        //     let hash = xxhash3_128::Hasher::oneshot(result.content.as_bytes());
+                        //     let hash = format!("{:032x}", hash);
+                        //     let dir = config.pinned_folder().join(&hash[..2]);
+                        //     let file = PathBuf::from(&hash[2..]);
+                        //
+                        //     lock_data.entries.insert(name, LockEntry { hash });
+                        //
+                        //     fs::create_dir_all(&dir)
+                        //         .context(format!("could not create all dir at {:?}", &dir))?;
+                        //     let path = dir.join(file);
+                        //
+                        //     if !std::path::Path::new(&path).exists() {
+                        //         let mut f = fs::File::create(&path)
+                        //             .context(format!("could not create file at {:?}", &path))?;
+                        //         f.write_all(content.as_bytes())
+                        //             .context("could not write bytes")?;
+                        //     }
+                        // }
+                        // let lock_file = config.lock_file_path();
+                        // let toml_str = toml::to_string_pretty(&lock_data)?;
+                        // fs::write(lock_file, toml_str)?;
                         ()
                     }
                     Err(e) => return Err(e),

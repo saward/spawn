@@ -1,6 +1,5 @@
 use crate::pinfile::LockData;
-use crate::template::ComponentLoader;
-use std::collections::HashMap;
+use crate::store::{self, Store};
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
@@ -190,29 +189,21 @@ impl Migrator {
             None
         };
 
-        let loader = Arc::new(ComponentLoader::new(
-            self.components_folder(),
-            self.pinned_folder(),
-            lock_data,
-        ));
-        let loader_for_closure = loader.clone();
-        env.set_loader(move |name| loader_for_closure.load(name));
+        // Create the store first
+        let live_store = store::LiveStore::new(self.components_folder());
+
+        // Then wrap it in Arc
+        let store: Arc<dyn Store + Send + Sync> = Arc::new(live_store?);
+        let store_clone = store.clone();
+
+        env.set_loader(move |name: &str| store_clone.load(name));
 
         // Render with provided variables
         let tmpl = env.get_template("migration.sql")?;
         let content = tmpl.render(context!(variables => variables.unwrap_or_default()))?;
 
-        // Print which files were loaded (for debugging/verification)
-        if cfg!(debug_assertions) {
-            eprintln!("Loaded files during template rendering:");
-            for (name, _) in loader.get_loaded_files() {
-                eprintln!("  - {}", name);
-            }
-        }
-
         let result = Generation {
             content: content.to_string(),
-            files: loader.get_loaded_files(),
         };
 
         Ok(result)
@@ -253,5 +244,4 @@ mod tests {
 
 pub struct Generation {
     pub content: String,
-    pub files: HashMap<String, String>,
 }

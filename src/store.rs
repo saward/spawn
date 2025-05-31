@@ -67,30 +67,29 @@ fn pin_contents(store_path: &Path, contents: String) -> Result<String> {
 }
 
 pub trait Store {
-    fn get_file(&self, name: &str) -> Result<Option<String>>;
+    fn load(&self, name: &str) -> std::result::Result<Option<String>, minijinja::Error>;
 }
 
 #[derive(Debug)]
 pub struct LiveStore {
-    root: PathBuf,
+    folder: PathBuf,
 }
 
 /// Represents a snapshot of files and folders at a particular point in time.
 /// Used to retrieve files as they were at that moment.
 impl LiveStore {
-    // /// Folder represents the path to our history storage and current files.
-    // /// If root is provided then store will use the files from archive rather
-    // /// than the current live files.
-    // fn new(folder: PathBuf, root: Option<String>) -> Result<Self> {
-    //     let tree = visit_dirs(&folder)?;
-    //     Ok(Self { folder, tree })
-    // }
+    /// Folder represents the path to our history storage and current files.
+    /// If root is provided then store will use the files from archive rather
+    /// than the current live files.
+    pub fn new(folder: PathBuf) -> Result<Self> {
+        Ok(Self { folder })
+    }
 }
 
 impl Store for LiveStore {
     /// Returns the file from the live file system if it exists.
-    fn get_file(&self, name: &str) -> Result<Option<String>> {
-        if let Ok(contents) = std::fs::read_to_string(self.root.join(name)) {
+    fn load(&self, name: &str) -> std::result::Result<Option<String>, minijinja::Error> {
+        if let Ok(contents) = std::fs::read_to_string(self.folder.join(name)) {
             Ok(Some(contents))
         } else {
             Ok(None)
