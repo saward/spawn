@@ -7,9 +7,17 @@ use serde::{Deserialize, Serialize};
 pub const MIGRATION_FILE: &str = "migrator.toml";
 
 // A single file entry with its hash.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     pub db_connstring: String,
+    pub scripts_path: PathBuf,
+
+    #[serde(default = "default_environment")]
+    pub environment: String,
+}
+
+fn default_environment() -> String {
+    "prod".to_string()
 }
 
 impl Config {

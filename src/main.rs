@@ -2,6 +2,7 @@ use migrator::config::{self, Config};
 use migrator::migrator::{Migrator, Variables};
 use migrator::pinfile::LockData;
 use migrator::store;
+use minijinja::Environment;
 use sqlx::postgres::PgPoolOptions;
 use std::ffi::OsString;
 use std::fs;
@@ -28,6 +29,8 @@ enum Commands {
     Migration {
         #[command(subcommand)]
         command: Option<MigrationCommands>,
+        #[arg(short, long, global = true)]
+        environment: Option<String>,
     },
 }
 
@@ -70,69 +73,77 @@ async fn main() -> Result<()> {
         true => eprintln!("Debug mode is on"),
     }
 
+    // Load config from file:
+    let mut main_config = Config::load().context(format!(
+        "could not load config from {}",
+        config::MIGRATION_FILE
+    ))?;
+
     match &cli.command {
         Some(Commands::Init) => {
             todo!("Implement init command")
         }
-        Some(Commands::Migration { command }) => match command {
-            Some(MigrationCommands::New { name }) => {
-                let migration_name: String =
-                    format!("{}-{}", chrono::Utc::now().format("%Y%m%d%H%M%S"), name);
-                println!("creating migration with name {}", &migration_name);
-                let mg = Migrator::temp_config(&migration_name.into(), false);
+        Some(Commands::Migration {
+            command,
+            environment,
+        }) => {
+            main_config.environment = environment.clone().unwrap_or(main_config.environment);
+            match command {
+                Some(MigrationCommands::New { name }) => {
+                    let migration_name: String =
+                        format!("{}-{}", chrono::Utc::now().format("%Y%m%d%H%M%S"), name);
+                    println!("creating migration with name {}", &migration_name);
+                    let mg = Migrator::new(&main_config, migration_name.into(), false);
 
-                mg.create_migration()
-            }
-            Some(MigrationCommands::Pin { migration }) => {
-                let config = Migrator::temp_config(migration, false);
-                let root = store::snapshot(&config.pinned_folder(), &config.components_folder())?;
-                let lock_file = config.lock_file_path();
-                let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
-                fs::write(lock_file, toml_str)?;
+                    mg.create_migration()
+                }
+                Some(MigrationCommands::Pin { migration }) => {
+                    let config = Migrator::new(&main_config, migration.clone(), false);
+                    let root =
+                        store::snapshot(&config.pinned_folder(), &config.components_folder())?;
+                    let lock_file = config.lock_file_path();
+                    let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
+                    fs::write(lock_file, toml_str)?;
 
-                Ok(())
-            }
-            Some(MigrationCommands::Build {
-                migration,
-                pinned,
-                variables,
-            }) => {
-                let config = Migrator::temp_config(migration, *pinned);
-                match config.generate(variables.clone()) {
-                    Ok(result) => {
-                        println!("{}", result.content);
-                        ()
-                    }
-                    Err(e) => return Err(e),
-                };
-                Ok(())
-            }
-            Some(MigrationCommands::Apply {
-                migration,
-                variables,
-            }) => {
-                // Load config from file:
-                let main_config = Config::load().context(format!(
-                    "could not load config from {}",
-                    config::MIGRATION_FILE
-                ))?;
+                    Ok(())
+                }
+                Some(MigrationCommands::Build {
+                    migration,
+                    pinned,
+                    variables,
+                }) => {
+                    let config = Migrator::new(&main_config, migration.clone(), *pinned);
+                    match config.generate(variables.clone()) {
+                        Ok(result) => {
+                            println!("{}", result.content);
+                            ()
+                        }
+                        Err(e) => return Err(e),
+                    };
+                    Ok(())
+                }
+                Some(MigrationCommands::Apply {
+                    migration,
+                    variables,
+                }) => {
+                    let pool = PgPoolOptions::new()
+                        .max_connections(5)
+                        .connect(&main_config.db_connstring)
+                        .await?;
 
-                let pool = PgPoolOptions::new()
-                    .max_connections(5)
-                    .connect(&main_config.db_connstring)
-                    .await?;
+                    // Use the sqlx migrator
+                    let m =
+                        sqlx::migrate::Migrator::new(std::path::Path::new("./migrations")).await?;
+                    m.run(&pool).await?;
 
-                // Use the sqlx migrator
-                let m = sqlx::migrate::Migrator::new(std::path::Path::new("./migrations")).await?;
-                m.run(&pool).await?;
-
-                Ok(())
+                    Ok(())
+                }
+                None => {
+                    eprintln!("No migration subcommand specified");
+                    Ok(())
+                }
             }
-            None => {
-                eprintln!("No migration subcommand specified");
-                Ok(())
-            }
-        },
+        }
         None => Ok(()),
     }
 }
