@@ -74,7 +74,6 @@ impl LiveStore {
 impl Store for LiveStore {
     /// Returns the file from the live file system if it exists.
     fn load(&self, name: &str) -> std::result::Result<Option<String>, minijinja::Error> {
-        println!("loading name: {}", name);
         if let Ok(contents) = std::fs::read_to_string(self.folder.join(name)) {
             Ok(Some(contents))
         } else {
@@ -96,8 +95,6 @@ impl PinStore {
 
         let mut store = Self { files, store_path };
         store.read_root(&PathBuf::new(), &root)?;
-
-        println!("{:?}", store.files);
 
         Ok(store)
     }
