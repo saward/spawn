@@ -7,6 +7,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use anyhow::{Context, Result};
 use minijinja::{context, Environment};
@@ -191,6 +192,7 @@ impl Migrator {
         let store_clone = store.clone();
 
         env.set_loader(move |name: &str| store_clone.load(name));
+        env.add_function("gen_uuid_v4", gen_uuid_v4);
 
         // Render with provided variables
         let tmpl = env.get_template("migration.sql")?;
@@ -204,6 +206,10 @@ impl Migrator {
 
         Ok(result)
     }
+}
+
+fn gen_uuid_v4() -> Result<String, minijinja::Error> {
+    Ok(Uuid::new_v4().to_string())
 }
 
 #[cfg(test)]
