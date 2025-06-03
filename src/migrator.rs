@@ -1,6 +1,7 @@
 use crate::config;
 use crate::pinfile::LockData;
 use crate::store::{self, Store};
+use crate::template;
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
@@ -18,14 +19,10 @@ static BASE_MIGRATION: &str = "BEGIN;
 COMMIT;
 ";
 
-static PINFILE_LOCK_NAME: &str = "lock.toml";
-
 /// Final SQL output generator
 #[derive(Debug)]
 pub struct Migrator {
     config: config::Config,
-    /// Base path for all migration related files
-    base_path: PathBuf,
     /// Path for the script itself, set to the location under the migrations
     /// folder.
     script_path: OsString,
@@ -92,7 +89,6 @@ impl Migrator {
     pub fn new(config: &config::Config, script_path: OsString, use_pinned: bool) -> Self {
         Migrator {
             config: config.clone(),
-            base_path: config.scripts_path.clone(),
             script_path,
             use_pinned,
         }
@@ -101,98 +97,59 @@ impl Migrator {
     /// Creates the migration folder with blank setup.
     pub fn create_migration(&self) -> Result<()> {
         // Todo: return error if migration already exists.
-        let path = self.migration_folder();
+        let path = self.config.migration_folder(&self.script_path);
         if path.exists() {
             return Err(anyhow::anyhow!(
                 "folder for migration {:?} already exists, aborting.",
                 path,
             ));
         }
-        fs::create_dir_all(self.migration_folder())?;
+        fs::create_dir_all(&path)?;
 
         // Create our blank script file:
-        fs::write(path.join("script.sql"), BASE_MIGRATION)?;
+        fs::write(&path.join("script.sql"), BASE_MIGRATION)?;
 
         Ok(())
     }
 
-    pub fn pinned_folder(&self) -> PathBuf {
-        self.base_path.join("pinned")
-    }
-
-    pub fn components_folder(&self) -> PathBuf {
-        self.base_path.join("components")
-    }
-
-    pub fn migrations_folder(&self) -> PathBuf {
-        self.base_path.join("migrations")
-    }
-
-    pub fn migration_folder(&self) -> PathBuf {
-        self.migrations_folder().join(&self.script_path)
-    }
-
-    pub fn script_file_path(&self) -> PathBuf {
-        self.migrations_folder()
-            .join(self.script_path.clone())
-            .join("script.sql")
-    }
-
-    pub fn lock_file_path(&self) -> PathBuf {
-        // Nightly has an add_extension that might be good to use one day if it
-        // enters stable.
-        let mut lock_file_name = self.script_path.clone();
-        lock_file_name.push(PINFILE_LOCK_NAME);
-
-        self.migrations_folder()
-            .join(self.script_path.clone())
-            .join(PINFILE_LOCK_NAME)
-    }
-
-    fn load_lock_file(&self) -> Result<LockData> {
-        let lock_file = self.lock_file_path();
-        let contents = fs::read_to_string(lock_file)?;
-        let lock_data: LockData = toml::from_str(&contents)?;
-
-        Ok(lock_data)
+    pub fn script_file_path(&self) -> Result<PathBuf> {
+        let path = self.config.migration_script_file_path(&self.script_path);
+        Ok(path
+            .canonicalize()
+            .context(format!("Invalid script path for '{:?}'", path))?)
     }
 
     /// Opens the specified script file and generates a migration script, compiled
     /// using minijinja.
     pub fn generate(&self, variables: Option<Variables>) -> Result<Generation> {
-        let mut env = Environment::new();
-
-        // Add our migration script to environment:
-        let script_path = self.script_file_path().canonicalize().context(format!(
-            "Invalid script path for '{:?}'",
-            self.script_file_path()
-        ))?;
-
-        let contents = std::fs::read_to_string(&script_path).context(format!(
-            "Failed to read migration script '{}'",
-            script_path.display()
-        ))?;
-        env.add_template("migration.sql", &contents)?;
-
         // Create and set up the component loader
         let store = if self.use_pinned {
             println!("using pinned");
             let lock = self
-                .load_lock_file()
+                .config
+                .load_lock_file(&self.script_path)
                 .context("could not load pinned files lock file")?;
-            let store = store::PinStore::new(self.pinned_folder(), lock.pin)?;
+            let store = store::PinStore::new(self.config.pinned_folder(), lock.pin)?;
             let store: Arc<dyn Store + Send + Sync> = Arc::new(store);
             store
         } else {
-            let store = store::LiveStore::new(self.components_folder())?;
+            let store = store::LiveStore::new(self.config.components_folder())?;
             let store: Arc<dyn Store + Send + Sync> = Arc::new(store);
             store
         };
 
-        let store_clone = store.clone();
+        // let store_clone: String = store.clone();
 
-        env.set_loader(move |name: &str| store_clone.load(name));
-        env.add_function("gen_uuid_v4", gen_uuid_v4);
+        let mut env = template::template_env(store)?;
+
+        // Add our migration script to environment:
+        let full_script_path = self.script_file_path()?;
+
+        let contents = std::fs::read_to_string(&full_script_path).context(format!(
+            "Failed to read migration script '{}'",
+            full_script_path.display()
+        ))?;
+        env.add_template("migration.sql", &contents)?;
 
         // Render with provided variables
         let tmpl = env.get_template("migration.sql")?;
@@ -206,10 +163,6 @@ impl Migrator {
 
         Ok(result)
     }
-}
-
-fn gen_uuid_v4() -> Result<String, minijinja::Error> {
-    Ok(Uuid::new_v4().to_string())
 }
 
 #[cfg(test)]

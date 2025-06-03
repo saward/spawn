@@ -31,6 +31,10 @@ enum Commands {
         #[arg(short, long, global = true)]
         environment: Option<String>,
     },
+    Test {
+        #[command(subcommand)]
+        command: Option<TestCommands>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -63,6 +67,12 @@ enum MigrationCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum TestCommands {
+    /// Run a particular test
+    Run { name: OsString },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -92,10 +102,11 @@ async fn main() -> Result<()> {
                     mg.create_migration()
                 }
                 Some(MigrationCommands::Pin { migration }) => {
-                    let config = Migrator::new(&main_config, migration.clone(), false);
-                    let root =
-                        store::snapshot(&config.pinned_folder(), &config.components_folder())?;
-                    let lock_file = config.lock_file_path();
+                    let root = store::snapshot(
+                        &main_config.pinned_folder(),
+                        &main_config.components_folder(),
+                    )?;
+                    let lock_file = main_config.lock_file_path(&migration);
                     let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
                     fs::write(lock_file, toml_str)?;
 
@@ -134,6 +145,18 @@ async fn main() -> Result<()> {
                 }
                 None => {
                     eprintln!("No migration subcommand specified");
+                    Ok(())
+                }
+            }
+        }
+        Some(Commands::Test { command }) => {
+            match command {
+                Some(TestCommands::Run { name }) => {
+                    // Blah
+                    Ok(())
+                }
+                None => {
+                    eprintln!("No test subcommand specified");
                     Ok(())
                 }
             }

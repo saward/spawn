@@ -1,10 +1,13 @@
+use crate::pinfile::LockData;
 use anyhow::Result;
+use std::ffi::OsString;
 use std::fs;
 use std::{path::PathBuf, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
 pub const MIGRATION_FILE: &str = "spawn.toml";
+static PINFILE_LOCK_NAME: &str = "lock.toml";
 
 // A single file entry with its hash.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -28,5 +31,44 @@ impl Config {
         let config: Config = toml::from_str(&contents)?;
 
         Ok(config)
+    }
+
+    pub fn pinned_folder(&self) -> PathBuf {
+        self.scripts_path.join("pinned")
+    }
+
+    pub fn components_folder(&self) -> PathBuf {
+        self.scripts_path.join("components")
+    }
+
+    pub fn migrations_folder(&self) -> PathBuf {
+        self.scripts_path.join("migrations")
+    }
+
+    pub fn migration_folder(&self, script_path: &OsString) -> PathBuf {
+        self.migrations_folder().join(script_path)
+    }
+
+    pub fn migration_script_file_path(&self, script_path: &OsString) -> PathBuf {
+        self.migration_folder(script_path).join("script.sql")
+    }
+
+    pub fn lock_file_path(&self, script_path: &OsString) -> PathBuf {
+        // Nightly has an add_extension that might be good to use one day if it
+        // enters stable.
+        let mut lock_file_name = script_path.clone();
+        lock_file_name.push(PINFILE_LOCK_NAME);
+
+        self.migrations_folder()
+            .join(script_path)
+            .join(PINFILE_LOCK_NAME)
+    }
+
+    pub fn load_lock_file(&self, script_path: &OsString) -> Result<LockData> {
+        let lock_file = self.lock_file_path(script_path);
+        let contents = fs::read_to_string(lock_file)?;
+        let lock_data: LockData = toml::from_str(&contents)?;
+
+        Ok(lock_data)
     }
 }
