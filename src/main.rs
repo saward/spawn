@@ -68,11 +68,6 @@ enum MigrationCommands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    match cli.debug {
-        false => eprintln!("Debug mode is off"),
-        true => eprintln!("Debug mode is on"),
-    }
-
     // Load config from file:
     let mut main_config = Config::load().context(format!(
         "could not load config from {}",
