@@ -4,7 +4,7 @@ I like to lean heavily on the database.  That means I don't like to use tools th
 
 There are plenty of other migration solutions out there, but this one's mine.  The main alternative I've considered is sqitch, and while it seems to work pretty well, I've recently been looking at how to handle multiple tenants in a PostgreSQL database with a schema-per-tenant setup.  That means that I want to run the migrations per schema.  Unfortunately, sometimes I find that I need to mention specific names of the schemas or users, and when using psql's variables to substitute those in with sqitch, I hit unexpected limitations.
 
-Here are some of my design goals with migrator:
+Here are some of my design goals with spawn:
 
 - [x] Handle history of functions/stored procs, so we can see proper history.
 - [x] Ability to write custom hand-crafted migrations.
@@ -46,18 +46,18 @@ Here are some of my design goals with migrator:
   - [ ] SQL validation, perhaps similar to sqlx in Rust.
   - [ ] Custom plugins or extensions.
   - [ ] Inspect postgresql to learn dependencies of views, to make it easy to drop and recreate exactly the ones needed when creating a new migration.
-  - [ ] Syntax highlighting/themes like bat (may be excessive, particularly since bat and other tools can be used -- e.g., `migrator migration build 20240907212659-initial | bat -l sql`)
+  - [ ] Syntax highlighting/themes like bat (may be excessive, particularly since bat and other tools can be used -- e.g., `spawn migration build 20240907212659-initial | bat -l sql`)
   - [ ] Pin variables inside database (optionally encrypted?) in addition to SQL components, for audit/replay reasons.
 
 # Design
 
 We have three primary folders:
 
-1. `<base migrator folder>/components`.  This contains standalone SQL snippets that can be modified and reused.  These are minijinja templates, but they could be plain SQL.  The goal is to have proper change tracking for these, so that we can look at the history in git for that file and see how it has changed over time.
-  - A subfolder may be `<base migrator folder>/idempotent_schemas`, containing schemas that are safe to destroy and reapply.  They operate the same as components for now, but one day we may add special functionality around them.
-2. `<base migrator folder>/migrations`.  This folder contains subfolders, one for each migration, and those folders contain the migration script.  E.g., `20240802030220-support-roles/up.sql.jinja`.  These are minijinja templates, designed to produce plain SQL migration scripts.  In these templates, you can import components.
+1. `<base spawn folder>/components`.  This contains standalone SQL snippets that can be modified and reused.  These are minijinja templates, but they could be plain SQL.  The goal is to have proper change tracking for these, so that we can look at the history in git for that file and see how it has changed over time.
+  - A subfolder may be `<base spawn folder>/idempotent_schemas`, containing schemas that are safe to destroy and reapply.  They operate the same as components for now, but one day we may add special functionality around them.
+2. `<base spawn folder>/migrations`.  This folder contains subfolders, one for each migration, and those folders contain the migration script.  E.g., `20240802030220-support-roles/up.sql.jinja`.  These are minijinja templates, designed to produce plain SQL migration scripts.  In these templates, you can import components.
    - Containes a `pinned` file, which is a list of file names to their sha256 pinned file (see 3. below).
-3. `<base migrator folder>/objects`.  This folder contains a copy of files as they were at a particular time that the migration was made stored by hash.  This allows the migration to be rerun/recreated even if the referenced file has changed.  Check [Pinnig](#pinning) below for more details.
+3. `<base spawn folder>/objects`.  This folder contains a copy of files as they were at a particular time that the migration was made stored by hash.  This allows the migration to be rerun/recreated even if the referenced file has changed.  Check [Pinnig](#pinning) below for more details.
 
 Design goals:
 
@@ -71,17 +71,17 @@ Design goals:
 
 Proposal of commands:
 
-- `migrator init`
-- `migrator migration new <name in kebab case>` creates a new migration with the provided name, picking an appropriate datetime.
-- `migrator migration pin <migration>` pins the migration with the current components.
-- `migrator migration build <migration> --pinned=<true|false>` builds the migration into the needed SQL.  `--pinned is required`.
+- `spawn init`
+- `spawn migration new <name in kebab case>` creates a new migration with the provided name, picking an appropriate datetime.
+- `spawn migration pin <migration>` pins the migration with the current components.
+- `spawn migration build <migration> --pinned=<true|false>` builds the migration into the needed SQL.  `--pinned is required`.
 
 ## Create a new migration
 
 Last parameter is the name of the migration:
 
 ```
-migrator migration new "is-the-best"
+spawn migration new "is-the-best"
 ```
 
 Creates a migration folder with a timestamp followed by the name, along with a ready to go `script.sql` file for the migration.
@@ -89,7 +89,7 @@ Creates a migration folder with a timestamp followed by the name, along with a r
 ## Apply migration to database
 
 ```
-migrator migration apply 20240907212659-initial
+spawn migration apply 20240907212659-initial
 ```
 
 # Thoughts
@@ -106,7 +106,7 @@ Have been recommended to  avoiding having views depend on other views.  And part
 # Testing
 
 ```
-docker exec -ti migrator-db psql -U migrator
+docker exec -ti spawn-db psql -U spawn
 ```
 
 # Examples
@@ -125,7 +125,7 @@ cargo run migration build 20240907212659-initial static/example.json
 
 Provide a standardised way for a package to expose its db migrations.  Then, when another package with a binary imports it, it ensures there is a way to run the binary so that it outputs the migrations in the standardised way.
 
-The migrator tool can then be configured to call that binary too, and operate in all the usual ways for things that make sense (e.g., can't pin?).  So you can see which migrations are unapplied, and which have been applied, etc.
+The spawn tool can then be configured to call that binary too, and operate in all the usual ways for things that make sense (e.g., can't pin?).  So you can see which migrations are unapplied, and which have been applied, etc.
 
 1. Framework has public function that returns embedded migrations
 2. Project that imports the framework has a subcommand that outputs the migrations when invoked in an expected format, to the terminal.

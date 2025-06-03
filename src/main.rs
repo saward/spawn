@@ -1,8 +1,8 @@
-use migrator::config::{self, Config};
-use migrator::migrator::{Migrator, Variables};
-use migrator::pinfile::LockData;
-use migrator::store;
 use minijinja::Environment;
+use spawn::config::{self, Config};
+use spawn::migrator::{Migrator, Variables};
+use spawn::pinfile::LockData;
+use spawn::store;
 use sqlx::postgres::PgPoolOptions;
 use std::ffi::OsString;
 use std::fs;

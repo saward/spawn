@@ -4,7 +4,7 @@ use std::{path::PathBuf, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
-pub const MIGRATION_FILE: &str = "migrator.toml";
+pub const MIGRATION_FILE: &str = "spawn.toml";
 
 // A single file entry with its hash.
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -1,0 +1,2 @@
+db_connstring = "postgres://spawn:spawn@localhost:7654/spawn"
+scripts_path = "./static/example"

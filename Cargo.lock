@@ -907,25 +907,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38d1115007560874e373613744c6fba374c17688327a71c1476d1a5954cc857b"
 
 [[package]]
-name = "migrator"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "minijinja",
- "serde",
- "serde_json",
- "serde_yaml",
- "sqlx",
- "tokio",
- "toml",
- "twox-hash",
- "uuid",
- "walkdir",
-]
-
-[[package]]
 name = "minijinja"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1477,6 +1458,25 @@ checksum = "c970269d99b64e60ec3bd6ad27270092a5394c4e309314b18ae3fe575695fbe8"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "spawn"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "minijinja",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sqlx",
+ "tokio",
+ "toml",
+ "twox-hash",
+ "uuid",
+ "walkdir",
 ]
 
 [[package]]
