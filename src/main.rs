@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Test { command }) => {
             match command {
-                Some(TestCommands::Run { name }) => {
+                Some(TestCommands::Run { name: _ }) => {
                     // Blah
                     Ok(())
                 }

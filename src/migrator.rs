@@ -1,5 +1,4 @@
 use crate::config;
-use crate::pinfile::LockData;
 use crate::store::{self, Store};
 use crate::template;
 use std::ffi::OsString;
@@ -8,10 +7,9 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use anyhow::{Context, Result};
-use minijinja::{context, Environment};
+use minijinja::context;
 use serde::Serialize;
 
 static BASE_MIGRATION: &str = "BEGIN;
@@ -124,7 +122,6 @@ impl Migrator {
     pub fn generate(&self, variables: Option<Variables>) -> Result<Generation> {
         // Create and set up the component loader
         let store = if self.use_pinned {
-            println!("using pinned");
             let lock = self
                 .config
                 .load_lock_file(&self.script_path)
@@ -137,8 +134,6 @@ impl Migrator {
             let store: Arc<dyn Store + Send + Sync> = Arc::new(store);
             store
         };
-
-        // let store_clone: String = store.clone();
 
         let mut env = template::template_env(store)?;
 
