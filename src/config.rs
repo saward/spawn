@@ -53,7 +53,7 @@ impl Config {
         self.migration_folder(script_path).join("script.sql")
     }
 
-    pub fn lock_file_path(&self, script_path: &OsString) -> PathBuf {
+    pub fn migration_lock_file_path(&self, script_path: &OsString) -> PathBuf {
         // Nightly has an add_extension that might be good to use one day if it
         // enters stable.
         let mut lock_file_name = script_path.clone();
@@ -64,9 +64,8 @@ impl Config {
             .join(PINFILE_LOCK_NAME)
     }
 
-    pub fn load_lock_file(&self, script_path: &OsString) -> Result<LockData> {
-        let lock_file = self.lock_file_path(script_path);
-        let contents = fs::read_to_string(lock_file)?;
+    pub fn load_lock_file(&self, lock_file_path: &PathBuf) -> Result<LockData> {
+        let contents = fs::read_to_string(lock_file_path)?;
         let lock_data: LockData = toml::from_str(&contents)?;
 
         Ok(lock_data)

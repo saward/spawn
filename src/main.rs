@@ -1,7 +1,8 @@
 use spawn::config::{self, Config};
-use spawn::migrator::{Migrator, Variables};
+use spawn::migrator::Migrator;
 use spawn::pinfile::LockData;
 use spawn::store;
+use spawn::variables::Variables;
 use sqlx::postgres::PgPoolOptions;
 use std::ffi::OsString;
 use std::fs;
@@ -106,7 +107,7 @@ async fn main() -> Result<()> {
                         &main_config.pinned_folder(),
                         &main_config.components_folder(),
                     )?;
-                    let lock_file = main_config.lock_file_path(&migration);
+                    let lock_file = main_config.migration_lock_file_path(&migration);
                     let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
                     fs::write(lock_file, toml_str)?;
 

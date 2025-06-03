@@ -28,61 +28,6 @@ pub struct Migrator {
     use_pinned: bool,
 }
 
-#[derive(Clone, Debug)]
-pub enum Variables {
-    Json(serde_json::Value),
-    Toml(toml::Value),
-    Yaml(serde_yaml::Value),
-}
-
-impl Serialize for Variables {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Variables::Json(v) => v.serialize(serializer),
-            Variables::Toml(v) => v.serialize(serializer),
-            Variables::Yaml(v) => v.serialize(serializer),
-        }
-    }
-}
-
-impl Default for Variables {
-    fn default() -> Self {
-        Self::Json(serde_json::Value::default())
-    }
-}
-
-impl FromStr for Variables {
-    type Err = String;
-
-    fn from_str(path_str: &str) -> Result<Self, Self::Err> {
-        let path = Path::new(path_str);
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read file {}: {}", path_str, e))?;
-
-        match path.extension().and_then(|s| s.to_str()) {
-            Some("json") => {
-                let value: serde_json::Value =
-                    serde_json::from_str(&content).map_err(|e| format!("Invalid JSON: {}", e))?;
-                Ok(Variables::Json(value))
-            }
-            Some("toml") => {
-                let value: toml::Value =
-                    toml::from_str(&content).map_err(|e| format!("Invalid TOML: {}", e))?;
-                Ok(Variables::Toml(value))
-            }
-            Some("yaml") | Some("yml") => {
-                let value: serde_yaml::Value =
-                    serde_yaml::from_str(&content).map_err(|e| format!("Invalid YAML: {}", e))?;
-                Ok(Variables::Yaml(value))
-            }
-            _ => Err("Unsupported file format (expected .json, .toml, or .yaml)".into()),
-        }
-    }
-}
-
 impl Migrator {
     pub fn new(config: &config::Config, script_path: OsString, use_pinned: bool) -> Self {
         Migrator {
@@ -119,44 +64,24 @@ impl Migrator {
 
     /// Opens the specified script file and generates a migration script, compiled
     /// using minijinja.
-    pub fn generate(&self, variables: Option<Variables>) -> Result<Generation> {
-        // Create and set up the component loader
-        let store = if self.use_pinned {
-            let lock = self
-                .config
-                .load_lock_file(&self.script_path)
-                .context("could not load pinned files lock file")?;
-            let store = store::PinStore::new(self.config.pinned_folder(), lock.pin)?;
-            let store: Arc<dyn Store + Send + Sync> = Arc::new(store);
-            store
+    pub fn generate(
+        &self,
+        variables: Option<crate::variables::Variables>,
+    ) -> Result<template::Generation> {
+        let lock_file = if self.use_pinned {
+            Some(self.config.migration_lock_file_path(&self.script_path))
         } else {
-            let store = store::LiveStore::new(self.config.components_folder())?;
-            let store: Arc<dyn Store + Send + Sync> = Arc::new(store);
-            store
+            None
         };
-
-        let mut env = template::template_env(store)?;
 
         // Add our migration script to environment:
         let full_script_path = self.script_file_path()?;
-
         let contents = std::fs::read_to_string(&full_script_path).context(format!(
             "Failed to read migration script '{}'",
             full_script_path.display()
         ))?;
-        env.add_template("migration.sql", &contents)?;
 
-        // Render with provided variables
-        let tmpl = env.get_template("migration.sql")?;
-        let content = tmpl.render(
-            context!(env => self.config.environment, variables => variables.unwrap_or_default()),
-        )?;
-
-        let result = Generation {
-            content: content.to_string(),
-        };
-
-        Ok(result)
+        template::generate(&self.config, lock_file, &contents, variables)
     }
 }
 
@@ -190,8 +115,4 @@ mod tests {
     //         config.lock_file_path(),
     //     );
     // }
-}
-
-pub struct Generation {
-    pub content: String,
 }
