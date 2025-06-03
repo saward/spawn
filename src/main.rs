@@ -1,4 +1,3 @@
-use minijinja::Environment;
 use spawn::config::{self, Config};
 use spawn::migrator::{Migrator, Variables};
 use spawn::pinfile::LockData;
@@ -118,8 +117,8 @@ async fn main() -> Result<()> {
                     Ok(())
                 }
                 Some(MigrationCommands::Apply {
-                    migration,
-                    variables,
+                    migration: _,
+                    variables: _,
                 }) => {
                     let pool = PgPoolOptions::new()
                         .max_connections(5)
