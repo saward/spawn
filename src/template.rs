@@ -3,17 +3,12 @@ use crate::store::{self, Store};
 use crate::template;
 use crate::variables::Variables;
 use minijinja::Environment;
-use std::ffi::OsString;
-use std::fs;
-use std::path::Path;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use anyhow::{Context, Result};
 use minijinja::context;
-use serde::Serialize;
 
 pub fn template_env(store: Arc<dyn Store + Send + Sync>) -> Result<Environment<'static>> {
     let mut env = Environment::new();

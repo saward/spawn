@@ -1,16 +1,10 @@
 use crate::config;
-use crate::store::{self, Store};
 use crate::template;
 use std::ffi::OsString;
 use std::fs;
-use std::path::Path;
 use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use minijinja::context;
-use serde::Serialize;
 
 static BASE_MIGRATION: &str = "BEGIN;
 
@@ -87,9 +81,9 @@ impl Migrator {
 
 #[cfg(test)]
 mod tests {
-    use crate::migrator::Migrator;
-    use std::{ffi::OsString, path::PathBuf};
-
+    // use crate::migrator::Migrator;
+    // use std::{ffi::OsString, path::PathBuf};
+    //
     // fn test_config() -> Migrator {
     //     Migrator::new(
     //         PathBuf::from("./base_folder"),
