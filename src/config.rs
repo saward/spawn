@@ -45,12 +45,24 @@ impl Config {
         self.scripts_path.join("migrations")
     }
 
+    pub fn tests_folder(&self) -> PathBuf {
+        self.scripts_path.join("tests")
+    }
+
     pub fn migration_folder(&self, script_path: &OsString) -> PathBuf {
         self.migrations_folder().join(script_path)
     }
 
     pub fn migration_script_file_path(&self, script_path: &OsString) -> PathBuf {
         self.migration_folder(script_path).join("script.sql")
+    }
+
+    pub fn test_folder(&self, test_path: &OsString) -> PathBuf {
+        self.tests_folder().join(test_path)
+    }
+
+    pub fn test_file_path(&self, test_path: &OsString) -> PathBuf {
+        self.test_folder(test_path).join("test.sql")
     }
 
     pub fn migration_lock_file_path(&self, script_path: &OsString) -> PathBuf {
