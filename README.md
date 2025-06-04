@@ -137,12 +137,23 @@ TODO: think about how to handle ordering.  Scenario: someone uses another packag
 
 # Pinning
 
-A new pinning design is being worked on, that's intended to work a lot closer to the way git works.  Originally, I was going to allow minijinja to list which files/components were used as part of the migration, ensure we had an object (filename as hash, with contents) for each, and list them in a lock file for the migration.  However, my thoughts on handling variables has moved on to the point where I think they should be a runtime setting.  And being a runtime setting, there is no easy way to determine which path will be followed in a migration template, and therefore which files will or will not be included.
+In order to ensure that earlier migrations can be run with the same source components, we support pinning.  What this does is take a snapshot of the components folder as it is at that moment, and stores a reference to that snapshot in the migration folder.  From then on, the migration can be run using the pinned version.
 
-In order to solve this, we'll use an implementation very similar to git, which allows us to list *every* file as it was at the time that migration was finalised.  Steps:
+Under the hood, this works in a similar way to git, storing copies of files in the `/pinned` subfolder, with filenames matching their hash.  The list of files and their hashes are stored as tree objects in the same `/pinned` folder, and the migration's config points to the root tree for its snapshot.
 
-1. Ensure an object (filename as hash with contents) exists for each component in an objects folder.
-2. Create (if it doesn't exist), a file that has a list of all files and their hashes as they were at that time in the root components folder.  For each folder, point that to a file in the objects folder that contains the same thing -- a list of all files and hashes, and for folders a reference to a new file that lists that folder's contents.
-3. Point the migration's lock file to the file that is the root list of all versions of the file used at the time of migration.
+It is intended that you commit the `/pinned` folder to your repository.
 
-In this way, we effectively pin *every* file with a mgiration, but in cases where folders don't change much, most files and folders will point to already existing objects.
+To pin:
+
+```bash
+spawn migration pin <migration name>
+```
+
+# Testing
+
+For now, we will support only postgres for testing.  Testing will require psql to be available.
+
+- Allow configuration of how to invoke psql.
+- Provide scaffolding for automatic use of create database <x> with template <y>.
+  - Configurable whether failed or successful tests tear down the test database or not.
+- Follow the postgres testing style of producing an expected output, and then comparing future runs to that expected output with a diff.
