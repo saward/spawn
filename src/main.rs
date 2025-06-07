@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
     // Load config from file:
     let mut main_config = Config::load().context(format!(
         "could not load config from {}",
-        config::MIGRATION_FILE
+        config::CONFIG_FILE_NAME
     ))?;
 
     match &cli.command {

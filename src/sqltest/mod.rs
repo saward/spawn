@@ -48,15 +48,14 @@ impl Tester {
 
         let gen = template::generate(&self.config, lock_file, &contents, variables)?;
         let content = gen.content;
-        // docker exec -i spawn-db psql -U spawn spawn
-        let mut child = Command::new("docker")
-            .arg("exec")
-            .arg("-i")
-            .arg("spawn-db")
-            .arg("psql")
-            .arg("-U")
-            .arg("spawn")
-            .arg("spawn")
+
+        let mut parts = self.config.psql_command.clone();
+        let command = parts.remove(0);
+        let mut child = &mut Command::new(command);
+        for arg in parts {
+            child = child.arg(arg);
+        }
+        let mut child = child
             .stdin(Stdio::piped())
             .spawn()
             .expect("Failed to execute command");

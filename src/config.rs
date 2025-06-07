@@ -1,12 +1,12 @@
 use crate::pinfile::LockData;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::ffi::OsString;
 use std::fs;
-use std::{path::PathBuf, str::FromStr};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-pub const MIGRATION_FILE: &str = "spawn.toml";
+pub const CONFIG_FILE_NAME: &str = "spawn.toml";
 static PINFILE_LOCK_NAME: &str = "lock.toml";
 
 // A single file entry with its hash.
@@ -17,6 +17,8 @@ pub struct Config {
 
     #[serde(default = "default_environment")]
     pub environment: String,
+
+    pub psql_command: Vec<String>,
 }
 
 fn default_environment() -> String {
@@ -25,12 +27,23 @@ fn default_environment() -> String {
 
 impl Config {
     pub fn load() -> Result<Config> {
-        let config_file = PathBuf::from_str(MIGRATION_FILE)?;
-        let contents = fs::read_to_string(config_file)?;
+        let settings: Config = config::Config::builder()
+            .add_source(config::File::with_name("spawn.toml"))
+            // Used to override the version in a repo with your own custom local overrides.
+            .add_source(config::File::with_name("spawn.override.toml").required(false))
+            // Add in settings from the environment (with a prefix of APP)
+            // Eg.. `APP_DEBUG=1 ./target/app` would set the `debug` key
+            .add_source(config::Environment::with_prefix("SPAWN"))
+            .set_default("environment", "prod")
+            .context("could not set default environment")?
+            .build()
+            .unwrap()
+            .try_deserialize()
+            .context("could not deserialise config struct")?;
 
-        let config: Config = toml::from_str(&contents)?;
+        println!("db con string: {}", settings.db_connstring);
 
-        Ok(config)
+        Ok(settings)
     }
 
     pub fn pinned_folder(&self) -> PathBuf {
