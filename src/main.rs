@@ -1,6 +1,7 @@
 use spawn::config::{self, Config};
 use spawn::migrator::Migrator;
 use spawn::pinfile::LockData;
+use spawn::sqltest::Tester;
 use spawn::store;
 use spawn::variables::Variables;
 use sqlx::postgres::PgPoolOptions;
@@ -150,18 +151,23 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Some(Commands::Test { command }) => {
-            match command {
-                Some(TestCommands::Run { name: _ }) => {
-                    // Blah
-                    Ok(())
-                }
-                None => {
-                    eprintln!("No test subcommand specified");
-                    Ok(())
-                }
+        Some(Commands::Test { command }) => match command {
+            Some(TestCommands::Run { name }) => {
+                let config = Tester::new(&main_config, name.clone());
+                match config.generate(None) {
+                    Ok(result) => {
+                        println!("{}", result);
+                        ()
+                    }
+                    Err(e) => return Err(e),
+                };
+                Ok(())
             }
-        }
+            None => {
+                eprintln!("No test subcommand specified");
+                Ok(())
+            }
+        },
         None => Ok(()),
     }
 }
