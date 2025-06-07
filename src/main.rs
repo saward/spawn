@@ -71,8 +71,16 @@ enum MigrationCommands {
 
 #[derive(Subcommand)]
 enum TestCommands {
+    Build {
+        name: OsString,
+    },
     /// Run a particular test
-    Run { name: OsString },
+    Run {
+        name: OsString,
+    },
+    Expect {
+        name: OsString,
+    },
 }
 
 #[tokio::main]
@@ -152,13 +160,32 @@ async fn main() -> Result<()> {
             }
         }
         Some(Commands::Test { command }) => match command {
-            Some(TestCommands::Run { name }) => {
+            Some(TestCommands::Build { name }) => {
                 let config = Tester::new(&main_config, name.clone());
                 match config.generate(None) {
                     Ok(result) => {
                         println!("{}", result);
                         ()
                     }
+                    Err(e) => return Err(e),
+                };
+                Ok(())
+            }
+            Some(TestCommands::Run { name }) => {
+                let config = Tester::new(&main_config, name.clone());
+                match config.run(None) {
+                    Ok(result) => {
+                        println!("{:?}", result);
+                        ()
+                    }
+                    Err(e) => return Err(e),
+                };
+                Ok(())
+            }
+            Some(TestCommands::Expect { name }) => {
+                let tester = Tester::new(&main_config, name.clone());
+                match tester.save_expected(None) {
+                    Ok(_) => (),
                     Err(e) => return Err(e),
                 };
                 Ok(())

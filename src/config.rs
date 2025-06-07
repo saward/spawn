@@ -41,8 +41,6 @@ impl Config {
             .try_deserialize()
             .context("could not deserialise config struct")?;
 
-        println!("db con string: {}", settings.db_connstring);
-
         Ok(settings)
     }
 

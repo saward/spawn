@@ -1,15 +1,22 @@
 use crate::config;
 use crate::template;
 use std::ffi::OsString;
+use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::str;
 
 use anyhow::{Context, Result};
 
 pub struct Tester {
     config: config::Config,
     script_path: OsString,
+}
+
+#[derive(Debug)]
+pub struct TestOutcome {
+    matches: bool,
 }
 
 impl Tester {
@@ -28,10 +35,16 @@ impl Tester {
         self.config.spawn_folder.join("tests")
     }
 
+    pub fn test_folder(&self) -> PathBuf {
+        self.tests_folder().join(self.script_path.clone())
+    }
+
     pub fn script_file_path(&self) -> PathBuf {
-        self.tests_folder()
-            .join(self.script_path.clone())
-            .join("test.sql")
+        self.test_folder().join("test.sql")
+    }
+
+    pub fn expected_file_path(&self) -> PathBuf {
+        self.test_folder().join("expected")
     }
 
     /// Opens the specified script file and generates a migration script, compiled
@@ -57,21 +70,52 @@ impl Tester {
         }
         let mut child = child
             .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
             .spawn()
-            .expect("Failed to execute command");
+            .expect("failed to execute command");
 
-        let mut stdin = child.stdin.take().expect("Failed to open stdin");
+        let mut stdin = child.stdin.take().expect("failed to open stdin");
         std::thread::spawn(move || {
             stdin
                 .write(&content.as_bytes())
-                .expect("Failed to write to stdin");
+                .expect("failed to write to stdin");
         });
 
-        let status = child.wait()?;
-        if !status.success() {
-            eprintln!("psql exited with status {}", status);
+        let result = child.wait_with_output()?;
+        if !result.status.success() {
+            eprintln!("psql exited with status {}", result.status);
         }
 
-        Ok("".to_string())
+        let out: String = str::from_utf8(&result.stdout)?.to_string();
+
+        Ok(out)
+    }
+
+    // Runs the test and compares the actual output to expected.
+    pub fn run(&self, variables: Option<crate::variables::Variables>) -> Result<TestOutcome> {
+        let expected = fs::read_to_string(self.expected_file_path())
+            .context("unable to read expectations file")?;
+
+        let content = self
+            .generate(variables)
+            .context("could not generate test script")?;
+
+        let outcome = TestOutcome {
+            matches: expected.eq(&content),
+        };
+
+        Ok(outcome)
+    }
+
+    pub fn save_expected(&self, variables: Option<crate::variables::Variables>) -> Result<()> {
+        let content = self.generate(variables)?;
+        fs::write(self.expected_file_path(), content)
+            .context("unable to write expectation file")?;
+
+        Ok(())
+    }
+
+    pub fn compare(&self, generated: String, expected: String) -> bool {
+        return false;
     }
 }
