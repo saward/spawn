@@ -21,11 +21,11 @@ impl Tester {
     }
 
     pub fn components_folder(&self) -> PathBuf {
-        self.config.scripts_path.join("components")
+        self.config.spawn_folder.join("components")
     }
 
     pub fn tests_folder(&self) -> PathBuf {
-        self.config.scripts_path.join("tests")
+        self.config.spawn_folder.join("tests")
     }
 
     pub fn script_file_path(&self) -> PathBuf {

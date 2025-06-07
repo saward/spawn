@@ -13,7 +13,7 @@ static PINFILE_LOCK_NAME: &str = "lock.toml";
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     pub db_connstring: String,
-    pub scripts_path: PathBuf,
+    pub spawn_folder: PathBuf,
 
     #[serde(default = "default_environment")]
     pub environment: String,
@@ -47,19 +47,19 @@ impl Config {
     }
 
     pub fn pinned_folder(&self) -> PathBuf {
-        self.scripts_path.join("pinned")
+        self.spawn_folder.join("pinned")
     }
 
     pub fn components_folder(&self) -> PathBuf {
-        self.scripts_path.join("components")
+        self.spawn_folder.join("components")
     }
 
     pub fn migrations_folder(&self) -> PathBuf {
-        self.scripts_path.join("migrations")
+        self.spawn_folder.join("migrations")
     }
 
     pub fn tests_folder(&self) -> PathBuf {
-        self.scripts_path.join("tests")
+        self.spawn_folder.join("tests")
     }
 
     pub fn migration_folder(&self, script_path: &OsString) -> PathBuf {

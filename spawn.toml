@@ -1,3 +1,3 @@
 db_connstring = "postgres://spawn:spawn@localhost:7654/spawn"
-scripts_path = "./static/example"
+spawn_folder = "./static/example"
 psql_command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
