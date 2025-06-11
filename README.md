@@ -96,9 +96,11 @@ Here are some of my design goals with spawn:
   - [ ] Key template functions so that you can begin a transaction, but at the end you can optionally commit or rollback, based on a migration apply flag.  This allows running 'apply' to test that there's no errors, but rollback afterwards in test mode.
   - [ ] Predefined way of expressing a section in a migration for rollback.  Gets called under specific conditions.
 - [ ] Migration status checking, to see what's been applied to a database.
+- [ ] Repeatable migrations, including hashing the output (with variables perhaps) to check if it's been applied yet, and apply it if not.
+- [ ] Mark a migration as draft, so it does not yet get applied to database.
 - [ ] Easy to spin up new tenant schema.
 - [ ] Easy to migrate each tenant schema.
-- [ ] If you have a view or function that depends on components that have changed, it would be nice to have a way to alert that the view or function should be recreated because it will now be different.
+- [ ] If you have a view or function that depends on components that have changed, it would be nice to have a way to alert that the view or function should be recreated because it will now be different.  Maybe via https://www.postgresql.org/docs/current/catalog-pg-depend.html.
 - [ ] Supporting migrations from multiple folders.  E.g., if a separate project provided some of your migrations, then you can apply migrations from both folders.
 - [ ] Find a good way for testing SQL/unit testing.  Maybe something like what pgtap has.  Maybe two types of tests: ones that run after a migration, based on the state of the db at that time, and ones that run after all migrations, that check for regressions.  Although, the latter seem more/most useful.  Not sure there's any need for testing old changes that are potentially replaced.  Perhaps valuable in cases where you apply to multiple databases (e.g., drupal is installed across many machines), so you want to ensure that each step of a migration works given the unique state of that database.  So perhaps value for both types of tests.
   - [ ] If useful, create helper functions like pgtap has, and optionally apply them to the database at test time, or to the copy that is used for tests.
@@ -113,16 +115,17 @@ Here are some of my design goals with spawn:
 - [ ] Ability to preview in neovim and/or vscode the outputted sql, as you make changes to the migration template.
 - [ ] Watch a particular function or view, and re-apply automatically upon file change, to help with local testing.
   - [ ] Support a jinja template watch for local dev against local database, where if the rendered jinja template changes it gets re-applied.  Useful in cases where we're updating views that depend on each other, and want to automatically recreate all those views as we edit files.
-- [ ] Stretch goals:
-  - [ ] Allow reading data from file types like csv's and use in templates, so you can loop over csv data to create insert(s), updates, whatever.
-  - [ ] Some clever way to watch changes in the view/function folder, and automatically update.  Functions are easier, but views will fail when columns change or they have dependencies.
-    - [ ] I've tried having a schema dedicated to these things that are easy to throw away and rectrate, but the two problems are (a) it can get slow when there's more, making it hard to do in transactoin, and (b) I suspect we'll hit cases where can't be fully done inside transaction or rolled back.
-  - [ ] Handle migration of views properly (e.g., when they depend on each other).
-  - [ ] Reverting.  For now, likely this will assume you're performing DDL in a transaction in most cases.  Later, want to support something more official, particularly for cases where transactions are not possible or feasible.
-  - [ ] Flatten schema.  E.g., deploy to local db with unique random values for variables (e.g., schema and user names), export again, and replace all references to the unique schema name with template variables again.
-  - [ ] Examine view dependencies, so that when these are updated we can check if the child views need to be deleted and recreated.
-  - [ ] SQL validation, perhaps similar to sqlx in Rust.
-  - [ ] Custom plugins or extensions.
-  - [ ] Inspect postgresql to learn dependencies of views, to make it easy to drop and recreate exactly the ones needed when creating a new migration.
-  - [ ] Syntax highlighting/themes like bat (may be excessive, particularly since bat and other tools can be used -- e.g., `spawn migration build 20240907212659-initial | bat -l sql`)
-  - [ ] Pin variables inside database (optionally encrypted?) in addition to SQL components, for audit/replay reasons.
+- [ ] Allow reading data from file types like csv's and use in templates, so you can loop over csv data to create insert(s), updates, whatever.
+- [ ] Some clever way to watch changes in the view/function folder, and automatically update.  Functions are easier, but views will fail when columns change or they have dependencies.
+  - [ ] I've tried having a schema dedicated to these things that are easy to throw away and rectrate, but the two problems are (a) it can get slow when there's more, making it hard to do in transactoin, and (b) I suspect we'll hit cases where can't be fully done inside transaction or rolled back.
+- [ ] Handle migration of views properly (e.g., when they depend on each other).
+- [ ] Reverting.  For now, likely this will assume you're performing DDL in a transaction in most cases.  Later, want to support something more official, particularly for cases where transactions are not possible or feasible.
+- [ ] Flatten schema.  E.g., deploy to local db with unique random values for variables (e.g., schema and user names), export again, and replace all references to the unique schema name with template variables again.
+- [ ] Examine view dependencies, so that when these are updated we can check if the child views need to be deleted and recreated.
+- [ ] SQL validation, perhaps similar to sqlx in Rust.
+- [ ] Custom plugins or extensions.
+- [ ] Inspect postgresql to learn dependencies of views, to make it easy to drop and recreate exactly the ones needed when creating a new migration.
+- [ ] Syntax highlighting/themes like bat (may be excessive, particularly since bat and other tools can be used -- e.g., `spawn migration build 20240907212659-initial | bat -l sql`)
+- [ ] Pin variables inside database (optionally encrypted?) in addition to SQL components, for audit/replay reasons.
+- [ ] Migration dependencies, so that we can allow applying migrations out of order, but only if their dependencies have been applied.
+- [ ] Handle deterministic migrations somehow with non-deterministic variables.  E.g., `gen_uuid_v4` could return a new value on each invocation.  Need to some clever way to ensure it returns the same value with each future invotation.  Maybe some kind of migration-local storage eaech time certain functions are called.
