@@ -23,3 +23,6 @@ anyhow = "1.0"
 walkdir = "2"
 
 uuid = { version = "1.17", features = ["v4"] }
+
+dissimilar = "1.0"
+similar = "2.7.0"

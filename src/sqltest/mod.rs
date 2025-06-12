@@ -1,5 +1,7 @@
 use crate::config;
 use crate::template;
+use similar::DiffableStr;
+use similar::{ChangeTag, TextDiff};
 use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
@@ -100,10 +102,15 @@ impl Tester {
             .generate(variables)
             .context("could not generate test script")?;
 
-        let outcome = TestOutcome {
-            matches: expected.eq(&content),
+        let matches = match self.compare(&content, &expected) {
+            Ok(()) => true,
+            Err(differences) => {
+                println!("Differences found:\n{}", differences);
+                false
+            }
         };
 
+        let outcome = TestOutcome { matches };
         Ok(outcome)
     }
 
@@ -115,7 +122,54 @@ impl Tester {
         Ok(())
     }
 
-    pub fn compare(&self, generated: String, expected: String) -> bool {
-        return false;
+    pub fn compare(&self, generated: &str, expected: &str) -> std::result::Result<(), String> {
+        let diff = dissimilar::diff(generated, expected);
+
+        let mut differences = String::new();
+        let mut generated_line = 1;
+        let mut diff_found = false;
+
+        for chunk in diff {
+            match chunk {
+                dissimilar::Chunk::Equal(s) => {
+                    Self::append_lines(&mut differences, " ", &mut generated_line, s, true);
+                }
+                dissimilar::Chunk::Delete(s) => {
+                    diff_found = true;
+                    Self::append_lines(&mut differences, "-", &mut generated_line, s, false);
+                }
+                dissimilar::Chunk::Insert(s) => {
+                    diff_found = true;
+                    Self::append_lines(&mut differences, "+", &mut generated_line, s, true);
+                }
+            }
+        }
+
+        if !diff_found {
+            return Ok(());
+        }
+
+        Err(differences)
+    }
+
+    fn append_lines(
+        differences: &mut String,
+        prefix: &str,
+        start_line: &mut usize,
+        s: &str,
+        count_lines: bool,
+    ) {
+        for line in s.split_inclusive('\n') {
+            differences.push_str(&format!("{} {: >6}: {}", prefix, *start_line, line));
+
+            // Ensure newline at end if missing
+            if !line.ends_with('\n') {
+                differences.push('\n');
+            }
+
+            if count_lines {
+                *start_line += line.matches('\n').count();
+            }
+        }
     }
 }
