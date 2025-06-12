@@ -24,5 +24,5 @@ walkdir = "2"
 
 uuid = { version = "1.17", features = ["v4"] }
 
-dissimilar = "1.0"
-similar = "2.7.0"
+similar = { version = "2.7.0", features = [ "inline" ] }
+console = "0.15"

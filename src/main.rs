@@ -174,13 +174,15 @@ async fn main() -> Result<()> {
             Some(TestCommands::Run { name }) => {
                 let config = Tester::new(&main_config, name.clone());
                 match config.run(None) {
-                    Ok(result) => {
-                        println!("{:?}", result);
-                        ()
-                    }
+                    Ok(result) => match result.diff {
+                        None => return Ok(()),
+                        Some(diff) => {
+                            println!("{}", diff);
+                            return Err(anyhow::anyhow!("differences found in test"));
+                        }
+                    },
                     Err(e) => return Err(e),
                 };
-                Ok(())
             }
             Some(TestCommands::Expect { name }) => {
                 let tester = Tester::new(&main_config, name.clone());

@@ -1,8 +1,11 @@
 use crate::config;
 use crate::template;
+use console::{style, Style};
+use minijinja::tests::Test;
 use similar::DiffableStr;
 use similar::{ChangeTag, TextDiff};
 use std::ffi::OsString;
+use std::fmt;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -18,7 +21,7 @@ pub struct Tester {
 
 #[derive(Debug)]
 pub struct TestOutcome {
-    matches: bool,
+    pub diff: Option<String>,
 }
 
 impl Tester {
@@ -102,16 +105,14 @@ impl Tester {
             .generate(variables)
             .context("could not generate test script")?;
 
-        let matches = match self.compare(&content, &expected) {
-            Ok(()) => true,
-            Err(differences) => {
-                println!("Differences found:\n{}", differences);
-                false
-            }
+        let outcome = match self.compare(&content, &expected) {
+            Ok(()) => TestOutcome { diff: None },
+            Err(differences) => TestOutcome {
+                diff: Some(differences.to_string()),
+            },
         };
 
-        let outcome = TestOutcome { matches };
-        Ok(outcome)
+        return Ok(outcome);
     }
 
     pub fn save_expected(&self, variables: Option<crate::variables::Variables>) -> Result<()> {
@@ -123,64 +124,59 @@ impl Tester {
     }
 
     pub fn compare(&self, generated: &str, expected: &str) -> std::result::Result<(), String> {
-        let diff = dissimilar::diff(generated, expected);
-        let mut writer = DiffWriter::new();
+        let diff = TextDiff::from_lines(generated, expected);
 
-        for chunk in diff {
-            writer.append_chunk(chunk);
+        let mut diff_display = String::new();
+
+        for (idx, group) in diff.grouped_ops(3).iter().enumerate() {
+            if idx > 0 {
+                diff_display.push_str(&format!("{:-^1$}", "-", 80));
+            }
+            for op in group {
+                for change in diff.iter_inline_changes(op) {
+                    let (sign, s) = match change.tag() {
+                        ChangeTag::Delete => ("-", Style::new().red()),
+                        ChangeTag::Insert => ("+", Style::new().green()),
+                        ChangeTag::Equal => (" ", Style::new().dim()),
+                    };
+                    diff_display.push_str(&format!(
+                        "{}{} |{}",
+                        style(Line(change.old_index())).dim(),
+                        style(Line(change.new_index())).dim(),
+                        s.apply_to(sign).bold(),
+                    ));
+                    for (emphasized, value) in change.iter_strings_lossy() {
+                        if emphasized {
+                            diff_display.push_str(&format!(
+                                "{}",
+                                s.apply_to(value).underlined().on_black()
+                            ));
+                        } else {
+                            diff_display.push_str(&format!("{}", s.apply_to(value)));
+                        }
+                    }
+                    if change.missing_newline() {
+                        diff_display.push('\n');
+                    }
+                }
+            }
         }
 
-        if writer.diff_found {
-            Err(writer.differences)
-        } else {
-            Ok(())
+        if diff_display.len() > 0 {
+            return Err(diff_display);
         }
+
+        Ok(())
     }
 }
 
-struct DiffWriter {
-    differences: String,
-    generated_line: usize,
-    diff_found: bool,
-}
+struct Line(Option<usize>);
 
-impl DiffWriter {
-    fn new() -> Self {
-        Self {
-            differences: String::new(),
-            generated_line: 1,
-            diff_found: false,
-        }
-    }
-
-    fn append_chunk(&mut self, chunk: dissimilar::Chunk<'_>) {
-        match chunk {
-            dissimilar::Chunk::Equal(s) => {
-                self.append_lines(" ", s, true);
-            }
-            dissimilar::Chunk::Delete(s) => {
-                self.diff_found = true;
-                self.append_lines("-", s, false);
-            }
-            dissimilar::Chunk::Insert(s) => {
-                self.diff_found = true;
-                self.append_lines("+", s, true);
-            }
-        }
-    }
-
-    fn append_lines(&mut self, prefix: &str, s: &str, count_lines: bool) {
-        for line in s.split_inclusive('\n') {
-            self.differences
-                .push_str(&format!("{} {: >6}: {}", prefix, self.generated_line, line));
-
-            if !line.ends_with('\n') {
-                self.differences.push('\n');
-            }
-
-            if count_lines {
-                self.generated_line += line.matches('\n').count();
-            }
+impl fmt::Display for Line {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.0 {
+            None => write!(f, "    "),
+            Some(idx) => write!(f, "{:<4}", idx + 1),
         }
     }
 }
