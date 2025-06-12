@@ -124,51 +124,62 @@ impl Tester {
 
     pub fn compare(&self, generated: &str, expected: &str) -> std::result::Result<(), String> {
         let diff = dissimilar::diff(generated, expected);
-
-        let mut differences = String::new();
-        let mut generated_line = 1;
-        let mut diff_found = false;
+        let mut writer = DiffWriter::new();
 
         for chunk in diff {
-            match chunk {
-                dissimilar::Chunk::Equal(s) => {
-                    Self::append_lines(&mut differences, " ", &mut generated_line, s, true);
-                }
-                dissimilar::Chunk::Delete(s) => {
-                    diff_found = true;
-                    Self::append_lines(&mut differences, "-", &mut generated_line, s, false);
-                }
-                dissimilar::Chunk::Insert(s) => {
-                    diff_found = true;
-                    Self::append_lines(&mut differences, "+", &mut generated_line, s, true);
-                }
-            }
+            writer.append_chunk(chunk);
         }
 
-        if !diff_found {
-            return Ok(());
+        if writer.diff_found {
+            Err(writer.differences)
+        } else {
+            Ok(())
         }
+    }
+}
 
-        Err(differences)
+struct DiffWriter {
+    differences: String,
+    generated_line: usize,
+    diff_found: bool,
+}
+
+impl DiffWriter {
+    fn new() -> Self {
+        Self {
+            differences: String::new(),
+            generated_line: 1,
+            diff_found: false,
+        }
     }
 
-    fn append_lines(
-        differences: &mut String,
-        prefix: &str,
-        start_line: &mut usize,
-        s: &str,
-        count_lines: bool,
-    ) {
-        for line in s.split_inclusive('\n') {
-            differences.push_str(&format!("{} {: >6}: {}", prefix, *start_line, line));
+    fn append_chunk(&mut self, chunk: dissimilar::Chunk<'_>) {
+        match chunk {
+            dissimilar::Chunk::Equal(s) => {
+                self.append_lines(" ", s, true);
+            }
+            dissimilar::Chunk::Delete(s) => {
+                self.diff_found = true;
+                self.append_lines("-", s, false);
+            }
+            dissimilar::Chunk::Insert(s) => {
+                self.diff_found = true;
+                self.append_lines("+", s, true);
+            }
+        }
+    }
 
-            // Ensure newline at end if missing
+    fn append_lines(&mut self, prefix: &str, s: &str, count_lines: bool) {
+        for line in s.split_inclusive('\n') {
+            self.differences
+                .push_str(&format!("{} {: >6}: {}", prefix, self.generated_line, line));
+
             if !line.ends_with('\n') {
-                differences.push('\n');
+                self.differences.push('\n');
             }
 
             if count_lines {
-                *start_line += line.matches('\n').count();
+                self.generated_line += line.matches('\n').count();
             }
         }
     }
