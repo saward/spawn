@@ -1,8 +1,6 @@
 use crate::config;
 use crate::template;
 use console::{style, Style};
-use minijinja::tests::Test;
-use similar::DiffableStr;
 use similar::{ChangeTag, TextDiff};
 use std::ffi::OsString;
 use std::fmt;

@@ -1,4 +1,3 @@
--- {{ env }}
 {% set dbname = "exampletest" %}
 create database {{dbname}} with template spawn;
 \c {{dbname}}
