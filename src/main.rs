@@ -78,6 +78,10 @@ enum TestCommands {
     Run {
         name: OsString,
     },
+    /// Run a test and compare to expected
+    Compare {
+        name: OsString,
+    },
     Expect {
         name: OsString,
     },
@@ -174,6 +178,17 @@ async fn main() -> Result<()> {
             Some(TestCommands::Run { name }) => {
                 let config = Tester::new(&main_config, name.clone());
                 match config.run(None) {
+                    Ok(result) => {
+                        println!("{}", result);
+                        ()
+                    },
+                    Err(e) => return Err(e),
+                };
+                Ok(())
+            }
+            Some(TestCommands::Compare { name }) => {
+                let config = Tester::new(&main_config, name.clone());
+                match config.run_compare(None) {
                     Ok(result) => match result.diff {
                         None => return Ok(()),
                         Some(diff) => {

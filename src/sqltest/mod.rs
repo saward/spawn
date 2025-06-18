@@ -65,6 +65,14 @@ impl Tester {
         let gen = template::generate(&self.config, lock_file, &contents, variables)?;
         let content = gen.content;
 
+
+        Ok(content)
+    }
+
+    // Runs the test and compares the actual output to expected.
+    pub fn run(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
+        let content = self.generate(variables.clone())?;
+
         let mut parts = self.config.psql_command.clone();
         let command = parts.remove(0);
         let mut child = &mut Command::new(command);
@@ -89,21 +97,17 @@ impl Tester {
             eprintln!("psql exited with status {}", result.status);
         }
 
-        let out: String = str::from_utf8(&result.stdout)?.to_string();
+        let generated: String = str::from_utf8(&result.stdout)?.to_string();
 
-        Ok(out)
+        return Ok(generated);
     }
 
-    // Runs the test and compares the actual output to expected.
-    pub fn run(&self, variables: Option<crate::variables::Variables>) -> Result<TestOutcome> {
+    pub fn run_compare(&self, variables: Option<crate::variables::Variables>) -> Result<TestOutcome> {
+        let generated = self.run(variables)?;
         let expected = fs::read_to_string(self.expected_file_path())
             .context("unable to read expectations file")?;
 
-        let content = self
-            .generate(variables)
-            .context("could not generate test script")?;
-
-        let outcome = match self.compare(&content, &expected) {
+        let outcome = match self.compare(&generated, &expected) {
             Ok(()) => TestOutcome { diff: None },
             Err(differences) => TestOutcome {
                 diff: Some(differences.to_string()),
@@ -114,7 +118,7 @@ impl Tester {
     }
 
     pub fn save_expected(&self, variables: Option<crate::variables::Variables>) -> Result<()> {
-        let content = self.generate(variables)?;
+        let content = self.run(variables)?;
         fs::write(self.expected_file_path(), content)
             .context("unable to write expectation file")?;
 
@@ -122,7 +126,7 @@ impl Tester {
     }
 
     pub fn compare(&self, generated: &str, expected: &str) -> std::result::Result<(), String> {
-        let diff = TextDiff::from_lines(generated, expected);
+        let diff = TextDiff::from_lines(expected, generated);
 
         let mut diff_display = String::new();
 
