@@ -3,51 +3,45 @@ name: Build & Release CLI
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*'          # triggers on tags like v1.2.0
 
 permissions:
-  contents: write
+  contents: write      # softprops/action-gh-release needs this
 
 jobs:
   build:
+    name: Build & Release – ${{ matrix.target }}
     runs-on: ubuntu-latest
-    env:
-      CARGO_TERM_COLOR: always
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-gnu
+          - aarch64-unknown-linux-musl
 
     steps:
       - uses: actions/checkout@v4
 
-      # Install the Rust toolchain (maintained action)
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      # Compile with cross (+ built-in rust-cache)
+      - name: Build with cross
+        uses: houseabsolute/actions-rust-cross@v1  # :contentReference[oaicite:0]{index=0}
         with:
-          toolchain: stable
+          command: build
+          target: ${{ matrix.target }}
+          args: "--release --locked"
+          strip: true            # strip symbols where possible
+          toolchain: stable      # installs via dtolnay/rust-toolchain
 
-      # Add the musl target so the binary is fully static
-      - run: rustup target add x86_64-unknown-linux-musl
-
-      # Cache crates.io registry, git deps, and build artefacts
-      - name: Cache cargo registry & target
-        uses: actions/cache@v4              # v4 = new cache backend, Feb 2025
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      # Build the release binary
-      - name: Build static Linux binary
-        run: cargo build --release --target x86_64-unknown-linux-musl
-
-      # Package the binary into a tarball
+      # Package the binary
       - name: Package
+        shell: bash
         run: |
-          BIN=target/x86_64-unknown-linux-musl/release/migration-cli
-          tar -czf migration-cli-${{ github.ref_name }}-linux-x64.tar.gz \
-              -C $(dirname "$BIN") $(basename "$BIN")
+          BIN=target/${{ matrix.target }}/release/migration-cli
+          TAR=migration-cli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+          tar -czf "$TAR" -C "$(dirname "$BIN")" "$(basename "$BIN")"
 
-      # Attach the artefact to the GitHub Release
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
+      # Upload to (or create) the GitHub Release
+      - name: Upload asset to release
+        uses: softprops/action-gh-release@v2   # latest v2.x is Node-20 ready 
         with:
-          files: migration-cli-${{ github.ref_name }}-linux-x64.tar.gz
+          files: migration-cli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
