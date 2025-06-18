@@ -1,0 +1,53 @@
+name: Build & Release CLI
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Install the Rust toolchain (maintained action)
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      # Add the musl target so the binary is fully static
+      - run: rustup target add x86_64-unknown-linux-musl
+
+      # Cache crates.io registry, git deps, and build artefacts
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4              # v4 = new cache backend, Feb 2025
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # Build the release binary
+      - name: Build static Linux binary
+        run: cargo build --release --target x86_64-unknown-linux-musl
+
+      # Package the binary into a tarball
+      - name: Package
+        run: |
+          BIN=target/x86_64-unknown-linux-musl/release/migration-cli
+          tar -czf migration-cli-${{ github.ref_name }}-linux-x64.tar.gz \
+              -C $(dirname "$BIN") $(basename "$BIN")
+
+      # Attach the artefact to the GitHub Release
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: migration-cli-${{ github.ref_name }}-linux-x64.tar.gz

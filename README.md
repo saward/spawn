@@ -126,6 +126,7 @@ Here are some of my design goals with spawn:
 - [ ] Syntax highlighting/themes like bat (may be excessive, particularly since bat and other tools can be used -- e.g., `spawn migration build 20240907212659-initial | bat -l sql`)
 - [ ] Migration dependencies, so that we can allow applying migrations out of order, but only if their dependencies have been applied.
 - [ ] Handle deterministic migrations somehow with non-deterministic variables, particularly for tests where the same output is expected.  E.g., `gen_uuid_v4` would return a new value on each invocation.  Need to some clever way to ensure it returns the same value with each future invotation.  Maybe some kind of migration-local storage eaech time certain functions are called, so subsequent calls to the test produce the same results.
+  - [ ] Interim option is to track when an undeterministic function is called, and optionally report on that when it's used as part of a test.
 - [ ] Github action to call this easily in Github's CI/CD.
 - [ ] Enable writing scripts.  We have migrations, and tests, but what if we want to run actions against a database that aren't part of a migration?  E.g., to update, insert, or delete data for some test we are doing locally.  Would be handy to use the same reusable components for such scripts.
 - [ ] Advisory lock like sqitch has, to avoid multiple deployments all trying to apply the same migration at the same time: `pg_advisory_lock` etc.
