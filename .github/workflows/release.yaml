@@ -36,12 +36,12 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          BIN=target/${{ matrix.target }}/release/migration-cli
-          TAR=migration-cli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+          BIN=target/${{ matrix.target }}/release/spawn
+          TAR=spawn-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
           tar -czf "$TAR" -C "$(dirname "$BIN")" "$(basename "$BIN")"
 
       # Upload to (or create) the GitHub Release
       - name: Upload asset to release
         uses: softprops/action-gh-release@v2   # latest v2.x is Node-20 ready 
         with:
-          files: migration-cli-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+          files: spawn-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
