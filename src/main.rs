@@ -16,7 +16,6 @@ const RESET: &str = "\x1b[0m";
 const BOLD: &str = "\x1b[1m";
 const RED: &str = "\x1b[31m";
 const GREEN: &str = "\x1b[32m";
-const YELLOW: &str = "\x1b[33m";
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]

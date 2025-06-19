@@ -91,7 +91,7 @@ Here are some of my design goals with spawn:
 - [ ] Testing
   - [x] `spawn test run <test>`: Allow creating a test script that you run against a database, which compares the output to expected output, and returns diff and exit status 1 if there's a difference.
   - [x] `spawn test expect <test>` to generate the output expectations.
-  - [ ] Option to run all tests.
+  - [x] Option to run all tests (`spawn test compare`).
   - [ ] Migration specific tests that run when migration is applied (similar to Sqitch).
   - [ ] If useful, create helper functions like pgtap has, and optionally apply them to the database at test time, or to the copy that is used for tests.
   - [ ] Watch a particular function or view, and re-apply automatically upon file change, to help with local testing.
