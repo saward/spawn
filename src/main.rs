@@ -12,6 +12,12 @@ use anyhow::{Context, Result};
 
 use clap::{Parser, Subcommand};
 
+const RESET: &str = "\x1b[0m";
+const BOLD: &str = "\x1b[1m";
+const RED: &str = "\x1b[31m";
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
+
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Cli {
@@ -208,6 +214,7 @@ async fn main() -> Result<()> {
                 };
 
                 let mut failed = false;
+
                 for test_file in test_files {
                     let config = Tester::new(&main_config, test_file.clone());
                     let name = test_file
@@ -217,12 +224,14 @@ async fn main() -> Result<()> {
                     match config.run_compare(None) {
                         Ok(result) => match result.diff {
                             None => {
-                                println!("{} passed:", &name);
+                                println!("{}[PASS]{} {}", GREEN, RESET, name);
                             }
                             Some(diff) => {
                                 failed = true;
-                                println!("{} failed:", &name);
+                                println!("\n{}[FAIL]{} {}{}{}", RED, RESET, BOLD, name, RESET);
+                                println!("{}--- Diff ---{}", BOLD, RESET);
                                 println!("{}", diff);
+                                println!("{}-------------{}\n", BOLD, RESET);
                             }
                         },
                         Err(e) => return Err(e),
@@ -230,7 +239,11 @@ async fn main() -> Result<()> {
                 }
 
                 if failed {
-                    return Err(anyhow::anyhow!("differences found in one or more tests"));
+                    return Err(anyhow::anyhow!(
+                        "{}!{} Differences found in one or more tests",
+                        RED,
+                        RESET
+                    ));
                 }
 
                 Ok(())
