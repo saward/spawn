@@ -132,3 +132,4 @@ Here are some of my design goals with spawn:
 - [ ] Advisory lock like sqitch has, to avoid multiple deployments all trying to apply the same migration at the same time: `pg_advisory_lock` etc.
 - [ ] Allow pinning to use `.git/objects` instead of a specific pinned folder, for those who use git and want to minimise bloat.  Migration would point to the specific git commit to get the tree.  Challenge: pinning when you haven't yet committed the objects.  Would need to commit first and then pin.
 - [ ] Store environment in Spawn database table in the target, so that you can't accidentally run a script with env set to `dev` and target `prod` with it.  Spawn should check the target db to ensure it self reports as that env, and use that.
+- [ ] Option to have spawn itself create the copy of the database with template, and exit before running psql commands if that fails.

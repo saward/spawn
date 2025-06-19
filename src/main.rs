@@ -78,9 +78,9 @@ enum TestCommands {
     Run {
         name: OsString,
     },
-    /// Run a test and compare to expected
+    /// Run tests and compare to expected.  Runs all tests if no name provided.
     Compare {
-        name: OsString,
+        name: Option<OsString>,
     },
     Expect {
         name: OsString,
@@ -181,23 +181,59 @@ async fn main() -> Result<()> {
                     Ok(result) => {
                         println!("{}", result);
                         ()
-                    },
+                    }
                     Err(e) => return Err(e),
                 };
                 Ok(())
             }
             Some(TestCommands::Compare { name }) => {
-                let config = Tester::new(&main_config, name.clone());
-                match config.run_compare(None) {
-                    Ok(result) => match result.diff {
-                        None => return Ok(()),
-                        Some(diff) => {
-                            println!("{}", diff);
-                            return Err(anyhow::anyhow!("differences found in test"));
+                let test_files: Vec<OsString> = match name {
+                    Some(name) => vec![name.clone()],
+                    None => {
+                        let mut tests = Vec::new();
+                        // Grab all test files in the folder:
+                        for entry in fs::read_dir(main_config.tests_folder())? {
+                            let entry = entry?;
+                            let path = entry.path();
+                            if path.is_dir() {
+                                tests.push(
+                                    path.file_name()
+                                        .ok_or(anyhow::anyhow!("no test found!"))?
+                                        .to_os_string(),
+                                );
+                            }
                         }
-                    },
-                    Err(e) => return Err(e),
+                        tests
+                    }
                 };
+
+                let mut failed = false;
+                for test_file in test_files {
+                    let config = Tester::new(&main_config, test_file.clone());
+                    let name = test_file
+                        .into_string()
+                        .unwrap_or_else(|_| "<invalid utf8>".to_string());
+
+                    match config.run_compare(None) {
+                        Ok(result) => match result.diff {
+                            None => {
+                                println!("{} passed:", &name);
+                            }
+                            Some(diff) => {
+                                failed = true;
+                                println!("{} failed:", &name);
+                                println!("{}", diff);
+                            }
+                        },
+                        Err(e) => return Err(e),
+                    };
+                }
+
+                if failed {
+                    return Err(anyhow::anyhow!("differences found in one or more tests"));
+                }
+
+                Ok(())
             }
             Some(TestCommands::Expect { name }) => {
                 let tester = Tester::new(&main_config, name.clone());

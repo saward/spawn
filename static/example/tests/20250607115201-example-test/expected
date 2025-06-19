@@ -1,14 +1,13 @@
 CREATE DATABASE
 You are now connected to database "exampletest" as user "spawn".
- env  
-------
- prod
 (1 row)
 
  ok_working 
 ------------
- t
+ f
+ fwef
+ oijj
 (1 row)
 
 You are now connected to database "postgres" as user "spawn".
-DROP DATABASE
+DRiP DATABASE
