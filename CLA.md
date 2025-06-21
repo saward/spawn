@@ -1,73 +1,91 @@
-# Contributor License Agreement (CLA)
-_Last updated 1 June 2025_
+# Contribution License Agreement
 
-**This Agreement is between the Contributor (“You” or “Your”) and ** **Mark Saward** **(or any successor organisation managing the Work, collectively “Project Lead”).  
-By ticking the CLA box in a pull request or otherwise submitting a Contribution, You accept and agree to all of the terms below.**
+This Contribution License Agreement ("Agreement") is agreed to by the party signing below ("**You**", and conveys certain license rights to Mark Saward and any affiliates he designates or successor entities he designates (collectively, the "**Project Owner**") for Your contributions to open-source projects owned or managed by the Project Owner. This Agreement is effective as of the date of the earliest acknowledgement on any contributions by You.
 
----
+## 1. Definitions
 
-## 1. Definitions  
+**"Code"** means the computer software code, whether in human-readable or machine-executable form, that is delivered by You to the Project Owner under this Agreement.
 
-1.1 **“Contribution”** means any original work of authorship, including modifications or additions to an existing work, that You intentionally submit to the Project Lead for inclusion in any project owned or managed by the Project Lead (the **“Work”**). “Submit” covers any form of electronic, verbal, or written communication sent to the Project Lead or its representatives—such as patches, Git commits, issues, and pull requests—except material conspicuously marked **“Not a Contribution”**.
+**"Project"** means any of the projects owned or managed by the Project Owner in which software is offered under a license approved by the Open Source Initiative (OSI) (www.opensource.org) and documentation offered under an OSI or a Creative Commons license (https://creativecommons.org/licenses).
 
-1.2 **“Contributor”** includes both individuals and legal entities. For a legal entity, “Contributor” encompasses all entities that control, are controlled by, or are under common control with that entity. “Control” means (i) the power to direct management or policies, or (ii) ownership of ≥ 50 % of voting securities.
+**"Submit"** is the act of uploading, submitting, transmitting, or distributing code or other content to any Project, including but not limited to communication on electronic mailing lists, source code control systems, and issue tracking systems that are managed by, or on behalf of, the Project for the purpose of discussing and improving that Project, but excluding communication that is conspicuously marked or otherwise designated in writing by You as "Not a Submission."
 
----
-
-## 2. Copyright Licence  
-
-Subject to this Agreement, You grant the Project Lead, and all recipients of software distributed by the Project Lead:
-
-> a **perpetual, worldwide, non-exclusive, royalty-free, irrevocable** copyright licence to use, reproduce, modify, prepare derivative works of, publicly display, publicly perform, sublicense, distribute, and **re-license** Your Contribution and derivative works under any terms the Project Lead chooses.
+**"Submission"** means the Code and any other copyrightable material Submitted by You, including any associated comments and documentation.
 
 ---
 
-## 2A. Moral-Rights Consent (where applicable)  
+## 2. Your Submission
 
-To the fullest extent permitted by law, You **irrevocably consent** to any act or omission by the Project Lead or its licensees that would otherwise infringe Your moral rights (including rights of attribution and integrity).
-
----
-
-## 3. Patent Licence  
-
-Subject to this Agreement, You grant the Project Lead and all recipients of software distributed by the Project Lead a **perpetual, worldwide, non-exclusive, royalty-free, irrevocable** patent licence to make, have made, use, sell, offer to sell, import, and otherwise transfer the Work.  
-This licence applies only to claims You can license that are necessarily infringed by Your Contribution(s) alone or in combination with the Work.
-
-**Patent-retaliation clause.** If any entity brings a patent action against the Project Lead or any downstream recipient alleging that the Work (or a Contribution) infringes a patent, the patent licences granted under this Agreement to that entity **terminate** as of the date such action is filed.
+You must agree to the terms of this Agreement before making a Submission to any Project. This Agreement covers any and all Submissions that You, now or in the future (except as described in Section 4 below), Submit to any Project.
 
 ---
 
-## 4. Contributor Representations  
+## 3. Originality of Work
 
-You represent and warrant that:
+You represent that each of Your Submissions is entirely Your original work. Should You wish to Submit materials that are not Your original work, You may Submit them separately to the Project if You:
 
-* **4.1** You are legally entitled to grant the above licences. If Your employer or another entity owns intellectual-property rights in Your Contributions, You have—before making a Contribution—received permission to do so **or** that employer/entity has executed this same CLA.  
-* **4.2** Each Contribution is Your original creation **or** You have identified any third-party source, licence, or restriction clearly in the submission.  
-* **4.3** You will promptly notify the Project Lead if You learn of any facts that would make these representations inaccurate.
-
----
-
-## 5. Disclaimer of Warranty  
-
-Unless required by applicable law or agreed in writing, the Work and Contributions are **provided “AS IS” without warranty of any kind**, express or implied, including but not limited to warranties of title, non-infringement, merchantability, or fitness for a particular purpose.
+1. retain all copyright and license information that was in the materials as You
+received them;
+2. in the description accompanying Your Submission, include the phrase "Submission containing materials of a third party:" followed by the names of the third party and any licenses or other restrictions of which You are aware; and
+3. follow any other instructions in the Project’s written guidelines concerning Submissions.
 
 ---
 
-## 6. Support  
+## 4. Your Employer
 
-You are **not required** to provide support for Your Contributions. Any support You choose to offer is entirely at Your discretion.
-
----
-
-## 7. General Terms  
-
-* **7.1 Governing law / forum.** This Agreement is governed by the laws of Victoria, Australia. The parties submit to the exclusive jurisdiction of its courts.  
-* **7.2 Entire agreement.** This is the entire agreement between You and the Project Lead concerning Contributions to the Work; it supersedes any prior agreements or understandings on the subject matter.  
-* **7.3 Severability.** If any provision is held unenforceable, the remaining provisions remain in full force and effect.  
-* **7.4 Amendment.** The Project Lead may modify this Agreement by publishing a new version in the repository; new Contributions are accepted only under the then-current version. _There is only ever one active version at a time._
+References to "employer" in this Agreement include Your employer or anyone else for whom You are acting in making Your Submission, e.g. as a contractor, vendor, or agent. If Your Submission is made in the course of Your work for an employer or Your employer has intellectual property rights in Your Submission by contract or applicable law, You must secure permission from Your employer to make the Submission before signing this Agreement. In that case, the term "You" in this Agreement will refer to You and the employer collectively. If You change employers in the future and desire to Submit additional Submissions for the new employer, then You agree to sign a new Agreement and secure permission from the new employer before Submitting those Submissions.
 
 ---
 
-## 8. Acceptance & Signature  
+## 5. Licenses
 
-> **By submitting a Contribution and ticking the CLA box in the pull request, You affirm that You have read and agree to this Contributor License Agreement.**
+### a. Copyright License
+
+You grant the Project Owner, and those who receive the Submission directly or indirectly from the Project Owner, a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license in the Submission to reproduce, prepare derivative works of, publicly display, publicly perform, and distribute the Submission and such derivative works, and to sublicense any or all of the foregoing rights to third parties.
+
+### b. Patent License
+
+You grant the Project Owner, and those who receive the Submission directly or indirectly from the Project Owner, a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license under Your patent claims that are necessarily infringed by the Submission or the combination of the Submission with the Project to which it was Submitted to make, have made, use, offer to sell, sell and import or otherwise dispose of the Submission alone or with the Project.
+
+### c. Other Rights Reserved
+
+Each party reserves all rights not expressly granted in this Agreement. No additional licenses or rights whatsoever (including, without limitation, any implied licenses) are granted by implication, exhaustion, estoppel or otherwise.
+
+---
+
+## 6. Representations and Warranties
+
+You represent that You are legally entitled to grant the above licenses. You represent that each of Your Submissions is entirely Your original work (except as You may have disclosed under Section 3). You represent that You have secured permission from Your employer to make the Submission in cases where Your Submission is made in the course of Your work for Your employer or Your employer has intellectual property rights in Your Submission by contract or applicable law. If You are signing this Agreement on behalf of Your employer, You represent and warrant that You have the necessary authority to bind the listed employer to the obligations contained in this Agreement. You are not expected to provide support for Your Submission, unless You choose to do so. UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING, AND EXCEPT FOR THE WARRANTIES EXPRESSLY STATED IN SECTIONS 3, 4, AND 6, THE SUBMISSION PROVIDED UNDER THIS AGREEMENT IS PROVIDED WITHOUT WARRANTY OF ANY KIND, INCLUDING, BUT NOT LIMITED TO, ANY WARRANTY OF NONINFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+
+---
+
+## 7. Notice to Project Owner
+
+You agree to notify the Project Owner in writing of any facts or circumstances of which You later become aware that would make Your representations in this Agreement inaccurate in any respect.
+
+---
+
+## 8. Information about Submissions
+
+You agree that contributions to Projects and information about contributions may be maintained indefinitely and disclosed publicly, including Your name and other information that You submit with Your Submission.
+
+---
+
+## 9. Governing Law & Jurisdiction
+
+This Agreement is governed by the laws of the State of Victoria, Australia, and the parties consent to exclusive jurisdiction and venue in the Federal Court of Australia, Victorian Registry, unless no federal subject matter jurisdiction exists, in which case the parties consent to exclusive jurisdiction and venue in the County Court of Victoria. The parties waive all defenses of lack of personal jurisdiction and forum non-conveniens.
+
+---
+
+## 10. Entire Agreement & Assignment
+
+This Agreement is the entire agreement between the parties, and supersedes any and all prior agreements, understandings or communications, written or oral, between the parties relating to the subject matter hereof. This Agreement may be assigned by the Project Owner.
+
+## 11. Acceptance & Signature
+
+**By providing a Submission to any Project and indicating acceptance of the CLA (including but not limited to, ticking a CLA acceptance checkbox or including "I agree to the CLA" in a pull-request description), You accept and agree to the terms of this Contributor License Agreement.**
+
+* For **individual contributors**, You represent that You have sole ownership of intellectual property rights to Your Submissions and You are not making Submissions in the course of work for Your employer.
+* For **contributors** where You are making Submissions in the course of work for Your employer (or Your employer has intellectual property rights in Your Submissions by contract or applicable law), You represent that You have permission from Your employer to make Submissions and enter into this Agreement on behalf of Your employer.  By accepting this Agreement, the defined term "You" includes You and Your employer.
+
+The Project Maintainer will treat the acceptance (including the checked box, the Git commit metadata, or any accompanying statements) as evidence of acceptance and may retain it for audit purposes.
