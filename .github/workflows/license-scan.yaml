@@ -1,0 +1,79 @@
+name: Scan licenses for copyleft
+
+on:
+  # Run on every push and pull request to main (tweak as you like)
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  license-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Install the Rust toolchain so `cargo-license` can run
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Install cargo-license
+      - name: Install cargo-license
+        run: cargo install cargo-license
+
+      # Run scan & fail if any line trips our rules
+      - name: Scan dependency licenses
+        env:
+          # Forbidden keywords (case-insensitive, regex OR-ed together)
+          COPYLEFT: 'GPL|LGPL|AGPL|MPL|EUPL|CDDL|QPL|OSL|SISSL'
+          # One exception per line – put the *full* license string exactly as it
+          # appears before the package list.  Example keeps "MIT OR GPL" lawful.
+          EXCEPTIONS: |
+            Apache-2.0 OR LGPL-2.1-or-later OR MIT
+            MIT OR GPL
+        run: |
+          set -euo pipefail
+
+          cargo license > /tmp/licenses.txt
+
+          strip_colors() {
+            sed -r 's/\x1B\[[0-9;]*[mK]//g'
+          }
+
+          error=0
+          while IFS= read -r line; do
+            # licence substring before the first colon
+            raw=$(printf '%s' "$line" | cut -d':' -f1)
+
+            # strip the trailing “(n)” (tabs OR spaces may precede it)
+            raw=${raw//$'\t'/ }                   # turn any tabs into spaces
+            raw=$(sed -E 's/[[:space:]]*\([0-9]+\)$//' <<< "$raw")
+
+            # canonicalise: squeeze whitespace and trim ends
+            license_part=$(tr -s '[:space:]' ' ' <<< "$raw" | sed 's/^ //;s/ $//')
+
+            match_found=0
+            while IFS= read -r line2; do
+              clean_license_part=$(printf '%s' "$license_part" | strip_colors)
+              if [[ "$clean_license_part" == "$line2" ]]; then
+                match_found=1
+                break
+              fi
+            done <<< "$EXCEPTIONS"
+
+            if [[ $match_found -eq 1 ]]; then
+              continue
+            fi
+
+            # fail if it still contains a forbidden keyword
+            if grep -Eiq "$COPYLEFT" <<< "$license_part"; then
+              echo "::error title=Copyleft licence detected::$line"
+              error=1
+            fi
+          done < /tmp/licenses.txt
+
+          if (( error )); then
+            echo "Copyleft licences found – failing job." >&2
+            exit 1
+          fi
+
+          echo "No forbidden licences detected."
