@@ -118,6 +118,7 @@ Here are some of my design goals with spawn:
 - [ ] Handle secrets
 - [ ] Ability to preview in neovim and/or vscode the outputted sql, as you make changes to the migration template.
 - [ ] Allow reading data from file types like csv's and use in templates, so you can loop over csv data to create insert(s), updates, whatever.
+- [ ] Provide a way to import data from other sources?  E.g., from a URL or script.  Need to consider security implications.
 - [ ] Some clever way to watch changes in the view/function folder, and automatically update.  Functions are easier, but views will fail when columns change or they have dependencies.  Views can be solved by having a component that encapsulates the relevant teardown and rebuild for all dependencies.  Or maybe via https://www.postgresql.org/docs/current/catalog-pg-depend.html.
 - [ ] Revert scripts for a migration.
 - [ ] Flatten schema.  E.g., deploy to local db with unique random values for variables (e.g., schema and user names), export again, and replace all references to the unique schema name with template variables again.

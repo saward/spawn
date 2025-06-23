@@ -24,6 +24,9 @@ struct Cli {
     #[arg(short, long)]
     debug: bool,
 
+    #[arg(global = true, short, long, default_value = "spawn.toml")]
+    config_file: String,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -97,10 +100,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Load config from file:
-    let mut main_config = Config::load().context(format!(
-        "could not load config from {}",
-        config::CONFIG_FILE_NAME
-    ))?;
+    let mut main_config = Config::load(&cli.config_file)
+        .context(format!("could not load config from {}", &cli.config_file,))?;
 
     match &cli.command {
         Some(Commands::Init) => {

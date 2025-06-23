@@ -1,12 +1,11 @@
 use crate::pinfile::LockData;
 use anyhow::{Context, Result};
-use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
+use std::{ffi::OsString, path::Path};
 
 use serde::{Deserialize, Serialize};
 
-pub const CONFIG_FILE_NAME: &str = "spawn.toml";
 static PINFILE_LOCK_NAME: &str = "lock.toml";
 
 // A single file entry with its hash.
@@ -26,9 +25,9 @@ fn default_environment() -> String {
 }
 
 impl Config {
-    pub fn load() -> Result<Config> {
+    pub fn load(path: &str) -> Result<Config> {
         let settings: Config = config::Config::builder()
-            .add_source(config::File::with_name("spawn.toml"))
+            .add_source(config::File::with_name(path))
             // Used to override the version in a repo with your own custom local overrides.
             .add_source(config::File::with_name("spawn.override.toml").required(false))
             // Add in settings from the environment (with a prefix of APP)
@@ -36,8 +35,7 @@ impl Config {
             .add_source(config::Environment::with_prefix("SPAWN"))
             .set_default("environment", "prod")
             .context("could not set default environment")?
-            .build()
-            .unwrap()
+            .build()?
             .try_deserialize()
             .context("could not deserialise config struct")?;
 
