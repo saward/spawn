@@ -1,8 +1,8 @@
 use crate::pinfile::LockData;
 use anyhow::{Context, Result};
+use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
-use std::{ffi::OsString, path::Path};
 
 use serde::{Deserialize, Serialize};
 

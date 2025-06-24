@@ -1,4 +1,4 @@
-use spawn::config::{self, Config};
+use spawn::config::Config;
 use spawn::migrator::Migrator;
 use spawn::pinfile::LockData;
 use spawn::sqltest::Tester;
