@@ -4,7 +4,6 @@ use spawn::pinfile::LockData;
 use spawn::sqltest::Tester;
 use spawn::store;
 use spawn::variables::Variables;
-use sqlx::postgres::PgPoolOptions;
 use std::ffi::OsString;
 use std::fs;
 
@@ -26,6 +25,9 @@ struct Cli {
 
     #[arg(global = true, short, long, default_value = "spawn.toml")]
     config_file: String,
+
+    #[arg(global = true, long)]
+    database: Option<String>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -100,7 +102,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Load config from file:
-    let mut main_config = Config::load(&cli.config_file)
+    let mut main_config = Config::load(&cli.config_file, cli.database)
         .context(format!("could not load config from {}", &cli.config_file,))?;
 
     match &cli.command {

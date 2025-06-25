@@ -1,5 +1,4 @@
 use crate::config;
-use crate::dbdriver::Database;
 use crate::dbdriver::DatabaseOutputter;
 use crate::template;
 use console::{style, Style};
@@ -73,7 +72,7 @@ impl Tester {
     pub fn run(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
         let content = self.generate(variables.clone())?;
 
-        let driver = self.config.new_default_driver()?;
+        let driver = self.config.new_driver()?;
 
         let mut dbwriter = driver.new_writer()?;
         dbwriter

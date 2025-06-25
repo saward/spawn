@@ -1,7 +1,6 @@
 use crate::dbdriver::{postgres_psql::PSQL, Database};
 use crate::pinfile::LockData;
 use anyhow::{anyhow, Context, Result};
-use similar::DiffableStr;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
@@ -23,18 +22,21 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new_default_driver(&self) -> Result<Box<dyn Database>> {
-        let db_config = self
-            .databases
-            .get(&self.default_database)
-            .ok_or(anyhow!("no default database specified"))?;
+    pub fn new_driver(&self) -> Result<Box<dyn Database>> {
+        let db_config = self.databases.get(&self.default_database).ok_or(anyhow!(
+            "no database defined with name '{}'",
+            &self.default_database
+        ))?;
 
         match db_config.driver.as_str() {
             "postgres-psql" => Ok(PSQL::new(&db_config.command.clone().ok_or(anyhow!(
                 "command must be specified for driver {}",
                 &db_config.driver
             ))?)),
-            _ => Err(anyhow!("no driver with name {} found", &db_config.driver)),
+            _ => Err(anyhow!(
+                "no driver with name '{}' exists",
+                &db_config.driver
+            )),
         }
     }
 }
@@ -55,8 +57,8 @@ fn default_environment() -> String {
 }
 
 impl Config {
-    pub fn load(path: &str) -> Result<Config> {
-        let settings: Config = config::Config::builder()
+    pub fn load(path: &str, database: Option<String>) -> Result<Config> {
+        let mut settings: Config = config::Config::builder()
             .add_source(config::File::with_name(path))
             // Used to override the version in a repo with your own custom local overrides.
             .add_source(config::File::with_name("spawn.override.toml").required(false))
@@ -68,6 +70,10 @@ impl Config {
             .build()?
             .try_deserialize()
             .context("could not deserialise config struct")?;
+
+        if let Some(db) = database {
+            settings.default_database = db;
+        }
 
         Ok(settings)
     }
