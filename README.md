@@ -34,6 +34,10 @@ Some commands available:
 - `spawn migration build <migration> --pinned` builds the migration into the needed SQL.  `--pinned` is optional, and is included when you want to use the pinned files for a reproducible migration.
 - `spawn test run <test>` will use psql (as configured in `spawn.toml` `psql_command` value) to pipe the generated test to your database.  See [Testing](#testing) below for more details.
 
+## Flags
+
+- `--database` allows you to specify which specific database from the config to use.  Defaults to `default_database` in your config.
+
 # Examples
 
 Printing out SQL:
@@ -118,6 +122,7 @@ Here are some of my design goals with spawn:
 - [ ] Handle secrets
 - [ ] Ability to preview in neovim and/or vscode the outputted sql, as you make changes to the migration template.
 - [ ] Allow reading data from file types like csv's and use in templates, so you can loop over csv data to create insert(s), updates, whatever.
+- [ ] Provide a way to import data from other sources?  E.g., from a URL or script.  Need to consider security implications.
 - [ ] Some clever way to watch changes in the view/function folder, and automatically update.  Functions are easier, but views will fail when columns change or they have dependencies.  Views can be solved by having a component that encapsulates the relevant teardown and rebuild for all dependencies.  Or maybe via https://www.postgresql.org/docs/current/catalog-pg-depend.html.
 - [ ] Revert scripts for a migration.
 - [ ] Flatten schema.  E.g., deploy to local db with unique random values for variables (e.g., schema and user names), export again, and replace all references to the unique schema name with template variables again.
@@ -133,3 +138,4 @@ Here are some of my design goals with spawn:
 - [ ] Allow pinning to use `.git/objects` instead of a specific pinned folder, for those who use git and want to minimise bloat.  Migration would point to the specific git commit to get the tree.  Challenge: pinning when you haven't yet committed the objects.  Would need to commit first and then pin.
 - [ ] Store environment in Spawn database table in the target, so that you can't accidentally run a script with env set to `dev` and target `prod` with it.  Spawn should check the target db to ensure it self reports as that env, and use that.
 - [ ] Option to have spawn itself create the copy of the database with template, and exit before running psql commands if that fails.
+- [ ] Option for a migration to have a target output file, so that if you want to render the migrations in a certain folder, then you can.  May not be useful if Spawn is being used to apply migrations.

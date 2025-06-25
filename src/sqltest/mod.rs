@@ -1,4 +1,5 @@
 use crate::config;
+use crate::dbdriver::DatabaseOutputter;
 use crate::template;
 use console::{style, Style};
 use similar::{ChangeTag, TextDiff};
@@ -7,7 +8,6 @@ use std::fmt;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::str;
 
 use anyhow::{Context, Result};
@@ -65,7 +65,6 @@ impl Tester {
         let gen = template::generate(&self.config, lock_file, &contents, variables)?;
         let content = gen.content;
 
-
         Ok(content)
     }
 
@@ -73,36 +72,25 @@ impl Tester {
     pub fn run(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
         let content = self.generate(variables.clone())?;
 
-        let mut parts = self.config.psql_command.clone();
-        let command = parts.remove(0);
-        let mut child = &mut Command::new(command);
-        for arg in parts {
-            child = child.arg(arg);
-        }
-        let mut child = child
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("failed to execute command");
+        let driver = self.config.new_driver()?;
 
-        let mut stdin = child.stdin.take().expect("failed to open stdin");
-        std::thread::spawn(move || {
-            stdin
-                .write(&content.as_bytes())
-                .expect("failed to write to stdin");
-        });
+        let mut dbwriter = driver.new_writer()?;
+        dbwriter
+            .write_all(&content.into_bytes())
+            .context("failed ro write content to test db")?;
 
-        let result = child.wait_with_output()?;
-        if !result.status.success() {
-            eprintln!("psql exited with status {}", result.status);
-        }
+        let mut outputter: Box<dyn DatabaseOutputter> = dbwriter.outputter()?;
+        let output = outputter.output()?;
 
-        let generated: String = str::from_utf8(&result.stdout)?.to_string();
+        let generated: String = str::from_utf8(&output)?.to_string();
 
         return Ok(generated);
     }
 
-    pub fn run_compare(&self, variables: Option<crate::variables::Variables>) -> Result<TestOutcome> {
+    pub fn run_compare(
+        &self,
+        variables: Option<crate::variables::Variables>,
+    ) -> Result<TestOutcome> {
         let generated = self.run(variables)?;
         let expected = fs::read_to_string(self.expected_file_path())
             .context("unable to read expectations file")?;

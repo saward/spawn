@@ -1,10 +1,9 @@
-use spawn::config::{self, Config};
+use spawn::config::Config;
 use spawn::migrator::Migrator;
 use spawn::pinfile::LockData;
 use spawn::sqltest::Tester;
 use spawn::store;
 use spawn::variables::Variables;
-use sqlx::postgres::PgPoolOptions;
 use std::ffi::OsString;
 use std::fs;
 
@@ -23,6 +22,12 @@ struct Cli {
     /// Turn debugging information on
     #[arg(short, long)]
     debug: bool,
+
+    #[arg(global = true, short, long, default_value = "spawn.toml")]
+    config_file: String,
+
+    #[arg(global = true, long)]
+    database: Option<String>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -97,10 +102,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Load config from file:
-    let mut main_config = Config::load().context(format!(
-        "could not load config from {}",
-        config::CONFIG_FILE_NAME
-    ))?;
+    let mut main_config = Config::load(&cli.config_file, cli.database)
+        .context(format!("could not load config from {}", &cli.config_file,))?;
 
     match &cli.command {
         Some(Commands::Init) => {
@@ -150,15 +153,15 @@ async fn main() -> Result<()> {
                     migration: _,
                     variables: _,
                 }) => {
-                    let pool = PgPoolOptions::new()
-                        .max_connections(5)
-                        .connect(&main_config.db_connstring)
-                        .await?;
+                    // let pool = PgPoolOptions::new()
+                    //     .max_connections(5)
+                    //     .connect(&main_config.db_connstring)
+                    //     .await?;
 
-                    // Use the sqlx migrator
-                    let m =
-                        sqlx::migrate::Migrator::new(std::path::Path::new("./migrations")).await?;
-                    m.run(&pool).await?;
+                    // // Use the sqlx migrator
+                    // let m =
+                    //     sqlx::migrate::Migrator::new(std::path::Path::new("./migrations")).await?;
+                    // m.run(&pool).await?;
 
                     Ok(())
                 }

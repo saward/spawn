@@ -1,24 +1,52 @@
+use crate::dbdriver::{postgres_psql::PSQL, Database};
 use crate::pinfile::LockData;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-pub const CONFIG_FILE_NAME: &str = "spawn.toml";
 static PINFILE_LOCK_NAME: &str = "lock.toml";
 
-// A single file entry with its hash.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
-    pub db_connstring: String,
     pub spawn_folder: PathBuf,
+    pub default_database: String,
 
     #[serde(default = "default_environment")]
     pub environment: String,
 
-    pub psql_command: Vec<String>,
+    pub databases: HashMap<String, DatabaseConfig>,
+}
+
+impl Config {
+    pub fn new_driver(&self) -> Result<Box<dyn Database>> {
+        let db_config = self.databases.get(&self.default_database).ok_or(anyhow!(
+            "no database defined with name '{}'",
+            &self.default_database
+        ))?;
+
+        match db_config.driver.as_str() {
+            "postgres-psql" => Ok(PSQL::new(&db_config.command.clone().ok_or(anyhow!(
+                "command must be specified for driver {}",
+                &db_config.driver
+            ))?)),
+            _ => Err(anyhow!(
+                "no driver with name '{}' exists",
+                &db_config.driver
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DatabaseConfig {
+    pub driver: String,
+
+    #[serde(default)]
+    pub command: Option<Vec<String>>,
 }
 
 fn default_environment() -> String {
@@ -26,9 +54,9 @@ fn default_environment() -> String {
 }
 
 impl Config {
-    pub fn load() -> Result<Config> {
-        let settings: Config = config::Config::builder()
-            .add_source(config::File::with_name("spawn.toml"))
+    pub fn load(path: &str, database: Option<String>) -> Result<Config> {
+        let mut settings: Config = config::Config::builder()
+            .add_source(config::File::with_name(path))
             // Used to override the version in a repo with your own custom local overrides.
             .add_source(config::File::with_name("spawn.override.toml").required(false))
             // Add in settings from the environment (with a prefix of APP)
@@ -36,10 +64,13 @@ impl Config {
             .add_source(config::Environment::with_prefix("SPAWN"))
             .set_default("environment", "prod")
             .context("could not set default environment")?
-            .build()
-            .unwrap()
+            .build()?
             .try_deserialize()
             .context("could not deserialise config struct")?;
+
+        if let Some(db) = database {
+            settings.default_database = db;
+        }
 
         Ok(settings)
     }
