@@ -34,6 +34,10 @@ Some commands available:
 - `spawn migration build <migration> --pinned` builds the migration into the needed SQL.  `--pinned` is optional, and is included when you want to use the pinned files for a reproducible migration.
 - `spawn test run <test>` will use psql (as configured in `spawn.toml` `psql_command` value) to pipe the generated test to your database.  See [Testing](#testing) below for more details.
 
+## Flags
+
+- `--database` allows you to specify which specific database from the config to use.  Defaults to `default_database` in your config.
+
 # Examples
 
 Printing out SQL:

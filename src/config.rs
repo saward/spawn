@@ -46,9 +46,6 @@ pub struct DatabaseConfig {
     pub driver: String,
 
     #[serde(default)]
-    pub connstring: Option<String>,
-
-    #[serde(default)]
     pub command: Option<Vec<String>>,
 }
 
