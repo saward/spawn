@@ -134,3 +134,4 @@ Here are some of my design goals with spawn:
 - [ ] Allow pinning to use `.git/objects` instead of a specific pinned folder, for those who use git and want to minimise bloat.  Migration would point to the specific git commit to get the tree.  Challenge: pinning when you haven't yet committed the objects.  Would need to commit first and then pin.
 - [ ] Store environment in Spawn database table in the target, so that you can't accidentally run a script with env set to `dev` and target `prod` with it.  Spawn should check the target db to ensure it self reports as that env, and use that.
 - [ ] Option to have spawn itself create the copy of the database with template, and exit before running psql commands if that fails.
+- [ ] Option for a migration to have a target output file, so that if you want to render the migrations in a certain folder, then you can.  May not be useful if Spawn is being used to apply migrations.

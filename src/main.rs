@@ -151,15 +151,15 @@ async fn main() -> Result<()> {
                     migration: _,
                     variables: _,
                 }) => {
-                    let pool = PgPoolOptions::new()
-                        .max_connections(5)
-                        .connect(&main_config.db_connstring)
-                        .await?;
+                    // let pool = PgPoolOptions::new()
+                    //     .max_connections(5)
+                    //     .connect(&main_config.db_connstring)
+                    //     .await?;
 
-                    // Use the sqlx migrator
-                    let m =
-                        sqlx::migrate::Migrator::new(std::path::Path::new("./migrations")).await?;
-                    m.run(&pool).await?;
+                    // // Use the sqlx migrator
+                    // let m =
+                    //     sqlx::migrate::Migrator::new(std::path::Path::new("./migrations")).await?;
+                    // m.run(&pool).await?;
 
                     Ok(())
                 }

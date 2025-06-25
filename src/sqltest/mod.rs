@@ -1,4 +1,6 @@
 use crate::config;
+use crate::dbdriver::Database;
+use crate::dbdriver::DatabaseOutputter;
 use crate::template;
 use console::{style, Style};
 use similar::{ChangeTag, TextDiff};
@@ -71,13 +73,17 @@ impl Tester {
     pub fn run(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
         let content = self.generate(variables.clone())?;
 
-        let psqldriver = crate::dbdriver::postgres_psql::PSQL::new(&self.config.psql_command);
-        let mut psqlwriter = psqldriver.new_writer();
-        psqlwriter
+        let driver = self.config.new_default_driver()?;
+
+        let mut dbwriter = driver.new_writer()?;
+        dbwriter
             .write_all(&content.into_bytes())
             .context("failed ro write content to test db")?;
 
-        let generated: String = str::from_utf8(&psqlwriter.outputter().output()?)?.to_string();
+        let mut outputter: Box<dyn DatabaseOutputter> = dbwriter.outputter();
+        let output = outputter.output()?;
+
+        let generated: String = str::from_utf8(&output)?.to_string();
 
         return Ok(generated);
     }
