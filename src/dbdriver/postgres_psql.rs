@@ -4,7 +4,7 @@
 
 use crate::dbdriver::{Database, DatabaseOutputter, DatabaseWriter};
 use anyhow::Result;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 
 #[derive(Debug)]
@@ -67,8 +67,10 @@ impl crate::dbdriver::DatabaseOutputter for PSQLOutput {
 }
 
 impl crate::dbdriver::DatabaseWriter for PSQLWriter {
-    fn outputter(self: Box<Self>) -> Box<dyn DatabaseOutputter> {
-        Box::new(PSQLOutput { child: self.child })
+    fn outputter(mut self: Box<Self>) -> Result<Box<dyn DatabaseOutputter>> {
+        // Ensure writing is finished (not sure if necessary):
+        self.flush()?;
+        Ok(Box::new(PSQLOutput { child: self.child }))
     }
 }
 

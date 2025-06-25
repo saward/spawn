@@ -8,7 +8,9 @@ pub trait DatabaseOutputter {
 }
 
 pub trait DatabaseWriter: io::Write {
-    fn outputter(self: Box<Self>) -> Box<dyn DatabaseOutputter>;
+    // outputter consumes self so that no more writing can be done after trying
+    // to fetch output.
+    fn outputter(self: Box<Self>) -> Result<Box<dyn DatabaseOutputter>>;
 }
 
 pub trait Database {

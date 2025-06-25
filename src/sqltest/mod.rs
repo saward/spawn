@@ -79,7 +79,7 @@ impl Tester {
             .write_all(&content.into_bytes())
             .context("failed ro write content to test db")?;
 
-        let mut outputter: Box<dyn DatabaseOutputter> = dbwriter.outputter();
+        let mut outputter: Box<dyn DatabaseOutputter> = dbwriter.outputter()?;
         let output = outputter.output()?;
 
         let generated: String = str::from_utf8(&output)?.to_string();
