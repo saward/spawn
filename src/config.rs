@@ -13,7 +13,7 @@ static PINFILE_LOCK_NAME: &str = "lock.toml";
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     pub spawn_folder: PathBuf,
-    pub default_database: String,
+    pub database: String,
 
     #[serde(default = "default_environment")]
     pub environment: String,
@@ -23,9 +23,9 @@ pub struct Config {
 
 impl Config {
     pub fn new_driver(&self) -> Result<Box<dyn Database>> {
-        let db_config = self.databases.get(&self.default_database).ok_or(anyhow!(
+        let db_config = self.databases.get(&self.database).ok_or(anyhow!(
             "no database defined with name '{}'",
-            &self.default_database
+            &self.database
         ))?;
 
         match db_config.driver.as_str() {
@@ -55,22 +55,19 @@ fn default_environment() -> String {
 
 impl Config {
     pub fn load(path: &str, database: Option<String>) -> Result<Config> {
-        let mut settings: Config = config::Config::builder()
+        let settings: Config = config::Config::builder()
             .add_source(config::File::with_name(path))
             // Used to override the version in a repo with your own custom local overrides.
             .add_source(config::File::with_name("spawn.override.toml").required(false))
             // Add in settings from the environment (with a prefix of APP)
             // Eg.. `APP_DEBUG=1 ./target/app` would set the `debug` key
             .add_source(config::Environment::with_prefix("SPAWN"))
+            .set_override_option("database", database)?
             .set_default("environment", "prod")
             .context("could not set default environment")?
             .build()?
             .try_deserialize()
             .context("could not deserialise config struct")?;
-
-        if let Some(db) = database {
-            settings.default_database = db;
-        }
 
         Ok(settings)
     }

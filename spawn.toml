@@ -1,5 +1,5 @@
 spawn_folder = "./static/example"
-default_database = "postgres_psql"
+database = "postgres_psql" # Sets default to use.
 
 [databases.postgres_builtin]
 driver = "postgres-builtin"
