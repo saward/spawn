@@ -71,7 +71,7 @@ impl crate::engine::EngineOutputter for PSQLOutput {
 }
 
 impl crate::engine::EngineWriter for PSQLWriter {
-    fn outputter(mut self: Box<Self>) -> Result<Box<dyn EngineOutputter>> {
+    fn finalise(mut self: Box<Self>) -> Result<Box<dyn EngineOutputter>> {
         // Ensure writing is finished (not sure if necessary):
         self.flush()?;
         Ok(Box::new(PSQLOutput { child: self.child }))

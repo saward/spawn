@@ -16,9 +16,9 @@ pub trait EngineOutputter {
 }
 
 pub trait EngineWriter: io::Write {
-    // outputter consumes self so that no more writing can be done after trying
+    // finalise consumes self so that no more writing can be done after trying
     // to fetch output.
-    fn outputter(self: Box<Self>) -> Result<Box<dyn EngineOutputter>>;
+    fn finalise(self: Box<Self>) -> Result<Box<dyn EngineOutputter>>;
 }
 
 pub trait Engine {
