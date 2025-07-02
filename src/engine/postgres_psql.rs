@@ -2,7 +2,7 @@
 // scripts, which enables user's scripts to take advantage of things like the
 // build in PSQL helper commands.
 
-use crate::dbdriver::{Database, DatabaseOutputter, DatabaseWriter};
+use crate::engine::{Engine, EngineOutputter, EngineWriter};
 use anyhow::Result;
 use std::io::{self, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -22,15 +22,15 @@ pub struct PSQLOutput {
 }
 
 impl PSQL {
-    pub fn new(psql_command: &Vec<String>) -> Box<dyn Database> {
+    pub fn new(psql_command: &Vec<String>) -> Box<dyn Engine> {
         Box::new(Self {
             psql_command: psql_command.clone(),
         })
     }
 }
 
-impl crate::dbdriver::Database for PSQL {
-    fn new_writer(&self) -> Result<Box<dyn DatabaseWriter>> {
+impl crate::engine::Engine for PSQL {
+    fn new_writer(&self) -> Result<Box<dyn EngineWriter>> {
         let mut parts = self.psql_command.clone();
         let command = parts.remove(0);
         let mut child = &mut Command::new(command);
@@ -50,9 +50,13 @@ impl crate::dbdriver::Database for PSQL {
 
         Ok(Box::new(PSQLWriter { child, stdin }))
     }
+
+    fn migration_apply(&self, migration: &str) -> Result<()> {
+        Err(anyhow::anyhow!("not implemented"))
+    }
 }
 
-impl crate::dbdriver::DatabaseOutputter for PSQLOutput {
+impl crate::engine::EngineOutputter for PSQLOutput {
     fn output(&mut self) -> io::Result<Vec<u8>> {
         // Collect all output
         let mut output = Vec::new();
@@ -66,8 +70,8 @@ impl crate::dbdriver::DatabaseOutputter for PSQLOutput {
     }
 }
 
-impl crate::dbdriver::DatabaseWriter for PSQLWriter {
-    fn outputter(mut self: Box<Self>) -> Result<Box<dyn DatabaseOutputter>> {
+impl crate::engine::EngineWriter for PSQLWriter {
+    fn outputter(mut self: Box<Self>) -> Result<Box<dyn EngineOutputter>> {
         // Ensure writing is finished (not sure if necessary):
         self.flush()?;
         Ok(Box::new(PSQLOutput { child: self.child }))

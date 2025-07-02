@@ -1,4 +1,4 @@
-use crate::dbdriver::{postgres_psql::PSQL, Database};
+use crate::engine::{postgres_psql::PSQL, Engine};
 use crate::pinfile::LockData;
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
@@ -22,20 +22,20 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new_driver(&self) -> Result<Box<dyn Database>> {
+    pub fn new_engine(&self) -> Result<Box<dyn Engine>> {
         let db_config = self.databases.get(&self.database).ok_or(anyhow!(
             "no database defined with name '{}'",
             &self.database
         ))?;
 
-        match db_config.driver.as_str() {
+        match db_config.engine.as_str() {
             "postgres-psql" => Ok(PSQL::new(&db_config.command.clone().ok_or(anyhow!(
-                "command must be specified for driver {}",
-                &db_config.driver
+                "command must be specified for engine {}",
+                &db_config.engine
             ))?)),
             _ => Err(anyhow!(
-                "no driver with name '{}' exists",
-                &db_config.driver
+                "no engine with name '{}' exists",
+                &db_config.engine
             )),
         }
     }
@@ -43,7 +43,7 @@ impl Config {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DatabaseConfig {
-    pub driver: String,
+    pub engine: String,
     pub spawn_database: String,
     #[serde(default = "default_schema")]
     pub spawn_schema: String,
