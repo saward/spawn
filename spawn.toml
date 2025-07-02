@@ -2,6 +2,7 @@ spawn_folder = "./static/example"
 database = "postgres_psql" # Sets default to use.
 
 [databases.postgres_builtin]
+environment = "prod"
 spawn_database = "spawn"
 spawn_schema = "_spawn"
 engine = "postgres-builtin"

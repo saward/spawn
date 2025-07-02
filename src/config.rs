@@ -14,19 +14,14 @@ static PINFILE_LOCK_NAME: &str = "lock.toml";
 pub struct Config {
     pub spawn_folder: PathBuf,
     pub database: String,
-
-    #[serde(default = "default_environment")]
-    pub environment: String,
+    pub environment: Option<String>, // Override the environment for the db config
 
     pub databases: HashMap<String, DatabaseConfig>,
 }
 
 impl Config {
     pub fn new_engine(&self) -> Result<Box<dyn Engine>> {
-        let db_config = self.databases.get(&self.database).ok_or(anyhow!(
-            "no database defined with name '{}'",
-            &self.database
-        ))?;
+        let db_config = self.db_config()?;
 
         match db_config.engine.as_str() {
             "postgres-psql" => Ok(PSQL::new(&db_config.command.clone().ok_or(anyhow!(
@@ -39,6 +34,23 @@ impl Config {
             )),
         }
     }
+
+    pub fn db_config(&self) -> Result<DatabaseConfig> {
+        let mut conf = self
+            .databases
+            .get(&self.database)
+            .ok_or(anyhow!(
+                "no database defined with name '{}'",
+                &self.database
+            ))?
+            .clone();
+
+        if let Some(env) = &self.environment {
+            conf.environment = env.clone();
+        }
+
+        Ok(conf)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -47,13 +59,15 @@ pub struct DatabaseConfig {
     pub spawn_database: String,
     #[serde(default = "default_schema")]
     pub spawn_schema: String,
+    #[serde(default = "default_environment")]
+    pub environment: String,
 
     #[serde(default)]
     pub command: Option<Vec<String>>,
 }
 
 fn default_environment() -> String {
-    "prod".to_string()
+    "dev".to_string()
 }
 
 fn default_schema() -> String {

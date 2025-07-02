@@ -113,7 +113,7 @@ async fn main() -> Result<()> {
             command,
             environment,
         }) => {
-            main_config.environment = environment.clone().unwrap_or(main_config.environment);
+            main_config.environment = environment.clone();
             match command {
                 Some(MigrationCommands::New { name }) => {
                     let migration_name: String =

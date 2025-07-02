@@ -44,10 +44,13 @@ pub fn generate(
     // Add our main script to environment:
     env.add_template("migration.sql", contents)?;
 
+    let db_config = cfg.db_config()?;
+
     // Render with provided variables
     let tmpl = env.get_template("migration.sql")?;
-    let content =
-        tmpl.render(context!(env => cfg.environment, variables => variables.unwrap_or_default()))?;
+    let content = tmpl.render(
+        context!(env => db_config.environment, variables => variables.unwrap_or_default()),
+    )?;
 
     let result = Generation {
         content: content.to_string(),
