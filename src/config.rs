@@ -44,9 +44,9 @@ impl Config {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DatabaseConfig {
     pub driver: String,
-    pub database: String,
+    pub spawn_database: String,
     #[serde(default = "default_schema")]
-    pub schema: String,
+    pub spawn_schema: String,
 
     #[serde(default)]
     pub command: Option<Vec<String>>,

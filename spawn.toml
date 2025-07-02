@@ -2,16 +2,17 @@ spawn_folder = "./static/example"
 database = "postgres_psql" # Sets default to use.
 
 [databases.postgres_builtin]
-database = "spawn"
+spawn_database = "spawn"
+spawn_schema = "_spawn"
 driver = "postgres-builtin"
 connstring = "postgres://spawn:spawn@localhost:7654/spawn"
 
 [databases.postgres_psql]
-database = "spawn"
+spawn_database = "spawn"
 driver = "postgres-psql"
 command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
 
 [databases.mysql_client]
-database = "spawn"
+spawn_database = "spawn"
 driver = "mysql-client"
 command = ["docker", "exec", "-i", "spawn-db", "mysql", "-u", "spawn", "-pspawn", "spawn"]
