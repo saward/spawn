@@ -51,7 +51,7 @@ impl crate::engine::Engine for PSQL {
         Ok(Box::new(PSQLWriter { child, stdin }))
     }
 
-    fn migration_apply(&self, migration: &str) -> Result<()> {
+    fn migration_apply(&self, _migration: &str) -> Result<()> {
         Err(anyhow::anyhow!("not implemented"))
     }
 }

@@ -1635,6 +1635,7 @@ dependencies = [
  "serde_yaml",
  "similar",
  "sqlx",
+ "tempfile",
  "tokio",
  "toml",
  "twox-hash",
