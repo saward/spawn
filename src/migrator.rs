@@ -32,7 +32,7 @@ impl Migrator {
     }
 
     /// Creates the migration folder with blank setup.
-    pub fn create_migration(&self) -> Result<()> {
+    pub fn create_migration(&self) -> Result<String> {
         // Todo: return error if migration already exists.
         let path = self.config.migration_folder(&self.script_path);
         if path.exists() {
@@ -46,7 +46,11 @@ impl Migrator {
         // Create our blank script file:
         fs::write(&path.join("script.sql"), BASE_MIGRATION)?;
 
-        Ok(())
+        let name = path
+            .file_name()
+            .ok_or(anyhow::anyhow!("couldn't find name for created migration"))?;
+
+        Ok(name.to_string_lossy().to_string())
     }
 
     pub fn script_file_path(&self) -> Result<PathBuf> {

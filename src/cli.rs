@@ -102,7 +102,12 @@ pub enum TestCommands {
     },
 }
 
-pub async fn run_cli(cli: Cli) -> Result<()> {
+pub enum Outcome {
+    NewMigration(String),
+    Unimplemented,
+}
+
+pub async fn run_cli(cli: Cli) -> Result<Outcome> {
     // Load config from file:
     let mut main_config = Config::load(&cli.config_file, cli.database)
         .context(format!("could not load config from {}", &cli.config_file,))?;
@@ -123,7 +128,7 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
                     println!("creating migration with name {}", &migration_name);
                     let mg = Migrator::new(&main_config, migration_name.into(), false);
 
-                    mg.create_migration()
+                    Ok(Outcome::NewMigration(mg.create_migration()?))
                 }
                 Some(MigrationCommands::Pin { migration }) => {
                     let root = store::snapshot(
@@ -134,7 +139,7 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
                     let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
                     fs::write(lock_file, toml_str)?;
 
-                    Ok(())
+                    Ok(Outcome::Unimplemented)
                 }
                 Some(MigrationCommands::Build {
                     migration,
@@ -149,7 +154,7 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
                         }
                         Err(e) => return Err(e),
                     };
-                    Ok(())
+                    Ok(Outcome::Unimplemented)
                 }
                 Some(MigrationCommands::Apply {
                     migration,
@@ -185,12 +190,12 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
                             }
                         };
                     }
-                    Ok(())
+                    Ok(Outcome::Unimplemented)
                 }
 
                 None => {
                     eprintln!("No migration subcommand specified");
-                    Ok(())
+                    Ok(Outcome::Unimplemented)
                 }
             }
         }
@@ -204,7 +209,7 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
                     }
                     Err(e) => return Err(e),
                 };
-                Ok(())
+                Ok(Outcome::Unimplemented)
             }
             Some(TestCommands::Run { name }) => {
                 let config = Tester::new(&main_config, name.clone());
@@ -215,7 +220,7 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
                     }
                     Err(e) => return Err(e),
                 };
-                Ok(())
+                Ok(Outcome::Unimplemented)
             }
             Some(TestCommands::Compare { name }) => {
                 let test_files: Vec<OsString> = match name {
@@ -271,7 +276,7 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
                     ));
                 }
 
-                Ok(())
+                Ok(Outcome::Unimplemented)
             }
             Some(TestCommands::Expect { name }) => {
                 let tester = Tester::new(&main_config, name.clone());
@@ -279,13 +284,13 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
                     Ok(_) => (),
                     Err(e) => return Err(e),
                 };
-                Ok(())
+                Ok(Outcome::Unimplemented)
             }
             None => {
                 eprintln!("No test subcommand specified");
-                Ok(())
+                Ok(Outcome::Unimplemented)
             }
         },
-        None => Ok(()),
+        None => Ok(Outcome::Unimplemented),
     }
 }
