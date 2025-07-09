@@ -82,35 +82,3 @@ impl Migrator {
         template::generate(&self.config, lock_file, &contents, variables)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    // use crate::migrator::Migrator;
-    // use std::{ffi::OsString, path::PathBuf};
-    //
-    // fn test_config() -> Migrator {
-    //     Migrator::new(
-    //         PathBuf::from("./base_folder"),
-    //         OsString::from("subfolder/migration_script"),
-    //         false,
-    //     )
-    // }
-    //
-    // #[test]
-    // fn script_file_path() {
-    //     let config = test_config();
-    //     assert_eq!(
-    //         PathBuf::from("./base_folder/migrations/subfolder/migration_script"),
-    //         config.script_file_path(),
-    //     );
-    // }
-    //
-    // #[test]
-    // fn lock_file_path() {
-    //     let config = test_config();
-    //     assert_eq!(
-    //         PathBuf::from("./base_folder/migrations/subfolder/migration_script.lock"),
-    //         config.lock_file_path(),
-    //     );
-    // }
-}
