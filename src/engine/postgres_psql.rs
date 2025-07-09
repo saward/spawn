@@ -51,8 +51,17 @@ impl crate::engine::Engine for PSQL {
         Ok(Box::new(PSQLWriter { child, stdin }))
     }
 
-    fn migration_apply(&self, _migration: &str) -> Result<()> {
-        Err(anyhow::anyhow!("not implemented"))
+    fn migration_apply(&self, migration: &str) -> Result<String> {
+        let mut writer = self.new_writer()?;
+
+        // Write migration to writer:
+        writer.write_all(migration.as_bytes())?;
+        let mut outputter = writer.finalise()?;
+
+        let output = outputter.output()?;
+        // Read the Vec<u8> as utf8 or ascii:
+        let output = String::from_utf8(output).unwrap_or_default();
+        Ok(output)
     }
 }
 

@@ -26,7 +26,7 @@ pub trait Engine {
     /// stream data to this as we go.  May not be implemented for all drivers.
     fn new_writer(&self) -> Result<Box<dyn EngineWriter>>;
 
-    fn migration_apply(&self, migration: &str) -> Result<()>;
+    fn migration_apply(&self, migration: &str) -> Result<String>;
 
     // /// Return information about this migration, such as whether it has been
     // /// applied.

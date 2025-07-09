@@ -104,6 +104,7 @@ pub enum TestCommands {
 
 pub enum Outcome {
     NewMigration(String),
+    AppliedMigrations,
     Unimplemented,
 }
 
@@ -190,7 +191,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                             }
                         };
                     }
-                    Ok(Outcome::Unimplemented)
+                    Ok(Outcome::AppliedMigrations)
                 }
 
                 None => {
