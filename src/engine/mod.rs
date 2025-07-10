@@ -1,7 +1,29 @@
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use std::io;
 
 pub mod postgres_psql;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DatabaseConfig {
+    pub engine: String,
+    pub spawn_database: String,
+    #[serde(default = "default_schema")]
+    pub spawn_schema: String,
+    #[serde(default = "default_environment")]
+    pub environment: String,
+
+    #[serde(default)]
+    pub command: Option<Vec<String>>,
+}
+
+fn default_environment() -> String {
+    "dev".to_string()
+}
+
+fn default_schema() -> String {
+    "_spawn".to_string()
+}
 
 pub struct MigrationStatus {
     applied: bool,

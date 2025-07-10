@@ -1,5 +1,5 @@
 spawn_folder = "./static/example"
-database = "postgres_psql" # Sets default to use.
+database = "postgres_psql"        # Sets default to use.
 
 [databases.postgres_builtin]
 environment = "prod"
@@ -16,4 +16,14 @@ command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
 [databases.mysql_client]
 spawn_database = "spawn"
 engine = "mysql-client"
-command = ["docker", "exec", "-i", "spawn-db", "mysql", "-u", "spawn", "-pspawn", "spawn"]
+command = [
+    "docker",
+    "exec",
+    "-i",
+    "spawn-db",
+    "mysql",
+    "-u",
+    "spawn",
+    "-pspawn",
+    "spawn",
+]

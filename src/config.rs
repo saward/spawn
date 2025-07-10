@@ -1,4 +1,4 @@
-use crate::engine::{postgres_psql::PSQL, Engine};
+use crate::engine::{postgres_psql::PSQL, DatabaseConfig, Engine};
 use crate::pinfile::LockData;
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
@@ -24,10 +24,7 @@ impl Config {
         let db_config = self.db_config()?;
 
         match db_config.engine.as_str() {
-            "postgres-psql" => Ok(PSQL::new(&db_config.command.clone().ok_or(anyhow!(
-                "command must be specified for engine {}",
-                &db_config.engine
-            ))?)),
+            "postgres-psql" => Ok(PSQL::new(&db_config)?),
             _ => Err(anyhow!(
                 "no engine with name '{}' exists",
                 &db_config.engine
@@ -51,27 +48,6 @@ impl Config {
 
         Ok(conf)
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct DatabaseConfig {
-    pub engine: String,
-    pub spawn_database: String,
-    #[serde(default = "default_schema")]
-    pub spawn_schema: String,
-    #[serde(default = "default_environment")]
-    pub environment: String,
-
-    #[serde(default)]
-    pub command: Option<Vec<String>>,
-}
-
-fn default_environment() -> String {
-    "dev".to_string()
-}
-
-fn default_schema() -> String {
-    "_spawn".to_string()
 }
 
 impl Config {
