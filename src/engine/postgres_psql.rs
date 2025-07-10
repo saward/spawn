@@ -105,13 +105,14 @@ impl PSQL {
         let check_table_sql = format!(
             r#"
             \c {}
+            \x
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
                 WHERE table_schema = '{}'
                 AND table_name = 'migration'
             );
             "#,
-            self.spawn_database, self.spawn_schema
+            &self.spawn_database, &self.spawn_schema
         );
 
         let mut writer = self.new_writer()?;
@@ -120,11 +121,9 @@ impl PSQL {
         let output = outputter.output()?;
         let output_str = String::from_utf8(output).unwrap_or_default();
 
-        // Simple check if table exists (looking for 't' in output)
-        let table_exists = output_str.contains('t');
+        let table_exists = output_str.contains("exists | t");
 
         if !table_exists {
-            println!("table not exist");
             // Apply all migration table migrations
             for (migration_name, migration_sql) in MIGRATION_TABLE_MIGRATIONS {
                 let formatted_sql = migration_sql
@@ -149,7 +148,6 @@ INSERT INTO {}.migration (migration_name) VALUES ('{}');"#,
                 let _ = outputter.output()?;
             }
         } else {
-            println!("table exist");
             // Check which migrations have been applied
             let check_migrations_sql = format!(
                 r#"\c {}
@@ -157,8 +155,6 @@ INSERT INTO {}.migration (migration_name) VALUES ('{}');"#,
 SELECT migration_name FROM {}.migration;"#,
                 &self.spawn_database, &self.spawn_schema
             );
-
-            println!("{}", &check_migrations_sql);
 
             let mut writer = self.new_writer()?;
             writer.write_all(check_migrations_sql.as_bytes())?;
