@@ -119,13 +119,19 @@ impl PSQL {
         Ok(())
     }
 
-    fn execute_sql(&self, sql: &str) -> Result<String> {
+    fn execute_sql(&self, sql: &str, format: Option<&str>) -> Result<String> {
         let mut writer = self.new_writer()?;
         writer.write_all(format!("\\c {}\n", &self.spawn_database).as_bytes())?;
+        if let Some(format) = format {
+            writer.write_all(format!("\\pset format {}\n", format).as_bytes())?;
+        }
         writer.write_all(sql.as_bytes())?;
         let mut outputter = writer.finalise()?;
         let output = outputter.output()?;
-        Ok(String::from_utf8(output).unwrap_or_default())
+        // Error if we can't read:
+        let output = String::from_utf8(output)?;
+        println!("output: {}", &output);
+        Ok(output)
     }
 
     fn migration_table_exists(&self) -> Result<bool> {
@@ -141,8 +147,8 @@ impl PSQL {
             &self.spawn_schema
         );
 
-        let output = self.execute_sql(&check_table_sql)?;
-        Ok(output.contains("exists | t"))
+        let output = self.execute_sql(&check_table_sql, Some("csv"))?;
+        Ok(output.contains("exists,t"))
     }
 
     fn get_applied_migrations(&self) -> Result<String> {
@@ -153,7 +159,7 @@ impl PSQL {
             &self.spawn_schema
         );
 
-        self.execute_sql(&check_migrations_sql)
+        self.execute_sql(&check_migrations_sql, Some("csv"))
     }
 
     // This is versioned because if we change the schema significantly enough
@@ -167,7 +173,7 @@ impl PSQL {
         // Apply the migration
         let formatted_sql = migration_sql.replace("{schema}", &self.spawn_schema);
 
-        self.execute_sql(&formatted_sql)?;
+        self.execute_sql(&formatted_sql, None)?;
 
         // Record the migration
         let record_sql = format!(
@@ -175,7 +181,7 @@ impl PSQL {
             &self.spawn_schema, migration_name
         );
 
-        self.execute_sql(&record_sql)?;
+        self.execute_sql(&record_sql, None)?;
         Ok(())
     }
 }
