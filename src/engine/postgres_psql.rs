@@ -19,7 +19,6 @@ const MIGRATION_TABLE_MIGRATIONS: &[(&str, &str)] = &[
     (
         "001_create_migration_table",
         r#"
-\c {db}
 CREATE SCHEMA IF NOT EXISTS {schema};
 CREATE TABLE IF NOT EXISTS {schema}.migration (
     id SERIAL PRIMARY KEY,
@@ -31,7 +30,6 @@ CREATE TABLE IF NOT EXISTS {schema}.migration (
     (
         "002_add_migration_index",
         r#"
-\c {db}
 CREATE INDEX IF NOT EXISTS idx_migration_name ON {schema}.migration (migration_name);
 "#,
     ),
@@ -101,10 +99,38 @@ impl crate::engine::Engine for PSQL {
 
 impl PSQL {
     pub fn update_schema(&self) -> Result<()> {
-        // Check if migrations table exists
+        let migration_table_exists = self.migration_table_exists()?;
+
+        if migration_table_exists {
+            // Check which migrations have been applied and apply missing ones
+            let applied_migrations = self.get_applied_migrations()?;
+            for (migration_name, migration_sql) in MIGRATION_TABLE_MIGRATIONS {
+                if !applied_migrations.contains(migration_name) {
+                    self.apply_and_record_migration_v1(migration_name, migration_sql)?;
+                }
+            }
+        } else {
+            // Apply all migration table migrations
+            for (migration_name, migration_sql) in MIGRATION_TABLE_MIGRATIONS {
+                self.apply_and_record_migration_v1(migration_name, migration_sql)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn execute_sql(&self, sql: &str) -> Result<String> {
+        let mut writer = self.new_writer()?;
+        writer.write_all(format!("\\c {}\n", &self.spawn_database).as_bytes())?;
+        writer.write_all(sql.as_bytes())?;
+        let mut outputter = writer.finalise()?;
+        let output = outputter.output()?;
+        Ok(String::from_utf8(output).unwrap_or_default())
+    }
+
+    fn migration_table_exists(&self) -> Result<bool> {
         let check_table_sql = format!(
             r#"
-            \c {}
             \x
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
@@ -112,83 +138,44 @@ impl PSQL {
                 AND table_name = 'migration'
             );
             "#,
-            &self.spawn_database, &self.spawn_schema
+            &self.spawn_schema
         );
 
-        let mut writer = self.new_writer()?;
-        writer.write_all(check_table_sql.as_bytes())?;
-        let mut outputter = writer.finalise()?;
-        let output = outputter.output()?;
-        let output_str = String::from_utf8(output).unwrap_or_default();
+        let output = self.execute_sql(&check_table_sql)?;
+        Ok(output.contains("exists | t"))
+    }
 
-        let table_exists = output_str.contains("exists | t");
+    fn get_applied_migrations(&self) -> Result<String> {
+        // TODO: rewrite this to return a proper HashMap of names, rather than
+        // relying on crude pattern matching.
+        let check_migrations_sql = format!(
+            "SELECT migration_name FROM {}.migration;",
+            &self.spawn_schema
+        );
 
-        if !table_exists {
-            // Apply all migration table migrations
-            for (migration_name, migration_sql) in MIGRATION_TABLE_MIGRATIONS {
-                let formatted_sql = migration_sql
-                    .replace("{schema}", &self.spawn_schema)
-                    .replace("{db}", &self.spawn_database);
+        self.execute_sql(&check_migrations_sql)
+    }
 
-                // Apply the migration
-                let mut writer = self.new_writer()?;
-                writer.write_all(formatted_sql.as_bytes())?;
-                let mut outputter = writer.finalise()?;
-                let _ = outputter.output()?;
+    // This is versioned because if we change the schema significantly enough
+    // later, we'll have to still write earlier migrations to the table using
+    // the format of the migration table as it is at that point.
+    fn apply_and_record_migration_v1(
+        &self,
+        migration_name: &str,
+        migration_sql: &str,
+    ) -> Result<()> {
+        // Apply the migration
+        let formatted_sql = migration_sql.replace("{schema}", &self.spawn_schema);
 
-                // Record the migration
-                let record_sql = format!(
-                    r#"\c {}
-INSERT INTO {}.migration (migration_name) VALUES ('{}');"#,
-                    &self.spawn_database, &self.spawn_schema, migration_name
-                );
-                let mut writer = self.new_writer()?;
-                writer.write_all(record_sql.as_bytes())?;
-                let mut outputter = writer.finalise()?;
-                let _ = outputter.output()?;
-            }
-        } else {
-            // Check which migrations have been applied
-            let check_migrations_sql = format!(
-                r#"\c {}
+        self.execute_sql(&formatted_sql)?;
 
-SELECT migration_name FROM {}.migration;"#,
-                &self.spawn_database, &self.spawn_schema
-            );
+        // Record the migration
+        let record_sql = format!(
+            "INSERT INTO {}.migration (migration_name) VALUES ('{}');",
+            &self.spawn_schema, migration_name
+        );
 
-            let mut writer = self.new_writer()?;
-            writer.write_all(check_migrations_sql.as_bytes())?;
-            let mut outputter = writer.finalise()?;
-            let output = outputter.output()?;
-            let output_str = String::from_utf8(output).unwrap_or_default();
-
-            // Apply any missing migrations
-            for (migration_name, migration_sql) in MIGRATION_TABLE_MIGRATIONS {
-                if !output_str.contains(migration_name) {
-                    let formatted_sql = migration_sql
-                        .replace("{schema}", &self.spawn_schema)
-                        .replace("{db}", &self.spawn_database);
-
-                    // Apply the migration
-                    let mut writer = self.new_writer()?;
-                    writer.write_all(formatted_sql.as_bytes())?;
-                    let mut outputter = writer.finalise()?;
-                    let _ = outputter.output()?;
-
-                    // Record the migration
-                    let record_sql = format!(
-                        r#"\c {}
-                        INSERT INTO {}.migration (migration_name) VALUES ('{}');"#,
-                        &self.spawn_database, &self.spawn_schema, migration_name
-                    );
-                    let mut writer = self.new_writer()?;
-                    writer.write_all(record_sql.as_bytes())?;
-                    let mut outputter = writer.finalise()?;
-                    let _ = outputter.output()?;
-                }
-            }
-        }
-
+        self.execute_sql(&record_sql)?;
         Ok(())
     }
 }
