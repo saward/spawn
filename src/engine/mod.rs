@@ -45,7 +45,7 @@ pub trait EngineWriter: io::Write {
 
 pub trait Engine {
     /// Provides a writer that a given migration can be sent to, so that we can
-    /// stream data to this as we go.  May not be implemented for all drivers.
+    /// stream data to this as we go.  May not be implemented for all engines.
     fn new_writer(&self) -> Result<Box<dyn EngineWriter>>;
 
     fn migration_apply(&self, migration: &str) -> Result<String>;
