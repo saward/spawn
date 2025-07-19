@@ -83,6 +83,14 @@ For now, we will support only postgres for testing.  Testing will require psql t
   - Configurable whether failed or successful tests tear down the test database or not.
 - Follow the postgres testing style of producing an expected output, and then comparing future runs to that expected output with a diff.
 
+# Stores
+
+There are two different goals we want to achieve:
+- Allow files to come from a variety of sources (filesystem, embedded in binary, remote server).
+- Allow us to use either pinned components or current components.
+
+Ideally then we can choose any combination of these two things.  Our pin choice (none, spawn, git) should be a separate choice from our files/directories fetching method (local, embedded, remote).
+
 # Features and plans
 
 Here are some of my design goals with spawn:

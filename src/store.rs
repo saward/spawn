@@ -155,6 +155,8 @@ fn read_hash_file(base_path: &Path, hash: &str) -> Result<String> {
     Ok(contents)
 }
 
+/// Walks through a folder, creating pinned entries as appropriate for every
+/// directory and file.  Returns a hash of the object.
 pub fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
     if dir.is_dir() {
         let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(Result::ok).collect();
@@ -191,7 +193,7 @@ pub fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
 
         return Ok(hash);
     }
-    Err(anyhow::anyhow!("wtf this isn't a folder?!?"))
+    Err(anyhow::anyhow!("store_path should be a folder"))
 }
 
 #[cfg(test)]
