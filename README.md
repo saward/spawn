@@ -104,11 +104,14 @@ Here are some of my design goals with spawn:
 - [ ] Idempotently apply migrations to database.
   - [ ] Allow for 'adopting' a migration, where you record in the database that it's been applied, without doing anything.  Useful for if you're bringing in existing migrations from another system that have already been applied to the database.
   - [ ] List migrations in database
-  - [ ] Ability to apply specific migration or all
+  - [ ] Ability to apply specific migration or all.
+    - [ ] Ensure database lock when doing so, where possible.
+      - [ ] Advisory lock like sqitch has, to avoid multiple deployments all trying to apply the same migration at the same time: `pg_advisory_lock` etc.
 - [ ] Support for rollback scripts as an optional part of migrations.
   - [ ] Key template functions so that you can begin a transaction, but at the end you can optionally commit or rollback, based on a migration apply flag.  This allows running 'apply' to test that there's no errors, but rollback afterwards in test mode.
 - [ ] Migration status checking, to see what's been applied to a database.
 - [ ] Repeatable migrations, including hashing the output (with variables perhaps) to check if it's been applied yet, and apply it if not.
+  - [ ] Detect when a dependent component has changed so that it will automatically deduce it needs to rerun this.
 - [ ] Mark a migration as draft, so it does not yet get applied to database.
 - [ ] Easy to spin up new tenant schema.
 - [ ] Easy to migrate each tenant schema.
@@ -126,6 +129,7 @@ Here are some of my design goals with spawn:
 - [ ] Some clever way to watch changes in the view/function folder, and automatically update.  Functions are easier, but views will fail when columns change or they have dependencies.  Views can be solved by having a component that encapsulates the relevant teardown and rebuild for all dependencies.  Or maybe via https://www.postgresql.org/docs/current/catalog-pg-depend.html.
 - [ ] Revert scripts for a migration.
 - [ ] Flatten schema.  E.g., deploy to local db with unique random values for variables (e.g., schema and user names), export again, and replace all references to the unique schema name with template variables again.
+  - [ ] Optionally export the schema into a structured hierarchy of folders and files so that you can browse it easily on filesystem?
 - [ ] SQL validation, perhaps similar to sqlx in Rust.
 - [ ] Custom plugins or extensions.
 - [ ] Syntax highlighting/themes like bat (may be excessive, particularly since bat and other tools can be used -- e.g., `spawn migration build 20240907212659-initial | bat -l sql`)
@@ -134,8 +138,8 @@ Here are some of my design goals with spawn:
   - [ ] Interim option is to track when an undeterministic function is called, and optionally report on that when it's used as part of a test.
 - [ ] Github action to call this easily in Github's CI/CD.
 - [ ] Enable writing scripts.  We have migrations, and tests, but what if we want to run actions against a database that aren't part of a migration?  E.g., to update, insert, or delete data for some test we are doing locally.  Would be handy to use the same reusable components for such scripts.
-- [ ] Advisory lock like sqitch has, to avoid multiple deployments all trying to apply the same migration at the same time: `pg_advisory_lock` etc.
 - [ ] Allow pinning to use `.git/objects` instead of a specific pinned folder, for those who use git and want to minimise bloat.  Migration would point to the specific git commit to get the tree.  Challenge: pinning when you haven't yet committed the objects.  Would need to commit first and then pin.
 - [ ] Store environment in Spawn database table in the target, so that you can't accidentally run a script with env set to `dev` and target `prod` with it.  Spawn should check the target db to ensure it self reports as that env, and use that.
 - [ ] Option to have spawn itself create the copy of the database with template, and exit before running psql commands if that fails.
 - [ ] Option for a migration to have a target output file, so that if you want to render the migrations in a certain folder, then you can.  May not be useful if Spawn is being used to apply migrations.
+- [ ] Report on schema drift, comparing migrations vs some real database as it should be at given which migrations have been applied.

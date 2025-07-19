@@ -1,0 +1,277 @@
+// This is a driver that uses a locally provided PSQL command to execute
+// scripts, which enables user's scripts to take advantage of things like the
+// build in PSQL helper commands.
+
+use crate::engine::{DatabaseConfig, Engine, EngineOutputter, EngineWriter};
+use anyhow::{anyhow, Result};
+use std::io::{self, Read, Write};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::time::Instant;
+use twox_hash::xxhash3_128;
+
+#[derive(Debug)]
+pub struct PSQL {
+    psql_command: Vec<String>,
+    spawn_schema: String,
+    spawn_database: String,
+}
+
+// Static migrations for the migration tracking table
+const MIGRATION_TABLE_MIGRATIONS: &[(&str, &str)] = &[(
+    "001_create_migration_table",
+    r#"
+CREATE SCHEMA IF NOT EXISTS {schema};
+
+CREATE TABLE IF NOT EXISTS {schema}.migration (
+    migration_id SERIAL PRIMARY KEY,
+    name VARCHAR(256),
+    namespace TEXT NOT NULL DEFAULT 'default',
+    CONSTRAINT name_namespace_uq UNIQUE (name, namespace)
+);
+
+CREATE TABLE IF NOT EXISTS {schema}.activity(
+    activity_id TEXT PRIMARY KEY CHECK (UPPER(activity_id) = activity_id)
+);
+
+CREATE TABLE IF NOT EXISTS {schema}.status(
+    status_id TEXT PRIMARY KEY CHECK (UPPER(status_id) = status_id)
+);
+
+CREATE TABLE IF NOT EXISTS {schema}.migration_history (
+    migration_history_id SERIAL PRIMARY KEY,
+    migration_id_migration BIGINT NOT NULL REFERENCES {schema}.migration (migration_id),
+    activity_id_activity TEXT NOT NULL REFERENCES {schema}.activity (activity_id),
+    created_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    description TEXT NOT NULL,
+    status_note TEXT NOT NULL,
+    status_id_status TEXT NOT NULL REFERENCES {schema}.status (status_id),
+    checksum BYTEA NOT NULL,
+    execution_time interval NOT NULL
+);
+
+INSERT INTO {schema}.activity (activity_id) VALUES
+('APPLY'),
+('REVERT')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO {schema}.status (status_id) VALUES
+('SUCCESS'),
+('FAILURE')
+ON CONFLICT DO NOTHING;
+"#,
+)];
+
+pub struct PSQLWriter {
+    child: Child,
+    stdin: ChildStdin,
+}
+
+pub struct PSQLOutput {
+    child: Child,
+}
+
+impl PSQL {
+    pub fn new(config: &DatabaseConfig) -> Result<Box<dyn Engine>> {
+        let psql_command = config
+            .command
+            .clone()
+            .ok_or(anyhow!("Command command must be defined"))?;
+
+        Ok(Box::new(Self {
+            psql_command,
+            spawn_schema: config.spawn_schema.clone(),
+            spawn_database: config.spawn_database.clone(),
+        }))
+    }
+}
+
+impl crate::engine::Engine for PSQL {
+    fn new_writer(&self) -> Result<Box<dyn EngineWriter>> {
+        let mut parts = self.psql_command.clone();
+        let command = parts.remove(0);
+        let mut child = &mut Command::new(command);
+        for arg in parts {
+            child = child.arg(arg);
+        }
+        let mut child = child
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("failed to execute command");
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or(anyhow::anyhow!("no stdin found"))?;
+
+        Ok(Box::new(PSQLWriter { child, stdin }))
+    }
+
+    fn migration_apply(&self, migration: &str) -> Result<String> {
+        // Ensure we have latest schema:
+        self.update_schema()?;
+        let mut writer = self.new_writer()?;
+
+        // Write migration to writer:
+        writer.write_all(migration.as_bytes())?;
+        let mut outputter = writer.finalise()?;
+
+        let output = outputter.output()?;
+        // Read the Vec<u8> as utf8 or ascii:
+        let output = String::from_utf8(output).unwrap_or_default();
+        Ok(output)
+    }
+}
+
+impl PSQL {
+    pub fn update_schema(&self) -> Result<()> {
+        let migration_table_exists = self.migration_table_exists()?;
+
+        if migration_table_exists {
+            // Check which migrations have been applied and apply missing ones
+            let applied_migrations = self.get_applied_migrations()?;
+            for (migration_name, migration_sql) in MIGRATION_TABLE_MIGRATIONS {
+                if !applied_migrations.contains(migration_name) {
+                    self.apply_and_record_migration_v1(migration_name, migration_sql)?;
+                }
+            }
+        } else {
+            // Apply all migration table migrations
+            for (migration_name, migration_sql) in MIGRATION_TABLE_MIGRATIONS {
+                self.apply_and_record_migration_v1(migration_name, migration_sql)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn execute_sql(&self, sql: &str, format: Option<&str>) -> Result<String> {
+        let mut writer = self.new_writer()?;
+        writer.write_all(format!("\\c {}\n", &self.spawn_database).as_bytes())?;
+        if let Some(format) = format {
+            writer.write_all(format!("\\pset format {}\n", format).as_bytes())?;
+        }
+        writer.write_all(sql.as_bytes())?;
+        let mut outputter = writer.finalise()?;
+        let output = outputter.output()?;
+        // Error if we can't read:
+        let output = String::from_utf8(output)?;
+        println!("output: {}", &output);
+        Ok(output)
+    }
+
+    fn migration_table_exists(&self) -> Result<bool> {
+        let check_table_sql = format!(
+            r#"
+            \x
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_schema = '{}'
+                AND table_name = 'migration'
+            );
+            "#,
+            &self.spawn_schema
+        );
+
+        let output = self.execute_sql(&check_table_sql, Some("csv"))?;
+        Ok(output.contains("exists,t"))
+    }
+
+    fn get_applied_migrations(&self) -> Result<String> {
+        // TODO: rewrite this to return a proper HashMap of names, rather than
+        // relying on crude pattern matching.
+        let check_migrations_sql = format!("SELECT name FROM {}.migration;", &self.spawn_schema);
+
+        self.execute_sql(&check_migrations_sql, Some("csv"))
+    }
+
+    // This is versioned because if we change the schema significantly enough
+    // later, we'll have to still write earlier migrations to the table using
+    // the format of the migration table as it is at that point.
+    fn apply_and_record_migration_v1(
+        &self,
+        migration_name: &str,
+        migration_sql: &str,
+    ) -> Result<()> {
+        // Apply the migration
+        let formatted_sql = migration_sql.replace("{schema}", &self.spawn_schema);
+
+        // Record duration of execute_sql:
+        let start_time = Instant::now();
+        self.execute_sql(&formatted_sql, None)?;
+        let duration = start_time.elapsed().as_secs_f32();
+
+        let checksum = xxhash3_128::Hasher::oneshot(&formatted_sql.as_bytes());
+
+        // Record the migration
+        let record_sql = format!(
+            r#"
+INSERT INTO {}.migration (name, namespace) VALUES ('{}', 'spawn');
+INSERT INTO {}.migration_history (
+    migration_id_migration,
+    activity_id_activity,
+    created_by,
+    description,
+    status_note,
+    status_id_status,
+    checksum,
+    execution_time
+)
+SELECT
+    migration_id,
+    'APPLY',
+    'unused',
+    '',
+    '',
+    'SUCCESS',
+    '{}',
+    {}
+FROM {}.migration
+WHERE name = '{}' AND namespace = 'spawn';
+"#,
+            &self.spawn_schema,
+            &migration_name,
+            &self.spawn_schema,
+            checksum,
+            format!("INTERVAL '{} second'", duration),
+            &self.spawn_schema,
+            &migration_name
+        );
+
+        self.execute_sql(&record_sql, None)?;
+        Ok(())
+    }
+}
+
+impl crate::engine::EngineOutputter for PSQLOutput {
+    fn output(&mut self) -> io::Result<Vec<u8>> {
+        // Collect all output
+        let mut output = Vec::new();
+        if let Some(mut out) = self.child.stdout.take() {
+            out.read_to_end(&mut output)?;
+        }
+
+        // Reap the child to avoid a zombie process
+        let _ = self.child.wait()?;
+        Ok(output)
+    }
+}
+
+impl crate::engine::EngineWriter for PSQLWriter {
+    fn finalise(mut self: Box<Self>) -> Result<Box<dyn EngineOutputter>> {
+        // Ensure writing is finished (not sure if necessary):
+        self.flush()?;
+        Ok(Box::new(PSQLOutput { child: self.child }))
+    }
+}
+
+impl io::Write for PSQLWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.stdin.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stdin.flush()
+    }
+}

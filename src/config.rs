@@ -1,4 +1,4 @@
-use crate::dbdriver::{postgres_psql::PSQL, Database};
+use crate::engine::{postgres_psql::PSQL, DatabaseConfig, Engine};
 use crate::pinfile::LockData;
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
@@ -14,43 +14,40 @@ static PINFILE_LOCK_NAME: &str = "lock.toml";
 pub struct Config {
     pub spawn_folder: PathBuf,
     pub database: String,
-
-    #[serde(default = "default_environment")]
-    pub environment: String,
+    pub environment: Option<String>, // Override the environment for the db config
 
     pub databases: HashMap<String, DatabaseConfig>,
 }
 
 impl Config {
-    pub fn new_driver(&self) -> Result<Box<dyn Database>> {
-        let db_config = self.databases.get(&self.database).ok_or(anyhow!(
-            "no database defined with name '{}'",
-            &self.database
-        ))?;
+    pub fn new_engine(&self) -> Result<Box<dyn Engine>> {
+        let db_config = self.db_config()?;
 
-        match db_config.driver.as_str() {
-            "postgres-psql" => Ok(PSQL::new(&db_config.command.clone().ok_or(anyhow!(
-                "command must be specified for driver {}",
-                &db_config.driver
-            ))?)),
+        match db_config.engine.as_str() {
+            "postgres-psql" => Ok(PSQL::new(&db_config)?),
             _ => Err(anyhow!(
-                "no driver with name '{}' exists",
-                &db_config.driver
+                "no engine with name '{}' exists",
+                &db_config.engine
             )),
         }
     }
-}
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct DatabaseConfig {
-    pub driver: String,
+    pub fn db_config(&self) -> Result<DatabaseConfig> {
+        let mut conf = self
+            .databases
+            .get(&self.database)
+            .ok_or(anyhow!(
+                "no database defined with name '{}'",
+                &self.database
+            ))?
+            .clone();
 
-    #[serde(default)]
-    pub command: Option<Vec<String>>,
-}
+        if let Some(env) = &self.environment {
+            conf.environment = env.clone();
+        }
 
-fn default_environment() -> String {
-    "prod".to_string()
+        Ok(conf)
+    }
 }
 
 impl Config {

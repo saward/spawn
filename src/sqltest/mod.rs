@@ -1,5 +1,5 @@
 use crate::config;
-use crate::dbdriver::DatabaseOutputter;
+use crate::engine::EngineOutputter;
 use crate::template;
 use console::{style, Style};
 use similar::{ChangeTag, TextDiff};
@@ -72,14 +72,14 @@ impl Tester {
     pub fn run(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
         let content = self.generate(variables.clone())?;
 
-        let driver = self.config.new_driver()?;
+        let engine = self.config.new_engine()?;
 
-        let mut dbwriter = driver.new_writer()?;
+        let mut dbwriter = engine.new_writer()?;
         dbwriter
             .write_all(&content.into_bytes())
             .context("failed ro write content to test db")?;
 
-        let mut outputter: Box<dyn DatabaseOutputter> = dbwriter.outputter()?;
+        let mut outputter: Box<dyn EngineOutputter> = dbwriter.finalise()?;
         let output = outputter.output()?;
 
         let generated: String = str::from_utf8(&output)?.to_string();
