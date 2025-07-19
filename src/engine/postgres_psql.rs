@@ -6,6 +6,8 @@ use crate::engine::{DatabaseConfig, Engine, EngineOutputter, EngineWriter};
 use anyhow::{anyhow, Result};
 use std::io::{self, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::time::Instant;
+use twox_hash::xxhash3_128;
 
 #[derive(Debug)]
 pub struct PSQL {
@@ -15,25 +17,50 @@ pub struct PSQL {
 }
 
 // Static migrations for the migration tracking table
-const MIGRATION_TABLE_MIGRATIONS: &[(&str, &str)] = &[
-    (
-        "001_create_migration_table",
-        r#"
+const MIGRATION_TABLE_MIGRATIONS: &[(&str, &str)] = &[(
+    "001_create_migration_table",
+    r#"
 CREATE SCHEMA IF NOT EXISTS {schema};
+
 CREATE TABLE IF NOT EXISTS {schema}.migration (
-    id SERIAL PRIMARY KEY,
-    migration_name VARCHAR(255) NOT NULL UNIQUE,
-    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    migration_id SERIAL PRIMARY KEY,
+    name VARCHAR(256),
+    namespace TEXT NOT NULL DEFAULT 'default',
+    CONSTRAINT name_namespace_uq UNIQUE (name, namespace)
 );
+
+CREATE TABLE IF NOT EXISTS {schema}.activity(
+    activity_id TEXT PRIMARY KEY CHECK (UPPER(activity_id) = activity_id)
+);
+
+CREATE TABLE IF NOT EXISTS {schema}.status(
+    status_id TEXT PRIMARY KEY CHECK (UPPER(status_id) = status_id)
+);
+
+CREATE TABLE IF NOT EXISTS {schema}.migration_history (
+    migration_history_id SERIAL PRIMARY KEY,
+    migration_id_migration BIGINT NOT NULL REFERENCES {schema}.migration (migration_id),
+    activity_id_activity TEXT NOT NULL REFERENCES {schema}.activity (activity_id),
+    created_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    description TEXT NOT NULL,
+    status_note TEXT NOT NULL,
+    status_id_status TEXT NOT NULL REFERENCES {schema}.status (status_id),
+    checksum BYTEA NOT NULL,
+    execution_time interval NOT NULL
+);
+
+INSERT INTO {schema}.activity (activity_id) VALUES
+('APPLY'),
+('REVERT')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO {schema}.status (status_id) VALUES
+('SUCCESS'),
+('FAILURE')
+ON CONFLICT DO NOTHING;
 "#,
-    ),
-    (
-        "002_add_migration_index",
-        r#"
-CREATE INDEX IF NOT EXISTS idx_migration_name ON {schema}.migration (migration_name);
-"#,
-    ),
-];
+)];
 
 pub struct PSQLWriter {
     child: Child,
@@ -154,10 +181,7 @@ impl PSQL {
     fn get_applied_migrations(&self) -> Result<String> {
         // TODO: rewrite this to return a proper HashMap of names, rather than
         // relying on crude pattern matching.
-        let check_migrations_sql = format!(
-            "SELECT migration_name FROM {}.migration;",
-            &self.spawn_schema
-        );
+        let check_migrations_sql = format!("SELECT name FROM {}.migration;", &self.spawn_schema);
 
         self.execute_sql(&check_migrations_sql, Some("csv"))
     }
@@ -173,12 +197,46 @@ impl PSQL {
         // Apply the migration
         let formatted_sql = migration_sql.replace("{schema}", &self.spawn_schema);
 
+        // Record duration of execute_sql:
+        let start_time = Instant::now();
         self.execute_sql(&formatted_sql, None)?;
+        let duration = start_time.elapsed().as_secs_f32();
+
+        let checksum = xxhash3_128::Hasher::oneshot(&formatted_sql.as_bytes());
 
         // Record the migration
         let record_sql = format!(
-            "INSERT INTO {}.migration (migration_name) VALUES ('{}');",
-            &self.spawn_schema, migration_name
+            r#"
+INSERT INTO {}.migration (name, namespace) VALUES ('{}', 'spawn');
+INSERT INTO {}.migration_history (
+    migration_id_migration,
+    activity_id_activity,
+    created_by,
+    description,
+    status_note,
+    status_id_status,
+    checksum,
+    execution_time
+)
+SELECT
+    migration_id,
+    'APPLY',
+    'unused',
+    '',
+    '',
+    'SUCCESS',
+    '{}',
+    {}
+FROM {}.migration
+WHERE name = '{}' AND namespace = 'spawn';
+"#,
+            &self.spawn_schema,
+            &migration_name,
+            &self.spawn_schema,
+            checksum,
+            format!("INTERVAL '{} second'", duration),
+            &self.spawn_schema,
+            &migration_name
         );
 
         self.execute_sql(&record_sql, None)?;
