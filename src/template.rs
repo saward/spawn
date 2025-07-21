@@ -1,4 +1,5 @@
 use crate::config;
+use crate::store::pin_spawn::PinStore;
 use crate::store::{self, Store};
 use crate::template;
 use crate::variables::Variables;
@@ -30,7 +31,7 @@ pub fn generate(
         let lock = cfg
             .load_lock_file(&lock_file)
             .context("could not load pinned files lock file")?;
-        let store = store::PinStore::new(cfg.pinned_folder(), lock.pin)?;
+        let store = PinStore::new(cfg.pinned_folder(), lock.pin)?;
         let store: Arc<dyn Store + Send + Sync> = Arc::new(store);
         store
     } else {

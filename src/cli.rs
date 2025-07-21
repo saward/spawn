@@ -132,7 +132,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     Ok(Outcome::NewMigration(mg.create_migration()?))
                 }
                 Some(MigrationCommands::Pin { migration }) => {
-                    let root = store::snapshot(
+                    let root = store::pin::snapshot(
                         &main_config.pinned_folder(),
                         &main_config.components_folder(),
                     )?;
