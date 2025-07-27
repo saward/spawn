@@ -6,6 +6,13 @@ use std::path::Path;
 use std::path::PathBuf;
 use twox_hash::xxhash3_128;
 
+pub mod latest;
+pub mod spawn;
+
+pub trait Pinner: Clone {
+    fn load(&self, name: &str) -> std::result::Result<Option<String>, minijinja::Error>;
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Tree {
     pub entries: Vec<Entry>,
@@ -48,7 +55,7 @@ pub(crate) fn pin_contents(store_path: &Path, contents: String) -> Result<String
     }
 
     Ok(hash)
-
+}
 
 /// Converts a hash string into a relative path like `c6/b8e869fa533155bbf2f0dd8fda9c68`.
 pub(crate) fn hash_to_path(hash: &str) -> Result<PathBuf> {
@@ -108,4 +115,23 @@ pub fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
         return Ok(hash);
     }
     Err(anyhow::anyhow!("store_path should be a folder"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_snapshot() -> Result<()> {
+        // Simple test to ensure it runs without error.
+        let source = PathBuf::from("./static/example/components");
+        let store_loc = PathBuf::from("./test-store");
+        let root = snapshot(&store_loc, &source)?;
+        assert!(root.len() > 0);
+        // Cleanup:
+        fs::remove_dir_all(&store_loc)?;
+        Ok(())
+    }
 }

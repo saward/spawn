@@ -1,5 +1,5 @@
 use crate::config;
-use crate::store::pin_spawn::PinStore;
+use crate::store::pinner::Pinner;
 use crate::store::{self, Store};
 use crate::template;
 use crate::variables::Variables;
@@ -11,7 +11,7 @@ use uuid::Uuid;
 use anyhow::{Context, Result};
 use minijinja::context;
 
-pub fn template_env(store: Arc<dyn Store + Send + Sync>) -> Result<Environment<'static>> {
+pub fn template_env<P: Pinner>(store: Store<P>) -> Result<Environment<'static>> {
     let mut env = Environment::new();
 
     env.set_loader(move |name: &str| store.clone().load(name));
@@ -35,7 +35,7 @@ pub fn generate(
         let store: Arc<dyn Store + Send + Sync> = Arc::new(store);
         store
     } else {
-        let store = store::LiveStore::new(cfg.components_folder())?;
+        let store = store::SpawnPin::new(cfg.components_folder())?;
         let store: Arc<dyn Store + Send + Sync> = Arc::new(store);
         store
     };
