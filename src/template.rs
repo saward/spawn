@@ -1,6 +1,8 @@
 use crate::config;
+use crate::store::pinner::latest::Latest;
+use crate::store::pinner::spawn::Spawn;
 use crate::store::pinner::Pinner;
-use crate::store::{self, Store};
+use crate::store::Store;
 use crate::template;
 use crate::variables::Variables;
 use minijinja::Environment;
@@ -11,10 +13,10 @@ use uuid::Uuid;
 use anyhow::{Context, Result};
 use minijinja::context;
 
-pub fn template_env<P: Pinner>(store: Store<P>) -> Result<Environment<'static>> {
+pub fn template_env(store: Store) -> Result<Environment<'static>> {
     let mut env = Environment::new();
 
-    env.set_loader(move |name: &str| store.clone().load(name));
+    env.set_loader(move |name: &str| store.load(name));
     env.add_function("gen_uuid_v4", gen_uuid_v4);
 
     Ok(env)
@@ -27,18 +29,22 @@ pub fn generate(
     variables: Option<Variables>,
 ) -> Result<Generation> {
     // Create and set up the component loader
-    let store = if let Some(lock_file) = lock_file {
+    let pinner: Arc<dyn Pinner> = if let Some(lock_file) = lock_file {
         let lock = cfg
             .load_lock_file(&lock_file)
             .context("could not load pinned files lock file")?;
-        let store = PinStore::new(cfg.pinned_folder(), lock.pin)?;
-        let store: Arc<dyn Store + Send + Sync> = Arc::new(store);
-        store
+        let pinner = Spawn::new(
+            cfg.pinned_folder(),
+            cfg.components_folder(),
+            Some(&lock.pin),
+        )?;
+        Arc::new(pinner)
     } else {
-        let store = store::SpawnPin::new(cfg.components_folder())?;
-        let store: Arc<dyn Store + Send + Sync> = Arc::new(store);
-        store
+        let pinner = Latest::new(cfg.components_folder())?;
+        Arc::new(pinner)
     };
+
+    let store = Store::new(pinner)?;
 
     let mut env = template::template_env(store)?;
 

@@ -9,8 +9,9 @@ use twox_hash::xxhash3_128;
 pub mod latest;
 pub mod spawn;
 
-pub trait Pinner: Clone {
+pub trait Pinner: Send + Sync {
     fn load(&self, name: &str) -> std::result::Result<Option<String>, minijinja::Error>;
+    fn snapshot(&mut self) -> Result<String>;
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -78,7 +79,7 @@ pub(crate) fn read_hash_file(base_path: &Path, hash: &str) -> Result<String> {
 
 /// Walks through a folder, creating pinned entries as appropriate for every
 /// directory and file.  Returns a hash of the object.
-pub fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
+pub(crate) fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
     if dir.is_dir() {
         let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(Result::ok).collect();
         entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));

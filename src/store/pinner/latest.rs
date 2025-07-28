@@ -28,4 +28,8 @@ impl Pinner for Latest {
             Ok(None)
         }
     }
+
+    fn snapshot(&mut self) -> Result<String> {
+        Err(anyhow::anyhow!("Latest pinner does not support pinning"))
+    }
 }

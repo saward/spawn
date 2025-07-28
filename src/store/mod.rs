@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 
 use crate::store::pinner::Pinner;
@@ -7,13 +9,12 @@ pub mod pinner;
 
 pub trait FS {}
 
-#[derive(Clone)]
-pub struct Store<P: Pinner> {
-    pinner: P,
+pub struct Store {
+    pinner: Arc<dyn Pinner>,
 }
 
-impl<P: Pinner> Store<P> {
-    pub fn new(pinner: P) -> Result<Store<P>> {
+impl Store {
+    pub fn new(pinner: Arc<dyn Pinner>) -> Result<Store> {
         Ok(Store { pinner: pinner })
     }
 
