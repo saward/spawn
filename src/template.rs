@@ -29,7 +29,7 @@ pub fn generate(
     variables: Option<Variables>,
 ) -> Result<Generation> {
     // Create and set up the component loader
-    let pinner: Arc<dyn Pinner> = if let Some(lock_file) = lock_file {
+    let pinner: Box<dyn Pinner> = if let Some(lock_file) = lock_file {
         let lock = cfg
             .load_lock_file(&lock_file)
             .context("could not load pinned files lock file")?;
@@ -38,10 +38,10 @@ pub fn generate(
             cfg.components_folder(),
             Some(&lock.pin),
         )?;
-        Arc::new(pinner)
+        Box::new(pinner)
     } else {
         let pinner = Latest::new(cfg.components_folder())?;
-        Arc::new(pinner)
+        Box::new(pinner)
     };
 
     let store = Store::new(pinner)?;

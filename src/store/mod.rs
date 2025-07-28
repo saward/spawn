@@ -10,11 +10,11 @@ pub mod pinner;
 pub trait FS {}
 
 pub struct Store {
-    pinner: Arc<dyn Pinner>,
+    pinner: Box<dyn Pinner>,
 }
 
 impl Store {
-    pub fn new(pinner: Arc<dyn Pinner>) -> Result<Store> {
+    pub fn new(pinner: Box<dyn Pinner>) -> Result<Store> {
         Ok(Store { pinner: pinner })
     }
 
