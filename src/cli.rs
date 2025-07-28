@@ -1,9 +1,9 @@
-use crate::config::Config;
 use crate::migrator::Migrator;
 use crate::pinfile::LockData;
 use crate::sqltest::Tester;
-use crate::store;
+use crate::store::pinner::spawn::Spawn;
 use crate::variables::Variables;
+use crate::{config::Config, store::pinner::Pinner};
 use std::ffi::OsString;
 use std::fs;
 
@@ -132,10 +132,12 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     Ok(Outcome::NewMigration(mg.create_migration()?))
                 }
                 Some(MigrationCommands::Pin { migration }) => {
-                    let root = store::snapshot(
-                        &main_config.pinned_folder(),
-                        &main_config.components_folder(),
+                    let mut pinner = Spawn::new(
+                        main_config.pinned_folder(),
+                        main_config.components_folder(),
+                        None,
                     )?;
+                    let root = pinner.snapshot()?;
                     let lock_file = main_config.migration_lock_file_path(&migration);
                     let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
                     fs::write(lock_file, toml_str)?;
