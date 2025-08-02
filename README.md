@@ -151,3 +151,11 @@ Here are some of my design goals with spawn:
 - [ ] Option to have spawn itself create the copy of the database with template, and exit before running psql commands if that fails.
 - [ ] Option for a migration to have a target output file, so that if you want to render the migrations in a certain folder, then you can.  May not be useful if Spawn is being used to apply migrations.
 - [ ] Report on schema drift, comparing migrations vs some real database as it should be at given which migrations have been applied.
+
+# Local commands
+
+Handy commands for when running locally for testing:
+
+```bash
+cargo run migration build 20240907212659-initial
+```

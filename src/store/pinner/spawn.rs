@@ -1,5 +1,6 @@
 use super::Pinner;
 use anyhow::{Context, Result};
+use object_store::ObjectStore;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
@@ -62,7 +63,11 @@ impl Spawn {
 
 impl Pinner for Spawn {
     /// Returns the file from the store if it exists.
-    fn load(&self, name: &str) -> std::result::Result<Option<String>, minijinja::Error> {
+    fn load(
+        &self,
+        name: &str,
+        object_store: &Box<dyn ObjectStore>,
+    ) -> std::result::Result<Option<String>, minijinja::Error> {
         // Borrow files from inside self.files, if not none:
         let files = self.files.as_ref().ok_or_else(|| {
             minijinja::Error::new(

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use object_store::ObjectStore;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -10,8 +11,16 @@ pub mod latest;
 pub mod spawn;
 
 pub trait Pinner: Send + Sync {
-    fn load(&self, name: &str) -> std::result::Result<Option<String>, minijinja::Error>;
+    fn load(
+        &self,
+        name: &str,
+        object_store: &Box<dyn ObjectStore>,
+    ) -> std::result::Result<Option<String>, minijinja::Error>;
     fn snapshot(&mut self) -> Result<String>;
+
+    fn components_folder(&self) -> &'static str {
+        "components"
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

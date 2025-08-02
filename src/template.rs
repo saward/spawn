@@ -6,8 +6,9 @@ use crate::store::Store;
 use crate::template;
 use crate::variables::Variables;
 use minijinja::Environment;
-use std::path::PathBuf;
+use object_store::local::LocalFileSystem;
 use std::sync::Arc;
+use std::{ops::Not, path::PathBuf};
 use uuid::Uuid;
 
 use anyhow::{Context, Result};
@@ -40,11 +41,13 @@ pub fn generate(
         )?;
         Box::new(pinner)
     } else {
-        let pinner = Latest::new(cfg.components_folder())?;
+        let pinner = Latest::new()?;
         Box::new(pinner)
     };
 
-    let store = Store::new(pinner)?;
+    let fs = Box::new(LocalFileSystem::new_with_prefix(&cfg.spawn_folder)?);
+
+    let store = Store::new(pinner, fs)?;
 
     let mut env = template::template_env(store)?;
 
