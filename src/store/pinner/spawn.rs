@@ -10,8 +10,8 @@ use std::path::PathBuf;
 #[derive(Debug)]
 pub struct Spawn {
     files: Option<HashMap<String, PathBuf>>,
-    store_path: PathBuf,
-    source_path: PathBuf,
+    store_path: String,
+    source_path: String,
 }
 
 impl Spawn {
@@ -41,25 +41,26 @@ impl Spawn {
         base_path: &Path,
         root_hash: &str,
     ) -> Result<()> {
-        let contents =
-            super::read_hash_file(store_path, root_hash).context("cannot read root file")?;
-        let tree: super::Tree = toml::from_str(&contents).context("failed to parse tree TOML")?;
+        // let contents =
+        //     super::read_hash_file(store_path, root_hash).context("cannot read root file")?;
+        // let tree: super::Tree = toml::from_str(&contents).context("failed to parse tree TOML")?;
 
-        for entry in tree.entries {
-            match entry.kind {
-                super::EntryKind::Blob => {
-                    let full_name = format!("{}/{}", base_path.display(), &entry.name);
-                    let full_path = store_path.join(&super::hash_to_path(&entry.hash)?);
-                    files.insert(full_name, full_path);
-                }
-                super::EntryKind::Tree => {
-                    let new_base = base_path.join(&entry.name);
-                    Self::read_root_hash(store_path, files, &new_base, &entry.hash)?;
-                }
-            }
-        }
+        // for entry in tree.entries {
+        //     match entry.kind {
+        //         super::EntryKind::Blob => {
+        //             let full_name = format!("{}/{}", base_path.display(), &entry.name);
+        //             let full_path = store_path.join(&super::hash_to_path(&entry.hash)?);
+        //             files.insert(full_name, full_path);
+        //         }
+        //         super::EntryKind::Tree => {
+        //             let new_base = base_path.join(&entry.name);
+        //             Self::read_root_hash(store_path, files, &new_base, &entry.hash)?;
+        //         }
+        //     }
+        // }
 
-        Ok(())
+        // Ok(())
+        Err(anyhow!("read_root_hash not implemented"))
     }
 }
 
@@ -88,7 +89,12 @@ impl Pinner for Spawn {
         }
     }
 
-    fn snapshot(&mut self, object_store: &Box<dyn ObjectStore>) -> Result<String> {
-        super::snapshot(object_store, &self.store_path, &self.source_path)
+    async fn snapshot(&mut self, object_store: &Box<dyn ObjectStore>) -> Result<String> {
+        super::snapshot(
+            object_store,
+            &Box::from(self.store_path.as_ref()),
+            &Box::from(self.source_path.as_ref()),
+        )
+        .await
     }
 }
