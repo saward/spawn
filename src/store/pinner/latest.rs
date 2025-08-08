@@ -1,5 +1,6 @@
 use super::Pinner;
 use anyhow::Result;
+use async_trait::async_trait;
 use object_store::ObjectStore;
 
 /// Uses the latest versions of files, rather than any pinned version.
@@ -17,31 +18,23 @@ impl Latest {
     }
 }
 
+#[async_trait]
 impl Pinner for Latest {
     /// Returns the file from the live file system if it exists.
-    fn load(
+    async fn load(
         &self,
         name: &str,
         object_store: &Box<dyn ObjectStore>,
-    ) -> std::result::Result<Option<String>, minijinja::Error> {
+    ) -> Result<Option<String>> {
         let path_str = format!("components/{}", name);
         let path = object_store::path::Path::from(path_str);
-        let result = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let get_result = object_store.get(&path).await?;
-                let bytes = get_result.bytes().await?;
-                Ok::<Vec<u8>, object_store::Error>(bytes.to_vec())
-            })
-        });
-        result
-            .map(|bytes| String::from_utf8(bytes).ok())
-            .map_err(|e| {
-                minijinja::Error::new(
-                    minijinja::ErrorKind::InvalidOperation,
-                    "Failed to load from object store",
-                )
-                .with_source(e)
-            })
+
+        let get_result = object_store.get(&path).await?;
+        let bytes = get_result.bytes().await?;
+        let result = Ok::<Vec<u8>, object_store::Error>(bytes.to_vec());
+        let res = result.map(|bytes| String::from_utf8(bytes).ok())?;
+
+        Ok(res)
     }
 
     fn snapshot(&mut self, _object_store: &Box<dyn ObjectStore>) -> Result<String> {

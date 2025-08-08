@@ -16,11 +16,38 @@ use minijinja::context;
 pub fn template_env(store: Store) -> Result<Environment<'static>> {
     let mut env = Environment::new();
 
-    env.set_loader(move |name: &str| store.load(name));
+    let mj_store = MiniJinjaLoader { store };
+    env.set_loader(move |name: &str| mj_store.load(name));
     env.add_function("gen_uuid_v4", gen_uuid_v4);
 
     Ok(env)
 }
+
+struct MiniJinjaLoader {
+    pub store: Store,
+}
+
+impl MiniJinjaLoader {
+    pub fn load(&self, name: &str) -> std::result::Result<Option<String>, minijinja::Error> {
+        let result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async { self.store.load(name).await })
+        });
+
+        result.map_err(|e| {
+            minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                format!("Failed to load from object store: {}", e),
+            )
+        })
+    }
+}
+
+// fn mj_loader_from_store_loader(
+//     &self,
+//     name: &str,
+// ) -> std::result::Result<Option<String>, minijinja::Error> {
+//     self.pinner.load(name, &self.fs)
+// }
 
 pub fn generate(
     cfg: &config::Config,

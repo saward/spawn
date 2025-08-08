@@ -15,7 +15,9 @@ impl Store {
         Ok(Store { pinner, fs })
     }
 
-    pub fn load(&self, name: &str) -> std::result::Result<Option<String>, minijinja::Error> {
-        self.pinner.load(name, &self.fs)
+    pub async fn load(&self, name: &str) -> Result<Option<String>> {
+        let res = self.pinner.load(name, &self.fs).await?;
+
+        Ok(res)
     }
 }

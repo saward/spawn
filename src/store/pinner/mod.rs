@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use object_store::ObjectStore;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -10,12 +11,10 @@ use twox_hash::xxhash3_128;
 pub mod latest;
 pub mod spawn;
 
+#[async_trait]
 pub trait Pinner: Send + Sync {
-    fn load(
-        &self,
-        name: &str,
-        object_store: &Box<dyn ObjectStore>,
-    ) -> std::result::Result<Option<String>, minijinja::Error>;
+    async fn load(&self, name: &str, object_store: &Box<dyn ObjectStore>)
+        -> Result<Option<String>>;
     fn snapshot(&mut self, object_store: &Box<dyn ObjectStore>) -> Result<String>;
 
     fn components_folder(&self) -> &'static str {

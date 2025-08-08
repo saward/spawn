@@ -1725,6 +1725,7 @@ name = "spawn"
 version = "0.1.5"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "clap",
  "config",

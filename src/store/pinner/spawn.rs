@@ -1,5 +1,7 @@
 use super::Pinner;
+use anyhow::anyhow;
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use object_store::ObjectStore;
 use std::collections::HashMap;
 use std::path::Path;
@@ -61,20 +63,19 @@ impl Spawn {
     }
 }
 
+#[async_trait]
 impl Pinner for Spawn {
     /// Returns the file from the store if it exists.
-    fn load(
+    async fn load(
         &self,
         name: &str,
         object_store: &Box<dyn ObjectStore>,
-    ) -> std::result::Result<Option<String>, minijinja::Error> {
+    ) -> Result<Option<String>> {
         // Borrow files from inside self.files, if not none:
-        let files = self.files.as_ref().ok_or_else(|| {
-            minijinja::Error::new(
-                minijinja::ErrorKind::UndefinedError,
-                "files not initialized, was a root hash specified?",
-            )
-        })?;
+        let files = self
+            .files
+            .as_ref()
+            .ok_or(anyhow!("files not initialized, was a root hash specified?"))?;
 
         if let Some(path) = files.get(name) {
             if let Ok(contents) = std::fs::read_to_string(path) {
