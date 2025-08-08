@@ -1,14 +1,9 @@
-use std::sync::Arc;
-
 use anyhow::Result;
-use object_store::{local::LocalFileSystem, memory::InMemory, ObjectStore};
+use object_store::ObjectStore;
 
 use crate::store::pinner::Pinner;
 
-pub mod fs;
 pub mod pinner;
-
-pub trait FS {}
 
 pub struct Store {
     pinner: Box<dyn Pinner>,

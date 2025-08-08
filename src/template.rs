@@ -7,8 +7,7 @@ use crate::template;
 use crate::variables::Variables;
 use minijinja::Environment;
 use object_store::local::LocalFileSystem;
-use std::sync::Arc;
-use std::{ops::Not, path::PathBuf};
+use std::path::PathBuf;
 use uuid::Uuid;
 
 use anyhow::{Context, Result};

@@ -44,7 +44,7 @@ impl Pinner for Latest {
             })
     }
 
-    fn snapshot(&mut self) -> Result<String> {
+    fn snapshot(&mut self, _object_store: &Box<dyn ObjectStore>) -> Result<String> {
         Err(anyhow::anyhow!("Latest pinner does not support pinning"))
     }
 }

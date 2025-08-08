@@ -16,7 +16,7 @@ pub trait Pinner: Send + Sync {
         name: &str,
         object_store: &Box<dyn ObjectStore>,
     ) -> std::result::Result<Option<String>, minijinja::Error>;
-    fn snapshot(&mut self) -> Result<String>;
+    fn snapshot(&mut self, object_store: &Box<dyn ObjectStore>) -> Result<String>;
 
     fn components_folder(&self) -> &'static str {
         "components"
@@ -41,13 +41,21 @@ pub struct Entry {
     pub name: String,
 }
 
-pub(crate) fn pin_file(store_path: &Path, file_path: &Path) -> Result<String> {
+pub(crate) fn pin_file(
+    object_store: &Box<dyn ObjectStore>,
+    store_path: &Path,
+    file_path: &Path,
+) -> Result<String> {
     let contents = fs::read_to_string(file_path)?;
 
-    pin_contents(store_path, contents)
+    pin_contents(object_store, store_path, contents)
 }
 
-pub(crate) fn pin_contents(store_path: &Path, contents: String) -> Result<String> {
+pub(crate) fn pin_contents(
+    object_store: &Box<dyn ObjectStore>,
+    store_path: &Path,
+    contents: String,
+) -> Result<String> {
     let hash = xxhash3_128::Hasher::oneshot(contents.as_bytes());
     let hash = format!("{:032x}", hash);
     let hash_folder = PathBuf::from(&hash[..2]);
@@ -88,7 +96,11 @@ pub(crate) fn read_hash_file(base_path: &Path, hash: &str) -> Result<String> {
 
 /// Walks through a folder, creating pinned entries as appropriate for every
 /// directory and file.  Returns a hash of the object.
-pub(crate) fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
+pub(crate) fn snapshot(
+    object_store: &Box<dyn ObjectStore>,
+    store_path: &Path,
+    dir: &Path,
+) -> Result<String> {
     if dir.is_dir() {
         let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(Result::ok).collect();
         entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
@@ -103,14 +115,14 @@ pub(crate) fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
                 .to_str()
                 .unwrap_or_default();
             if path.is_dir() {
-                let branch = snapshot(store_path, &path)?;
+                let branch = snapshot(object_store, store_path, &path)?;
                 tree.entries.push(Entry {
                     kind: EntryKind::Tree,
                     name: name.to_string(),
                     hash: branch,
                 });
             } else {
-                let hash = pin_file(store_path, &path)?;
+                let hash = pin_file(object_store, store_path, &path)?;
                 tree.entries.push(Entry {
                     kind: EntryKind::Blob,
                     name: name.to_string(),
@@ -120,7 +132,7 @@ pub(crate) fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
         }
 
         let contents = toml::to_string(&tree).unwrap();
-        let hash = pin_contents(store_path, contents)?;
+        let hash = pin_contents(object_store, store_path, contents)?;
 
         return Ok(hash);
     }
@@ -129,6 +141,8 @@ pub(crate) fn snapshot(store_path: &Path, dir: &Path) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use object_store::memory::InMemory;
+
     use super::*;
     use std::fs;
     use std::path::PathBuf;
@@ -138,7 +152,9 @@ mod tests {
         // Simple test to ensure it runs without error.
         let source = PathBuf::from("./static/example/components");
         let store_loc = PathBuf::from("./test-store");
-        let root = snapshot(&store_loc, &source)?;
+
+        let object_store: Box<dyn ObjectStore> = Box::new(InMemory::new());
+        let root = snapshot(&object_store, &store_loc, &source)?;
         assert!(root.len() > 0);
         // Cleanup:
         fs::remove_dir_all(&store_loc)?;

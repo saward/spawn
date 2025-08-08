@@ -4,6 +4,8 @@ use crate::sqltest::Tester;
 use crate::store::pinner::spawn::Spawn;
 use crate::variables::Variables;
 use crate::{config::Config, store::pinner::Pinner};
+use object_store::local::LocalFileSystem;
+use object_store::ObjectStore;
 use std::ffi::OsString;
 use std::fs;
 
@@ -137,7 +139,11 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                         main_config.components_folder(),
                         None,
                     )?;
-                    let root = pinner.snapshot()?;
+
+                    let fs: Box<dyn ObjectStore> =
+                        Box::new(LocalFileSystem::new_with_prefix(&main_config.spawn_folder)?);
+
+                    let root = pinner.snapshot(&fs)?;
                     let lock_file = main_config.migration_lock_file_path(&migration);
                     let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
                     fs::write(lock_file, toml_str)?;

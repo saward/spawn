@@ -87,7 +87,7 @@ impl Pinner for Spawn {
         }
     }
 
-    fn snapshot(&mut self) -> Result<String> {
-        super::snapshot(&self.store_path, &self.source_path)
+    fn snapshot(&mut self, object_store: &Box<dyn ObjectStore>) -> Result<String> {
+        super::snapshot(object_store, &self.store_path, &self.source_path)
     }
 }
