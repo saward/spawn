@@ -30,7 +30,8 @@ struct MiniJinjaLoader {
 impl MiniJinjaLoader {
     pub fn load(&self, name: &str) -> std::result::Result<Option<String>, minijinja::Error> {
         let result = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async { self.store.load(name).await })
+            tokio::runtime::Handle::current()
+                .block_on(async { self.store.load_component(name).await })
         });
 
         result.map_err(|e| {
@@ -41,13 +42,6 @@ impl MiniJinjaLoader {
         })
     }
 }
-
-// fn mj_loader_from_store_loader(
-//     &self,
-//     name: &str,
-// ) -> std::result::Result<Option<String>, minijinja::Error> {
-//     self.pinner.load(name, &self.fs)
-// }
 
 pub fn generate(
     cfg: &config::Config,

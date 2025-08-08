@@ -15,7 +15,7 @@ impl Store {
         Ok(Store { pinner, fs })
     }
 
-    pub async fn load(&self, name: &str) -> Result<Option<String>> {
+    pub async fn load_component(&self, name: &str) -> Result<Option<String>> {
         let res = self.pinner.load(name, &self.fs).await?;
 
         Ok(res)
