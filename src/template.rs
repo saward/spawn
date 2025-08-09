@@ -55,8 +55,8 @@ pub fn generate(
             .load_lock_file(&lock_file)
             .context("could not load pinned files lock file")?;
         let pinner = Spawn::new(
-            cfg.pinned_folder(),
-            cfg.components_folder(),
+            &cfg.pinned_folder().to_string_lossy(),
+            &cfg.components_folder().to_string_lossy(),
             Some(&lock.pin),
         )?;
         Box::new(pinner)

@@ -1,26 +1,24 @@
 use super::Pinner;
 use anyhow::anyhow;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use object_store::ObjectStore;
 use std::collections::HashMap;
-use std::path::Path;
-use std::path::PathBuf;
 
 #[derive(Debug)]
 pub struct Spawn {
-    files: Option<HashMap<String, PathBuf>>,
+    files: Option<HashMap<String, String>>,
     store_path: String,
     source_path: String,
 }
 
 impl Spawn {
-    pub fn new(store_path: PathBuf, source_path: PathBuf, root_hash: Option<&str>) -> Result<Self> {
+    pub fn new(store_path: &str, source_path: &str, root_hash: Option<&str>) -> Result<Self> {
         // Loop over our root and read into memory the entire tree for this root:
         let files = match root_hash {
             Some(hash) => {
                 let mut files = HashMap::new();
-                Self::read_root_hash(&store_path, &mut files, &PathBuf::new(), hash)?;
+                Self::read_root_hash(store_path, &mut files, "", hash)?;
                 Some(files)
             }
             None => None,
@@ -28,8 +26,8 @@ impl Spawn {
 
         let store = Self {
             files,
-            store_path,
-            source_path,
+            store_path: store_path.to_string(),
+            source_path: source_path.to_string(),
         };
 
         Ok(store)
@@ -92,8 +90,8 @@ impl Pinner for Spawn {
     async fn snapshot(&mut self, object_store: &Box<dyn ObjectStore>) -> Result<String> {
         super::snapshot(
             object_store,
-            &Box::from(self.store_path.as_ref()),
-            &Box::from(self.source_path.as_ref()),
+            &Box::from(self.store_path.as_str()),
+            &Box::from(self.source_path.as_str()),
         )
         .await
     }

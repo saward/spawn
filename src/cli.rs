@@ -135,15 +135,15 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                 }
                 Some(MigrationCommands::Pin { migration }) => {
                     let mut pinner = Spawn::new(
-                        main_config.pinned_folder(),
-                        main_config.components_folder(),
+                        &main_config.pinned_folder().to_string_lossy(),
+                        &main_config.components_folder().to_string_lossy(),
                         None,
                     )?;
 
                     let fs: Box<dyn ObjectStore> =
                         Box::new(LocalFileSystem::new_with_prefix(&main_config.spawn_folder)?);
 
-                    let root = pinner.snapshot(&fs)?;
+                    let root = pinner.snapshot(&fs).await?;
                     let lock_file = main_config.migration_lock_file_path(&migration);
                     let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
                     fs::write(lock_file, toml_str)?;
