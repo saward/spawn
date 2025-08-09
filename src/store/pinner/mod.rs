@@ -179,7 +179,9 @@ pub(crate) async fn snapshot(
         Some(object_store::path::Path::from(prefix))
     };
 
-    // Use list_with_delimiter to get non-recursive listing (like fs::read_dir)
+    // list_with_delimiter seems to return only immediate children objects and
+    // folders, rather than every subfolder.  It behaves more like a directory
+    // walk than a full list of all nested folders and objects like list.
     let mut list_result = object_store
         .list_with_delimiter(prefix_path.as_ref())
         .await
@@ -187,8 +189,6 @@ pub(crate) async fn snapshot(
 
     let mut tree = Tree::default();
     let mut entries = Vec::new();
-
-    // TODO: change this so that common_prefixes is pre-sorted so we don't have to loop over common prefixes for EVERY subfolder.  That's a lot of unnecessary looping.
 
     // snapshot runs recursively.  prefix tells us the full path of the current
     // folder (common_prefix) we are processing.  First, we find all subfolders
