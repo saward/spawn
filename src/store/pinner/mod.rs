@@ -261,11 +261,9 @@ pub(crate) async fn snapshot(
 #[cfg(test)]
 mod tests {
     use object_store::local::LocalFileSystem;
-    use object_store::memory::InMemory;
+    // use object_store::memory::InMemory;
 
     use super::*;
-    use std::fs;
-    use std::path::PathBuf;
 
     #[tokio::test]
     async fn test_snapshot() -> Result<()> {
@@ -273,15 +271,11 @@ mod tests {
         let source = "/Users/mark/projects/saward/spawn/static/example";
         let store_loc = "/store";
 
-        println!("1");
         let object_store: Box<dyn ObjectStore> =
             Box::new(LocalFileSystem::new_with_prefix(&source)?);
-        println!("2");
         // let object_store: Box<dyn ObjectStore> = Box::new(InMemory::new());
         let root = snapshot(&object_store, store_loc, source).await?;
-        println!("3");
         assert!(root.len() > 0);
-        println!("root: {}", root);
         Ok(())
     }
 }
