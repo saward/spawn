@@ -90,10 +90,17 @@ pub(crate) fn hash_to_path(hash: &str) -> Result<String> {
 }
 
 /// Reads the file corresponding to the hash from the given base path.
-pub(crate) fn read_hash_file(base_path: &str, hash: &str) -> Result<String> {
+pub(crate) async fn read_hash_file(
+    object_store: &Box<dyn ObjectStore>,
+    base_path: &str,
+    hash: &str,
+) -> Result<String> {
     let relative_path = hash_to_path(hash)?;
     let file_path = format!("{}/{}", base_path, relative_path);
-    let contents = fs::read_to_string(file_path)?;
+
+    let get_result = object_store.get(&file_path.into()).await?;
+    let bytes = get_result.bytes().await?;
+    let contents = String::from_utf8(bytes.to_vec())?;
 
     Ok(contents)
 }
@@ -224,6 +231,7 @@ pub(crate) async fn snapshot(
     // current prefix.  Then, we add a blob entry with hash for each of those:
     for object_meta in list_result.objects {
         let full_path = object_meta.location.as_ref();
+
         let file_name = if prefix.is_empty() {
             full_path
         } else {
@@ -319,9 +327,23 @@ mod tests {
         populate_inmemory_from_object_store(&source_store, &inmemory, "").await?;
 
         let object_store: Box<dyn ObjectStore> = Box::new(inmemory);
-        let root = snapshot(&object_store, store_loc, &format!("/{}", "components")).await?;
+        let root = snapshot(&object_store, store_loc, "components").await?;
         assert!(root.len() > 0);
-        assert_eq!("dd3cb8605f32d268f89ae622b5e08dde", root);
+        assert_eq!("cb59728fefa959672ef3c8c9f0b6df95", root);
+
+        // Read and print the root level file
+        let root_content = read_hash_file(&object_store, store_loc, &root).await?;
+
+        // Verify that the hash of the root content matches the snapshot hash
+        let content_hash = format!(
+            "{:032x}",
+            xxhash3_128::Hasher::oneshot(root_content.as_bytes())
+        );
+        assert_eq!(
+            root, content_hash,
+            "Snapshot hash should match content hash"
+        );
+
         Ok(())
     }
 }
