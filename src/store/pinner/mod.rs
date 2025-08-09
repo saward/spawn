@@ -188,7 +188,13 @@ pub(crate) async fn snapshot(
     let mut tree = Tree::default();
     let mut entries = Vec::new();
 
-    // Process common prefixes (directories)
+    // TODO: change this so that common_prefixes is pre-sorted so we don't have to loop over common prefixes for EVERY subfolder.  That's a lot of unnecessary looping.
+
+    // snapshot runs recursively.  prefix tells us the full path of the current
+    // folder (common_prefix) we are processing.  First, we find all subfolders
+    // of that prefix, call snapshot for them to get the hashes, and store those
+    // Tree entries with their hashes.  We do this by stripping the current
+    // snapshot call's prefix, so we're left only with subfolders of this tree.
     list_result.common_prefixes.sort();
     for common_prefix in list_result.common_prefixes {
         let dir_name = common_prefix
@@ -212,7 +218,10 @@ pub(crate) async fn snapshot(
         }
     }
 
-    // Process objects (files)
+    // Now that all the directories have been hashes for this prefix, we can do
+    // the same for objects, finding those with the prefix we care about.  Look
+    // through all objects, and find the ones that have a prefix matching our
+    // current prefix.  Then, we add a blob entry with hash for each of those:
     for object_meta in list_result.objects {
         let full_path = object_meta.location.as_ref();
         let file_name = if prefix.is_empty() {
@@ -252,7 +261,8 @@ pub(crate) async fn snapshot(
         }
     }
 
-    // Sort entries by name for consistent ordering
+    // Sort entries by name for consistent ordering, and then return a hash for
+    // this node.
     entries.sort_by(|a, b| a.0.cmp(&b.0));
     tree.entries = entries.into_iter().map(|(_, entry)| entry).collect();
 
