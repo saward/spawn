@@ -179,7 +179,7 @@ pub(crate) async fn snapshot(
     };
 
     // Use list_with_delimiter to get non-recursive listing (like fs::read_dir)
-    let list_result = object_store
+    let mut list_result = object_store
         .list_with_delimiter(prefix_path.as_ref())
         .await
         .context("could not list object store")?;
@@ -188,6 +188,7 @@ pub(crate) async fn snapshot(
     let mut entries = Vec::new();
 
     // Process common prefixes (directories)
+    list_result.common_prefixes.sort();
     for common_prefix in list_result.common_prefixes {
         let dir_name = common_prefix
             .as_ref()
