@@ -4,6 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use object_store::ObjectStore;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct Spawn {
@@ -17,9 +18,10 @@ impl Spawn {
         // Loop over our root and read into memory the entire tree for this root:
         let files = match root_hash {
             Some(hash) => {
-                let mut files = HashMap::new();
-                Self::read_root_hash(store_path, &mut files, "", hash)?;
-                Some(files)
+                // let mut files = HashMap::new();
+                // Self::read_root_hash(store_path, &mut files, "", hash)?;
+                // Some(files)
+                return Err(anyhow!("Not implemented"));
             }
             None => None,
         };
