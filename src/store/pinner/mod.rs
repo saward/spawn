@@ -274,7 +274,7 @@ mod tests {
         let object_store: Box<dyn ObjectStore> =
             Box::new(LocalFileSystem::new_with_prefix(&source)?);
         // let object_store: Box<dyn ObjectStore> = Box::new(InMemory::new());
-        let root = snapshot(&object_store, store_loc, source).await?;
+        let root = snapshot(&object_store, store_loc, &format!("/{}", "components")).await?;
         assert!(root.len() > 0);
         Ok(())
     }
