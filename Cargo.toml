@@ -33,6 +33,7 @@ console = "0.15"
 object_store = { version = "0.12.3", features = ["fs"] }
 
 async-trait = "0.1.88"
+futures = "0.3"
 
 [dev-dependencies]
 tempfile = "3.8"

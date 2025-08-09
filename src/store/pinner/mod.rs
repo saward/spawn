@@ -5,6 +5,7 @@ use object_store::ObjectStore;
 use object_store::PutPayload;
 use serde::{Deserialize, Serialize};
 
+use futures::StreamExt;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -224,17 +225,21 @@ pub(crate) async fn snapshot(
 
         // Skip if this is not a direct child (contains additional slashes)
         if !file_name.contains('/') && !file_name.is_empty() {
-            // Extract hash from object store path - assuming hash is stored in the path structure
-            // For now, we'll need to read the object to get its hash or derive it from the path
+            // Stream-based hashing to avoid loading large files into memory
             let object_result = object_store
                 .get(&object_meta.location)
                 .await
                 .context("could not get object to hash")?;
-            let object_bytes = object_result
-                .bytes()
-                .await
-                .context("could not turn object to bytes")?;
-            let hash = format!("{:032x}", xxhash3_128::Hasher::oneshot(&object_bytes));
+
+            let mut reader = object_result.into_stream();
+            let mut hasher = xxhash3_128::Hasher::new();
+
+            while let Some(chunk) = reader.next().await {
+                let chunk = chunk.context("failed to read chunk from object stream")?;
+                hasher.write(&chunk);
+            }
+
+            let hash = format!("{:032x}", hasher.finish_128());
 
             entries.push((
                 file_name.to_string(),
