@@ -276,22 +276,52 @@ pub(crate) async fn snapshot(
 
 #[cfg(test)]
 mod tests {
+    use futures::StreamExt;
     use object_store::local::LocalFileSystem;
-    // use object_store::memory::InMemory;
+    use object_store::memory::InMemory;
 
     use super::*;
+
+    async fn populate_inmemory_from_object_store(
+        source_store: &Box<dyn ObjectStore>,
+        target_store: &InMemory,
+        prefix: &str,
+    ) -> Result<()> {
+        let mut stream = source_store.list(Some(&prefix.into()));
+
+        while let Some(meta) = stream.next().await {
+            let meta = meta?;
+            let object_path = &meta.location;
+
+            // Get the object data
+            let get_result = source_store.get(object_path).await?;
+            let bytes = get_result.bytes().await?;
+
+            // Store in target with the same path
+            target_store.put(object_path, bytes.into()).await?;
+        }
+
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_snapshot() -> Result<()> {
         // Simple test to ensure it runs without error.
-        let source = "/Users/mark/projects/saward/spawn/static/example";
         let store_loc = "/store";
 
-        let object_store: Box<dyn ObjectStore> =
-            Box::new(LocalFileSystem::new_with_prefix(&source)?);
-        // let object_store: Box<dyn ObjectStore> = Box::new(InMemory::new());
+        let inmemory = InMemory::new();
+
+        // Create a LocalFileSystem to read from static/example
+        let source_store: Box<dyn ObjectStore> =
+            Box::new(LocalFileSystem::new_with_prefix("./static/example")?);
+
+        // Populate the in-memory store with contents from static/example
+        populate_inmemory_from_object_store(&source_store, &inmemory, "").await?;
+
+        let object_store: Box<dyn ObjectStore> = Box::new(inmemory);
         let root = snapshot(&object_store, store_loc, &format!("/{}", "components")).await?;
         assert!(root.len() > 0);
+        assert_eq!("dd3cb8605f32d268f89ae622b5e08dde", root);
         Ok(())
     }
 }
