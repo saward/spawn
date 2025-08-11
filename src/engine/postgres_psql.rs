@@ -3,7 +3,9 @@
 // build in PSQL helper commands.
 
 use crate::engine::{DatabaseConfig, Engine, EngineOutputter, EngineWriter};
+use crate::store;
 use anyhow::{anyhow, Result};
+use include_dir::{include_dir, Dir};
 use std::io::{self, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::Instant;
@@ -16,51 +18,7 @@ pub struct PSQL {
     spawn_database: String,
 }
 
-// Static migrations for the migration tracking table
-const MIGRATION_TABLE_MIGRATIONS: &[(&str, &str)] = &[(
-    "001_create_migration_table",
-    r#"
-CREATE SCHEMA IF NOT EXISTS {schema};
-
-CREATE TABLE IF NOT EXISTS {schema}.migration (
-    migration_id SERIAL PRIMARY KEY,
-    name VARCHAR(256),
-    namespace TEXT NOT NULL DEFAULT 'default',
-    CONSTRAINT name_namespace_uq UNIQUE (name, namespace)
-);
-
-CREATE TABLE IF NOT EXISTS {schema}.activity(
-    activity_id TEXT PRIMARY KEY CHECK (UPPER(activity_id) = activity_id)
-);
-
-CREATE TABLE IF NOT EXISTS {schema}.status(
-    status_id TEXT PRIMARY KEY CHECK (UPPER(status_id) = status_id)
-);
-
-CREATE TABLE IF NOT EXISTS {schema}.migration_history (
-    migration_history_id SERIAL PRIMARY KEY,
-    migration_id_migration BIGINT NOT NULL REFERENCES {schema}.migration (migration_id),
-    activity_id_activity TEXT NOT NULL REFERENCES {schema}.activity (activity_id),
-    created_by TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    description TEXT NOT NULL,
-    status_note TEXT NOT NULL,
-    status_id_status TEXT NOT NULL REFERENCES {schema}.status (status_id),
-    checksum BYTEA NOT NULL,
-    execution_time interval NOT NULL
-);
-
-INSERT INTO {schema}.activity (activity_id) VALUES
-('APPLY'),
-('REVERT')
-ON CONFLICT DO NOTHING;
-
-INSERT INTO {schema}.status (status_id) VALUES
-('SUCCESS'),
-('FAILURE')
-ON CONFLICT DO NOTHING;
-"#,
-)];
+static PROJECT_DIR: Dir<'_> = include_dir!("./static/engine-migrations/postgres-psql");
 
 pub struct PSQLWriter {
     child: Child,
@@ -126,22 +84,24 @@ impl crate::engine::Engine for PSQL {
 
 impl PSQL {
     pub fn update_schema(&self) -> Result<()> {
+        // create a store so that we can generate our migrations using the
+        // standard methods.
         let migration_table_exists = self.migration_table_exists()?;
 
-        if migration_table_exists {
-            // Check which migrations have been applied and apply missing ones
-            let applied_migrations = self.get_applied_migrations()?;
-            for (migration_name, migration_sql) in MIGRATION_TABLE_MIGRATIONS {
-                if !applied_migrations.contains(migration_name) {
-                    self.apply_and_record_migration_v1(migration_name, migration_sql)?;
-                }
-            }
-        } else {
-            // Apply all migration table migrations
-            for (migration_name, migration_sql) in MIGRATION_TABLE_MIGRATIONS {
-                self.apply_and_record_migration_v1(migration_name, migration_sql)?;
-            }
-        }
+        // if migration_table_exists {
+        //     // Check which migrations have been applied and apply missing ones
+        //     let applied_migrations = self.get_applied_migrations()?;
+        //     for (migration_name, migration_sql) in MIGRATION_TABLE_MIGRATIONS {
+        //         if !applied_migrations.contains(migration_name) {
+        //             self.apply_and_record_migration_v1(migration_name, migration_sql)?;
+        //         }
+        //     }
+        // } else {
+        //     // Apply all migration table migrations
+        //     for (migration_name, migration_sql) in MIGRATION_TABLE_MIGRATIONS {
+        //         self.apply_and_record_migration_v1(migration_name, migration_sql)?;
+        //     }
+        // }
 
         Ok(())
     }
