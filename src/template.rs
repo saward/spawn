@@ -7,6 +7,7 @@ use crate::template;
 use crate::variables::Variables;
 use minijinja::Environment;
 use object_store::local::LocalFileSystem;
+use object_store::ObjectStore;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -43,29 +44,31 @@ impl MiniJinjaLoader {
     }
 }
 
-pub fn generate(
+pub async fn generate(
     cfg: &config::Config,
     lock_file: Option<PathBuf>,
     contents: &String,
     variables: Option<Variables>,
 ) -> Result<Generation> {
     // Create and set up the component loader
+    let fs: Box<dyn ObjectStore> = Box::new(LocalFileSystem::new_with_prefix(&cfg.spawn_folder)?);
+
     let pinner: Box<dyn Pinner> = if let Some(lock_file) = lock_file {
         let lock = cfg
             .load_lock_file(&lock_file)
             .context("could not load pinned files lock file")?;
-        let pinner = Spawn::new(
+        let pinner = Spawn::new_with_root_hash(
             &cfg.pinned_folder().to_string_lossy(),
             &cfg.components_folder().to_string_lossy(),
-            Some(&lock.pin),
-        )?;
+            &lock.pin,
+            &fs,
+        )
+        .await?;
         Box::new(pinner)
     } else {
         let pinner = Latest::new()?;
         Box::new(pinner)
     };
-
-    let fs = Box::new(LocalFileSystem::new_with_prefix(&cfg.spawn_folder)?);
 
     let store = Store::new(pinner, fs)?;
 

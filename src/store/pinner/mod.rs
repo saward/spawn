@@ -7,9 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use futures::StreamExt;
 use std::fs;
-use std::io::Write;
-use std::path::Path;
-use std::path::PathBuf;
 use twox_hash::xxhash3_128;
 
 pub mod latest;
@@ -103,73 +100,6 @@ pub(crate) async fn read_hash_file(
     let contents = String::from_utf8(bytes.to_vec())?;
 
     Ok(contents)
-}
-
-pub(crate) fn deprecated_pin_file(store_path: &Path, file_path: &Path) -> Result<String> {
-    let contents = fs::read_to_string(file_path)?;
-
-    deprecated_pin_contents(store_path, contents)
-}
-
-pub(crate) fn deprecated_pin_contents(store_path: &Path, contents: String) -> Result<String> {
-    let hash = xxhash3_128::Hasher::oneshot(contents.as_bytes());
-    let hash = format!("{:032x}", hash);
-    let hash_folder = PathBuf::from(&hash[..2]);
-    let dir = store_path.join(hash_folder.clone());
-    let file = PathBuf::from(&hash[2..]);
-
-    fs::create_dir_all(&dir).context(format!("could not create all dir at {:?}", &dir))?;
-    let path = dir.join(file.clone());
-
-    if !std::path::Path::new(&path).exists() {
-        let mut f =
-            fs::File::create(&path).context(format!("could not create file at {:?}", &path))?;
-        f.write_all(contents.as_bytes())
-            .context("could not write bytes")?;
-    }
-
-    Ok(hash)
-}
-
-/// Walks through a folder, creating pinned entries as appropriate for every
-/// directory and file.  Returns a hash of the object.
-pub(crate) fn deprecated_snapshot(store_path: &Path, dir: &Path) -> Result<String> {
-    if dir.is_dir() {
-        let mut entries: Vec<_> = fs::read_dir(dir)?.filter_map(Result::ok).collect();
-        entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-
-        let mut tree = Tree::default();
-
-        for entry in entries {
-            let path = entry.path();
-            let name = path
-                .file_name()
-                .unwrap_or_default()
-                .to_str()
-                .unwrap_or_default();
-            if path.is_dir() {
-                let branch = deprecated_snapshot(store_path, &path)?;
-                tree.entries.push(Entry {
-                    kind: EntryKind::Tree,
-                    name: name.to_string(),
-                    hash: branch,
-                });
-            } else {
-                let hash = deprecated_pin_file(store_path, &path)?;
-                tree.entries.push(Entry {
-                    kind: EntryKind::Blob,
-                    name: name.to_string(),
-                    hash,
-                });
-            }
-        }
-
-        let contents = toml::to_string(&tree).unwrap();
-        let hash = deprecated_pin_contents(store_path, contents)?;
-
-        return Ok(hash);
-    }
-    Err(anyhow::anyhow!("store_path should be a folder"))
 }
 
 /// Walks through objects in an ObjectStore, creating pinned entries as appropriate for every

@@ -30,7 +30,7 @@ impl MigrationTestHelper {
     fn migration_script_path(&self, full_migration_name: &str) -> PathBuf {
         self.migrations_dir()
             .join(full_migration_name)
-            .join("script.sql")
+            .join("up.sql")
     }
 
     fn tests_dir(&self) -> PathBuf {
@@ -159,11 +159,8 @@ async fn test_create_migration() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .expect("Failed to create migration with helper");
 
-    // Check that <migration folder>/script.sql exists:
-    let script_path = helper
-        .migrations_dir()
-        .join(&migration_name)
-        .join("script.sql");
+    // Check that <migration folder>/up.sql exists:
+    let script_path = helper.migrations_dir().join(&migration_name).join("up.sql");
     assert!(script_path.exists(), "new migration script does not exist");
 
     // Check script has expected input:

@@ -52,7 +52,7 @@ impl Tester {
 
     /// Opens the specified script file and generates a migration script, compiled
     /// using minijinja.
-    pub fn generate(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
+    pub async fn generate(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
         let lock_file = None;
 
         // Add our migration script to environment:
@@ -62,15 +62,15 @@ impl Tester {
             full_script_path.display()
         ))?;
 
-        let gen = template::generate(&self.config, lock_file, &contents, variables)?;
+        let gen = template::generate(&self.config, lock_file, &contents, variables).await?;
         let content = gen.content;
 
         Ok(content)
     }
 
     // Runs the test and compares the actual output to expected.
-    pub fn run(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
-        let content = self.generate(variables.clone())?;
+    pub async fn run(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
+        let content = self.generate(variables.clone()).await?;
 
         let engine = self.config.new_engine()?;
 
@@ -87,11 +87,11 @@ impl Tester {
         return Ok(generated);
     }
 
-    pub fn run_compare(
+    pub async fn run_compare(
         &self,
         variables: Option<crate::variables::Variables>,
     ) -> Result<TestOutcome> {
-        let generated = self.run(variables)?;
+        let generated = self.run(variables).await?;
         let expected = fs::read_to_string(self.expected_file_path())
             .context("unable to read expectations file")?;
 
@@ -105,8 +105,11 @@ impl Tester {
         return Ok(outcome);
     }
 
-    pub fn save_expected(&self, variables: Option<crate::variables::Variables>) -> Result<()> {
-        let content = self.run(variables)?;
+    pub async fn save_expected(
+        &self,
+        variables: Option<crate::variables::Variables>,
+    ) -> Result<()> {
+        let content = self.run(variables).await?;
         fs::write(self.expected_file_path(), content)
             .context("unable to write expectation file")?;
 

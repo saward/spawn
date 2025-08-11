@@ -19,7 +19,7 @@ For now, the focus is on PostgreSQL.
 In your root project you will need a `spawn.toml` configuration file.  It will point to a `spawn_folder` which is where your migrations, components, and tests go.  In that folder we have:
 
 1. `/components`.  This contains standalone SQL snippets that can be modified and reused in migrations and tests.  These are minijinja templates, which could contain just pure SQL.  The goal is to have proper change tracking for these, so that we can look at the history in git for that file and see how it has changed over time.
-1. `/migrations`.  This folder contains your migrations, one folder for each.  E.g., `20240802030220-support-roles/script.sql`.  These are minijinja templates, designed to produce plain SQL migration scripts.  In these templates, you can import components.
+1. `/migrations`.  This folder contains your migrations, one folder for each.  E.g., `20240802030220-support-roles/up.sql`.  These are minijinja templates, designed to produce plain SQL migration scripts.  In these templates, you can import components.
 1. `/tests`.  This contains all your tests, and works in a similar way to migrations, but with some helpful commands to work with them.
 1. `/pinned`.  This folder contains a copy of files as they were at a particular time that the migration was made stored by hash.  It works in a similar way to git, and it is intended that you commit this folder to your repo.  This allows migrations to be rerun/recreated as they were at that time, even if a referenced component has changed.  Check [Pinning](#pinning) below for more details.
 
@@ -159,4 +159,7 @@ Handy commands for when running locally for testing:
 
 ```bash
 cargo run migration build 20240907212659-initial
+
+# Install into ~/.cargo/bin/spawn
+cargo install --path .
 ```

@@ -90,7 +90,7 @@ impl Config {
     }
 
     pub fn migration_script_file_path(&self, script_path: &OsString) -> PathBuf {
-        self.migration_folder(script_path).join("script.sql")
+        self.migration_folder(script_path).join("up.sql")
     }
 
     pub fn test_folder(&self, test_path: &OsString) -> PathBuf {

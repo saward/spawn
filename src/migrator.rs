@@ -44,7 +44,7 @@ impl Migrator {
         fs::create_dir_all(&path)?;
 
         // Create our blank script file:
-        fs::write(&path.join("script.sql"), BASE_MIGRATION)?;
+        fs::write(&path.join("up.sql"), BASE_MIGRATION)?;
 
         let name = path
             .file_name()
@@ -62,7 +62,7 @@ impl Migrator {
 
     /// Opens the specified script file and generates a migration script, compiled
     /// using minijinja.
-    pub fn generate(
+    pub async fn generate(
         &self,
         variables: Option<crate::variables::Variables>,
     ) -> Result<template::Generation> {
@@ -79,6 +79,6 @@ impl Migrator {
             full_script_path.display()
         ))?;
 
-        template::generate(&self.config, lock_file, &contents, variables)
+        template::generate(&self.config, lock_file, &contents, variables).await
     }
 }

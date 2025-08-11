@@ -69,7 +69,7 @@ pub enum MigrationCommands {
         /// Whether to use pinned components
         #[arg(long)]
         pinned: bool,
-        /// Migration to build.  Looks for script.sql inside this specified
+        /// Migration to build.  Looks for up.sql inside this specified
         /// migration folder.
         migration: OsString,
         variables: Option<Variables>,
@@ -137,7 +137,6 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     let mut pinner = Spawn::new(
                         &main_config.pinned_folder().to_string_lossy(),
                         &main_config.components_folder().to_string_lossy(),
-                        None,
                     )?;
 
                     let fs: Box<dyn ObjectStore> =
@@ -156,7 +155,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     variables,
                 }) => {
                     let mgrtr = Migrator::new(&main_config, migration.clone(), *pinned);
-                    match mgrtr.generate(variables.clone()) {
+                    match mgrtr.generate(variables.clone()).await {
                         Ok(result) => {
                             println!("{}", result.content);
                             ()
@@ -181,7 +180,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     for migration in migrations {
                         let migration_str = migration.to_str().unwrap_or_default();
                         let mgrtr = Migrator::new(&main_config, migration.clone(), *pinned);
-                        match mgrtr.generate(variables.clone()) {
+                        match mgrtr.generate(variables.clone()).await {
                             Ok(result) => {
                                 let engine = main_config.new_engine()?;
                                 engine.migration_apply(&result.content).context(format!(
@@ -211,7 +210,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
         Some(Commands::Test { command }) => match command {
             Some(TestCommands::Build { name }) => {
                 let config = Tester::new(&main_config, name.clone());
-                match config.generate(None) {
+                match config.generate(None).await {
                     Ok(result) => {
                         println!("{}", result);
                         ()
@@ -222,7 +221,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
             }
             Some(TestCommands::Run { name }) => {
                 let config = Tester::new(&main_config, name.clone());
-                match config.run(None) {
+                match config.run(None).await {
                     Ok(result) => {
                         println!("{}", result);
                         ()
@@ -260,7 +259,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                         .into_string()
                         .unwrap_or_else(|_| "<invalid utf8>".to_string());
 
-                    match config.run_compare(None) {
+                    match config.run_compare(None).await {
                         Ok(result) => match result.diff {
                             None => {
                                 println!("{}[PASS]{} {}", GREEN, RESET, name);
@@ -289,7 +288,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
             }
             Some(TestCommands::Expect { name }) => {
                 let tester = Tester::new(&main_config, name.clone());
-                match tester.save_expected(None) {
+                match tester.save_expected(None).await {
                     Ok(_) => (),
                     Err(e) => return Err(e),
                 };
