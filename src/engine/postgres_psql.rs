@@ -3,9 +3,12 @@
 // build in PSQL helper commands.
 
 use crate::engine::{DatabaseConfig, Engine, EngineOutputter, EngineWriter};
-use crate::store;
+
 use anyhow::{anyhow, Result};
-use include_dir::{include_dir, Dir};
+use async_trait::async_trait;
+use include_dir::{include_dir, Dir, DirEntry};
+use object_store::memory::InMemory;
+use object_store::{ObjectStore, PutPayload};
 use std::io::{self, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::Instant;
@@ -44,6 +47,7 @@ impl PSQL {
     }
 }
 
+#[async_trait]
 impl crate::engine::Engine for PSQL {
     fn new_writer(&self) -> Result<Box<dyn EngineWriter>> {
         let mut parts = self.psql_command.clone();
@@ -66,9 +70,9 @@ impl crate::engine::Engine for PSQL {
         Ok(Box::new(PSQLWriter { child, stdin }))
     }
 
-    fn migration_apply(&self, migration: &str) -> Result<String> {
+    async fn migration_apply(&self, migration: &str) -> Result<String> {
         // Ensure we have latest schema:
-        self.update_schema()?;
+        self.update_schema().await?;
         let mut writer = self.new_writer()?;
 
         // Write migration to writer:
@@ -83,10 +87,34 @@ impl crate::engine::Engine for PSQL {
 }
 
 impl PSQL {
-    pub fn update_schema(&self) -> Result<()> {
+    // Helper function to recursively collect all files
+    async fn collect_files(dir: &Dir<'_>, fs: &mut Box<InMemory>) -> Result<()> {
+        for entry in dir.entries() {
+            match entry {
+                DirEntry::Dir(subdir) => Box::pin(Self::collect_files(subdir, fs)).await?,
+                DirEntry::File(file) => {
+                    let path = file.path().to_string_lossy().to_string();
+                    let contents = file.contents().to_vec();
+                    // files.push((path, contents));
+                    let payload: PutPayload = contents.into();
+                    fs.put(&path.into(), payload).await?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn update_schema(&self) -> Result<()> {
         // create a store so that we can generate our migrations using the
         // standard methods.
-        let migration_table_exists = self.migration_table_exists()?;
+        let _migration_table_exists = self.migration_table_exists()?;
+
+        // Create a memory store to use with generation:
+        let mut fs = Box::new(InMemory::new());
+
+        // Write all files from PROJECT_DIR to fs:
+        PSQL::collect_files(&PROJECT_DIR, &mut fs).await?;
 
         // if migration_table_exists {
         //     // Check which migrations have been applied and apply missing ones

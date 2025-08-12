@@ -49,10 +49,8 @@ pub async fn generate(
     lock_file: Option<PathBuf>,
     contents: &String,
     variables: Option<Variables>,
+    fs: Box<dyn ObjectStore>,
 ) -> Result<Generation> {
-    // Create and set up the component loader
-    let fs: Box<dyn ObjectStore> = Box::new(LocalFileSystem::new_with_prefix(&cfg.spawn_folder)?);
-
     let pinner: Box<dyn Pinner> = if let Some(lock_file) = lock_file {
         let lock = cfg
             .load_lock_file(&lock_file)

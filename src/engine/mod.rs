@@ -1,4 +1,5 @@
 use anyhow::Result;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::io;
 
@@ -43,12 +44,13 @@ pub trait EngineWriter: io::Write {
     fn finalise(self: Box<Self>) -> Result<Box<dyn EngineOutputter>>;
 }
 
+#[async_trait]
 pub trait Engine {
     /// Provides a writer that a given migration can be sent to, so that we can
     /// stream data to this as we go.  May not be implemented for all engines.
     fn new_writer(&self) -> Result<Box<dyn EngineWriter>>;
 
-    fn migration_apply(&self, migration: &str) -> Result<String>;
+    async fn migration_apply(&self, migration: &str) -> Result<String>;
 
     // /// Return information about this migration, such as whether it has been
     // /// applied.

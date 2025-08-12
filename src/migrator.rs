@@ -5,6 +5,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use object_store::local::LocalFileSystem;
+use object_store::ObjectStore;
 
 static BASE_MIGRATION: &str = "BEGIN;
 
@@ -79,6 +81,10 @@ impl Migrator {
             full_script_path.display()
         ))?;
 
-        template::generate(&self.config, lock_file, &contents, variables).await
+        // Create and set up the component loader
+        let fs: Box<dyn ObjectStore> =
+            Box::new(LocalFileSystem::new_with_prefix(&self.config.spawn_folder)?);
+
+        template::generate(&self.config, lock_file, &contents, variables, fs).await
     }
 }

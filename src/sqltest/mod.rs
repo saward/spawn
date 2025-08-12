@@ -2,6 +2,8 @@ use crate::config;
 use crate::engine::EngineOutputter;
 use crate::template;
 use console::{style, Style};
+use object_store::local::LocalFileSystem;
+use object_store::ObjectStore;
 use similar::{ChangeTag, TextDiff};
 use std::ffi::OsString;
 use std::fmt;
@@ -62,7 +64,11 @@ impl Tester {
             full_script_path.display()
         ))?;
 
-        let gen = template::generate(&self.config, lock_file, &contents, variables).await?;
+        // Create and set up the component loader
+        let fs: Box<dyn ObjectStore> =
+            Box::new(LocalFileSystem::new_with_prefix(&self.config.spawn_folder)?);
+
+        let gen = template::generate(&self.config, lock_file, &contents, variables, fs).await?;
         let content = gen.content;
 
         Ok(content)
