@@ -183,10 +183,13 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                         match mgrtr.generate(variables.clone()).await {
                             Ok(result) => {
                                 let engine = main_config.new_engine()?;
-                                engine.migration_apply(&result.content).context(format!(
-                                    "Failed to apply migration '{}'",
-                                    &migration_str,
-                                ))?;
+                                engine
+                                    .migration_apply(&result.content)
+                                    .await
+                                    .context(format!(
+                                        "Failed to apply migration '{}'",
+                                        &migration_str,
+                                    ))?;
                                 println!("Migration '{}' applied successfully", &migration_str);
                                 ()
                             }

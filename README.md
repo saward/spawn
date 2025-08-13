@@ -158,6 +158,9 @@ Here are some of my design goals with spawn:
 Handy commands for when running locally for testing:
 
 ```bash
+# Local db
+docker exec -ti spawn-db psql -U spawn
+
 cargo run migration build 20240907212659-initial
 
 # Install into ~/.cargo/bin/spawn

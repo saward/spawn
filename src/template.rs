@@ -47,7 +47,7 @@ impl MiniJinjaLoader {
 pub async fn generate(
     cfg: &config::Config,
     lock_file: Option<PathBuf>,
-    contents: &String,
+    name: &str,
     variables: Option<Variables>,
     fs: Box<dyn ObjectStore>,
 ) -> Result<Generation> {
@@ -69,19 +69,26 @@ pub async fn generate(
     };
 
     let store = Store::new(pinner, fs)?;
+    let db_config = cfg.db_config()?;
 
+    generate_with_store(contents, variables, &db_config.environment, store)
+}
+
+pub fn generate_with_store(
+    contents: &String,
+    variables: Option<Variables>,
+    environment: &str,
+    store: Store,
+) -> Result<Generation> {
     let mut env = template::template_env(store)?;
 
     // Add our main script to environment:
     env.add_template("migration.sql", contents)?;
 
-    let db_config = cfg.db_config()?;
-
     // Render with provided variables
     let tmpl = env.get_template("migration.sql")?;
-    let content = tmpl.render(
-        context!(env => db_config.environment, variables => variables.unwrap_or_default()),
-    )?;
+    let content =
+        tmpl.render(context!(env => environment, variables => variables.unwrap_or_default()))?;
 
     let result = Generation {
         content: content.to_string(),

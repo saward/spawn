@@ -3,6 +3,8 @@
 // build in PSQL helper commands.
 
 use crate::engine::{DatabaseConfig, Engine, EngineOutputter, EngineWriter};
+use crate::store::Store;
+use crate::template;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -95,8 +97,8 @@ impl PSQL {
                 DirEntry::File(file) => {
                     let path = file.path().to_string_lossy().to_string();
                     let contents = file.contents().to_vec();
-                    // files.push((path, contents));
                     let payload: PutPayload = contents.into();
+                    println!("pushing to path {:?}", path);
                     fs.put(&path.into(), payload).await?;
                 }
             }
@@ -115,6 +117,8 @@ impl PSQL {
 
         // Write all files from PROJECT_DIR to fs:
         PSQL::collect_files(&PROJECT_DIR, &mut fs).await?;
+
+        template::generate_with_store(contents, variables, environment, store);
 
         // if migration_table_exists {
         //     // Check which migrations have been applied and apply missing ones

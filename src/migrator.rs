@@ -74,17 +74,10 @@ impl Migrator {
             None
         };
 
-        // Add our migration script to environment:
-        let full_script_path = self.script_file_path()?;
-        let contents = std::fs::read_to_string(&full_script_path).context(format!(
-            "Failed to read migration script '{}'",
-            full_script_path.display()
-        ))?;
-
         // Create and set up the component loader
         let fs: Box<dyn ObjectStore> =
             Box::new(LocalFileSystem::new_with_prefix(&self.config.spawn_folder)?);
 
-        template::generate(&self.config, lock_file, &contents, variables, fs).await
+        template::generate(&self.config, lock_file, &change to name of migration, variables, fs).await
     }
 }
