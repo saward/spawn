@@ -10,6 +10,16 @@ pub struct Store {
     fs: Box<dyn ObjectStore>,
 }
 
+pub struct FS {
+    fs: Box<dyn ObjectStore>,
+}
+
+impl FS {
+    pub fn new(fs: Box<dyn ObjectStore>) -> Self {
+        Self { fs }
+    }
+}
+
 impl Store {
     pub fn new(pinner: Box<dyn Pinner>, fs: Box<dyn ObjectStore>) -> Result<Store> {
         Ok(Store { pinner, fs })
