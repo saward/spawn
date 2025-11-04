@@ -6,8 +6,8 @@ use crate::store::Store;
 use crate::template;
 use crate::variables::Variables;
 use minijinja::Environment;
-use object_store::local::LocalFileSystem;
 use object_store::ObjectStore;
+use object_store::{local::LocalFileSystem, path::Path};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -47,7 +47,7 @@ impl MiniJinjaLoader {
 pub async fn generate(
     cfg: &config::Config,
     lock_file: Option<PathBuf>,
-    name: &str,
+    name: &Path,
     variables: Option<Variables>,
     fs: Box<dyn ObjectStore>,
 ) -> Result<Generation> {
@@ -71,16 +71,18 @@ pub async fn generate(
     let store = Store::new(pinner, fs)?;
     let db_config = cfg.db_config()?;
 
-    generate_with_store(contents, variables, &db_config.environment, store)
+    generate_with_store(name, variables, &db_config.environment, store)
 }
 
 pub fn generate_with_store(
-    contents: &String,
+    name: &Path,
     variables: Option<Variables>,
     environment: &str,
     store: Store,
 ) -> Result<Generation> {
     let mut env = template::template_env(store)?;
+
+    // Read contents from our object store:
 
     // Add our main script to environment:
     env.add_template("migration.sql", contents)?;

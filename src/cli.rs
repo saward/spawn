@@ -71,7 +71,7 @@ pub enum MigrationCommands {
         pinned: bool,
         /// Migration to build.  Looks for up.sql inside this specified
         /// migration folder.
-        migration: OsString,
+        migration: object_store::path::Path,
         variables: Option<Variables>,
     },
     /// Apply will apply this migration to the database if not already applied,

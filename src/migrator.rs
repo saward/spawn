@@ -1,11 +1,11 @@
 use crate::config;
 use crate::template;
-use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use object_store::local::LocalFileSystem;
+use object_store::path::Path;
 use object_store::ObjectStore;
 
 static BASE_MIGRATION: &str = "BEGIN;
@@ -17,18 +17,17 @@ COMMIT;
 #[derive(Debug)]
 pub struct Migrator {
     config: config::Config,
-    /// Path for the script itself, set to the location under the migrations
-    /// folder.
-    script_path: OsString,
+    /// Name of the migration, as an object store path.
+    name: Path,
     /// Whether to use pinned components
     use_pinned: bool,
 }
 
 impl Migrator {
-    pub fn new(config: &config::Config, script_path: OsString, use_pinned: bool) -> Self {
+    pub fn new(config: &config::Config, name: Path, use_pinned: bool) -> Self {
         Migrator {
             config: config.clone(),
-            script_path,
+            name,
             use_pinned,
         }
     }
@@ -78,6 +77,6 @@ impl Migrator {
         let fs: Box<dyn ObjectStore> =
             Box::new(LocalFileSystem::new_with_prefix(&self.config.spawn_folder)?);
 
-        template::generate(&self.config, lock_file, &change to name of migration, variables, fs).await
+        template::generate(&self.config, lock_file, &self.script_path, variables, fs).await
     }
 }

@@ -3,7 +3,6 @@
 // build in PSQL helper commands.
 
 use crate::engine::{DatabaseConfig, Engine, EngineOutputter, EngineWriter};
-use crate::store::Store;
 use crate::template;
 
 use anyhow::{anyhow, Result};

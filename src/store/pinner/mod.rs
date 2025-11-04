@@ -63,16 +63,6 @@ pub(crate) async fn pin_contents(
     let payload: PutPayload = contents.into();
     object_store.put(&dir.into(), payload).await?;
 
-    // fs::create_dir_all(&dir).context(format!("could not create all dir at {:?}", &dir))?;
-    // let path = dir.join(file.clone());
-
-    // if !std::path::Path::new(&path).exists() {
-    //     let mut f =
-    //         fs::File::create(&path).context(format!("could not create file at {:?}", &path))?;
-    //     f.write_all(contents.as_bytes())
-    //         .context("could not write bytes")?;
-    // }
-
     Ok(hash)
 }
 

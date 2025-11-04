@@ -1,4 +1,3 @@
-version: '3'
 services:
   postgres:
     image: postgres:17
@@ -6,12 +5,12 @@ services:
     networks:
       - spawn
     ports:
-      - '7654:5432'
+      - "7654:5432"
     restart: always
     environment:
       POSTGRES_USER: spawn
       POSTGRES_PASSWORD: spawn
-    command: ['postgres', '-c', 'log_statement=all']
+    command: ["postgres", "-c", "log_statement=all"]
 
 networks:
   spawn:
