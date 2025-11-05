@@ -1,7 +1,6 @@
 use crate::config;
 use crate::template;
 use std::fs;
-use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use object_store::local::LocalFileSystem;
@@ -27,6 +26,7 @@ impl Migrator {
     pub fn new(config: &config::Config, name: Path, use_pinned: bool) -> Self {
         Migrator {
             config: config.clone(),
+            script_path: name.clone(),
             name,
             use_pinned,
         }
@@ -35,30 +35,38 @@ impl Migrator {
     /// Creates the migration folder with blank setup.
     pub fn create_migration(&self) -> Result<String> {
         // Todo: return error if migration already exists.
-        let path = self.config.migration_folder(&self.script_path);
-        if path.exists() {
+        let path = self.config.migration_folder(&self.name);
+        // TODO: this should use object store
+        let path_str = path.as_ref();
+        if std::path::Path::new(path_str).exists() {
             return Err(anyhow::anyhow!(
                 "folder for migration {:?} already exists, aborting.",
-                path,
+                path_str,
             ));
         }
-        fs::create_dir_all(&path)?;
+        fs::create_dir_all(path_str)?;
 
         // Create our blank script file:
-        fs::write(&path.join("up.sql"), BASE_MIGRATION)?;
+        // TODO: use proper join/child here
+        let script_path = format!("{}/up.sql", path_str);
+        fs::write(&script_path, BASE_MIGRATION)?;
 
-        let name = path
-            .file_name()
+        // TODO: change this to use filename from object store path object
+        let name = path_str
+            .split('/')
+            .last()
             .ok_or(anyhow::anyhow!("couldn't find name for created migration"))?;
 
-        Ok(name.to_string_lossy().to_string())
+        Ok(name.to_string())
     }
 
-    pub fn script_file_path(&self) -> Result<PathBuf> {
+    pub fn script_file_path(&self) -> Result<String> {
         let path = self.config.migration_script_file_path(&self.script_path);
-        Ok(path
+        let path_str = path.as_ref();
+        let canonical = std::path::Path::new(path_str)
             .canonicalize()
-            .context(format!("Invalid script path for '{:?}'", path))?)
+            .context(format!("Invalid script path for '{:?}'", path_str))?;
+        Ok(canonical.to_string_lossy().to_string())
     }
 
     /// Opens the specified script file and generates a migration script, compiled
@@ -68,7 +76,8 @@ impl Migrator {
         variables: Option<crate::variables::Variables>,
     ) -> Result<template::Generation> {
         let lock_file = if self.use_pinned {
-            Some(self.config.migration_lock_file_path(&self.script_path))
+            let path = self.config.migration_lock_file_path(&self.script_path);
+            Some(path.as_ref().to_string())
         } else {
             None
         };

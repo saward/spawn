@@ -5,7 +5,7 @@ use crate::store::pinner::spawn::Spawn;
 use crate::variables::Variables;
 use crate::{config::Config, store::pinner::Pinner};
 use object_store::local::LocalFileSystem;
-use object_store::ObjectStore;
+use object_store::{path::Path, ObjectStore};
 use std::ffi::OsString;
 use std::fs;
 
@@ -81,7 +81,7 @@ pub enum MigrationCommands {
         #[arg(long)]
         pinned: bool,
 
-        migration: Option<OsString>,
+        migration: Option<Path>,
         variables: Option<Variables>,
     },
 }
@@ -115,6 +115,9 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
     let mut main_config = Config::load(&cli.config_file, cli.database)
         .context(format!("could not load config from {}", &cli.config_file,))?;
 
+    let fs: Box<dyn ObjectStore> =
+        Box::new(LocalFileSystem::new_with_prefix(&main_config.spawn_folder)?);
+
     match &cli.command {
         Some(Commands::Init) => {
             todo!("Implement init command")
@@ -135,17 +138,16 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                 }
                 Some(MigrationCommands::Pin { migration }) => {
                     let mut pinner = Spawn::new(
-                        &main_config.pinned_folder().to_string_lossy(),
-                        &main_config.components_folder().to_string_lossy(),
+                        main_config.pinned_folder().as_ref(),
+                        main_config.components_folder().as_ref(),
                     )?;
 
-                    let fs: Box<dyn ObjectStore> =
-                        Box::new(LocalFileSystem::new_with_prefix(&main_config.spawn_folder)?);
-
                     let root = pinner.snapshot(&fs).await?;
-                    let lock_file = main_config.migration_lock_file_path(&migration);
+                    let lock_file_path = main_config.migration_lock_file_path(&Path::from(
+                        migration.to_string_lossy().as_ref(),
+                    ));
                     let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
-                    fs::write(lock_file, toml_str)?;
+                    fs::write(lock_file_path.as_ref(), toml_str)?;
 
                     Ok(Outcome::Unimplemented)
                 }
@@ -178,7 +180,6 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     }
 
                     for migration in migrations {
-                        let migration_str = migration.to_str().unwrap_or_default();
                         let mgrtr = Migrator::new(&main_config, migration.clone(), *pinned);
                         match mgrtr.generate(variables.clone()).await {
                             Ok(result) => {
@@ -188,15 +189,15 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                                     .await
                                     .context(format!(
                                         "Failed to apply migration '{}'",
-                                        &migration_str,
+                                        &migration,
                                     ))?;
-                                println!("Migration '{}' applied successfully", &migration_str);
+                                println!("Migration '{}' applied successfully", &migration);
                                 ()
                             }
                             Err(e) => {
                                 return Err(e.context(anyhow::anyhow!(format!(
                                     "failed to generate migration '{}'",
-                                    &migration_str
+                                    &migration,
                                 ))))
                             }
                         };
@@ -239,7 +240,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     None => {
                         let mut tests = Vec::new();
                         // Grab all test files in the folder:
-                        for entry in fs::read_dir(main_config.tests_folder())? {
+                        for entry in fs::read_dir(main_config.tests_folder().as_ref())? {
                             let entry = entry?;
                             let path = entry.path();
                             if path.is_dir() {

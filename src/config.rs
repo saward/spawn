@@ -1,10 +1,10 @@
 use crate::engine::{postgres_psql::PSQL, DatabaseConfig, Engine};
 use crate::pinfile::LockData;
 use anyhow::{anyhow, Context, Result};
+use object_store::path::Path;
 use std::collections::HashMap;
-use std::ffi::OsString;
+
 use std::fs;
-use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +12,7 @@ static PINFILE_LOCK_NAME: &str = "lock.toml";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
-    pub spawn_folder: PathBuf,
+    spawn_folder: String,
     pub database: String,
     pub environment: Option<String>, // Override the environment for the db config
 
@@ -20,6 +20,10 @@ pub struct Config {
 }
 
 impl Config {
+    pub fn spawn_folder_path(&self) -> Path {
+        Path::from(self.spawn_folder.clone())
+    }
+
     pub fn new_engine(&self) -> Result<Box<dyn Engine>> {
         let db_config = self.db_config()?;
 
@@ -69,51 +73,48 @@ impl Config {
         Ok(settings)
     }
 
-    pub fn pinned_folder(&self) -> PathBuf {
-        self.spawn_folder.join("pinned")
+    pub fn pinned_folder(&self) -> Path {
+        self.spawn_folder_path().child("/pinned")
     }
 
-    pub fn components_folder(&self) -> PathBuf {
-        self.spawn_folder.join("components")
+    pub fn components_folder(&self) -> Path {
+        self.spawn_folder_path().child("/components")
     }
 
-    pub fn migrations_folder(&self) -> PathBuf {
-        self.spawn_folder.join("migrations")
+    pub fn migrations_folder(&self) -> Path {
+        self.spawn_folder_path().child("/migrations")
     }
 
-    pub fn tests_folder(&self) -> PathBuf {
-        self.spawn_folder.join("tests")
+    pub fn tests_folder(&self) -> Path {
+        self.spawn_folder_path().child("/tests")
     }
 
-    pub fn migration_folder(&self, script_path: &OsString) -> PathBuf {
-        self.migrations_folder().join(script_path)
+    pub fn migration_folder(&self, script_path: &Path) -> Path {
+        self.migrations_folder().child(script_path.as_ref())
     }
 
-    pub fn migration_script_file_path(&self, script_path: &OsString) -> PathBuf {
-        self.migration_folder(script_path).join("up.sql")
+    pub fn migration_script_file_path(&self, script_path: &Path) -> Path {
+        self.migration_folder(script_path).child("up.sql")
     }
 
-    pub fn test_folder(&self, test_path: &OsString) -> PathBuf {
-        self.tests_folder().join(test_path)
+    pub fn test_folder(&self, test_path: &Path) -> Path {
+        self.tests_folder().child(test_path.as_ref())
     }
 
-    pub fn test_file_path(&self, test_path: &OsString) -> PathBuf {
-        self.test_folder(test_path).join("test.sql")
+    pub fn test_file_path(&self, test_path: &Path) -> Path {
+        self.test_folder(test_path).child("test.sql")
     }
 
-    pub fn migration_lock_file_path(&self, script_path: &OsString) -> PathBuf {
-        // Nightly has an add_extension that might be good to use one day if it
-        // enters stable.
-        let mut lock_file_name = script_path.clone();
-        lock_file_name.push(PINFILE_LOCK_NAME);
-
+    pub fn migration_lock_file_path(&self, script_path: &Path) -> Path {
+        // Use object_store::Path for consistent path handling
         self.migrations_folder()
-            .join(script_path)
-            .join(PINFILE_LOCK_NAME)
+            .child(script_path.as_ref())
+            .child(PINFILE_LOCK_NAME)
     }
 
-    pub fn load_lock_file(&self, lock_file_path: &PathBuf) -> Result<LockData> {
-        let contents = fs::read_to_string(lock_file_path)?;
+    pub fn load_lock_file(&self, lock_file_path: &Path) -> Result<LockData> {
+        let path_str = lock_file_path.as_ref();
+        let contents = fs::read_to_string(path_str)?;
         let lock_data: LockData = toml::from_str(&contents)?;
 
         Ok(lock_data)

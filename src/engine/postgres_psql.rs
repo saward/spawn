@@ -117,7 +117,9 @@ impl PSQL {
         // Write all files from PROJECT_DIR to fs:
         PSQL::collect_files(&PROJECT_DIR, &mut fs).await?;
 
-        template::generate_with_store(contents, variables, environment, store);
+        Err(anyhow!("not implemented"))
+
+        // template::generate_with_store(contents, variables, environment, store);
 
         // if migration_table_exists {
         //     // Check which migrations have been applied and apply missing ones
@@ -134,7 +136,7 @@ impl PSQL {
         //     }
         // }
 
-        Ok(())
+        // Ok(())
     }
 
     fn execute_sql(&self, sql: &str, format: Option<&str>) -> Result<String> {

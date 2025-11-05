@@ -3,13 +3,14 @@ use crate::engine::EngineOutputter;
 use crate::template;
 use console::{style, Style};
 use object_store::local::LocalFileSystem;
+use object_store::path::Path;
 use object_store::ObjectStore;
 use similar::{ChangeTag, TextDiff};
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+
 use std::str;
 
 use anyhow::{Context, Result};
@@ -32,24 +33,29 @@ impl Tester {
         }
     }
 
-    pub fn components_folder(&self) -> PathBuf {
-        self.config.spawn_folder.join("components")
+    pub fn components_folder(&self) -> String {
+        format!("{}/components", self.config.spawn_folder)
     }
 
-    pub fn tests_folder(&self) -> PathBuf {
-        self.config.spawn_folder.join("tests")
+    pub fn tests_folder(&self) -> Path {
+        self.config.spawn_folder_path().child("/tests")
     }
 
-    pub fn test_folder(&self) -> PathBuf {
-        self.tests_folder().join(self.script_path.clone())
+    pub fn test_folder(&self) -> Path {
+        // TODO: use child rather than format to join
+        format!(
+            "{}/{}",
+            self.tests_folder(),
+            self.script_path.to_string_lossy()
+        )
     }
 
-    pub fn script_file_path(&self) -> PathBuf {
-        self.test_folder().join("test.sql")
+    pub fn script_file_path(&self) -> Path {
+        self.test_folder().child("/test.sql")
     }
 
-    pub fn expected_file_path(&self) -> PathBuf {
-        self.test_folder().join("expected")
+    pub fn expected_file_path(&self) -> String {
+        format!("{}/expected", self.test_folder())
     }
 
     /// Opens the specified script file and generates a migration script, compiled
@@ -57,18 +63,14 @@ impl Tester {
     pub async fn generate(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
         let lock_file = None;
 
-        // Add our migration script to environment:
-        let full_script_path = self.script_file_path();
-        let contents = std::fs::read_to_string(&full_script_path).context(format!(
-            "Failed to read test script '{}'",
-            full_script_path.display()
-        ))?;
-
         // Create and set up the component loader
         let fs: Box<dyn ObjectStore> =
             Box::new(LocalFileSystem::new_with_prefix(&self.config.spawn_folder)?);
 
-        let gen = template::generate(&self.config, lock_file, &contents, variables, fs).await?;
+        // Convert OsString script_path to object_store::Path
+        let script_path = Path::from(self.script_path.to_string_lossy().as_ref());
+
+        let gen = template::generate(&self.config, lock_file, &script_path, variables, fs).await?;
         let content = gen.content;
 
         Ok(content)
@@ -98,7 +100,7 @@ impl Tester {
         variables: Option<crate::variables::Variables>,
     ) -> Result<TestOutcome> {
         let generated = self.run(variables).await?;
-        let expected = fs::read_to_string(self.expected_file_path())
+        let expected = fs::read_to_string(&self.expected_file_path())
             .context("unable to read expectations file")?;
 
         let outcome = match self.compare(&generated, &expected) {
@@ -116,7 +118,7 @@ impl Tester {
         variables: Option<crate::variables::Variables>,
     ) -> Result<()> {
         let content = self.run(variables).await?;
-        fs::write(self.expected_file_path(), content)
+        fs::write(&self.expected_file_path(), content)
             .context("unable to write expectation file")?;
 
         Ok(())

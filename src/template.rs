@@ -6,9 +6,9 @@ use crate::store::Store;
 use crate::template;
 use crate::variables::Variables;
 use minijinja::Environment;
+use object_store::path::Path;
 use object_store::ObjectStore;
-use object_store::{local::LocalFileSystem, path::Path};
-use std::path::PathBuf;
+
 use uuid::Uuid;
 
 use anyhow::{Context, Result};
@@ -46,18 +46,18 @@ impl MiniJinjaLoader {
 
 pub async fn generate(
     cfg: &config::Config,
-    lock_file: Option<PathBuf>,
+    lock_file: Option<String>,
     name: &Path,
     variables: Option<Variables>,
     fs: Box<dyn ObjectStore>,
 ) -> Result<Generation> {
     let pinner: Box<dyn Pinner> = if let Some(lock_file) = lock_file {
         let lock = cfg
-            .load_lock_file(&lock_file)
+            .load_lock_file(&Path::from(lock_file))
             .context("could not load pinned files lock file")?;
         let pinner = Spawn::new_with_root_hash(
-            &cfg.pinned_folder().to_string_lossy(),
-            &cfg.components_folder().to_string_lossy(),
+            cfg.pinned_folder().as_ref(),
+            cfg.components_folder().as_ref(),
             &lock.pin,
             &fs,
         )
@@ -71,21 +71,23 @@ pub async fn generate(
     let store = Store::new(pinner, fs)?;
     let db_config = cfg.db_config()?;
 
-    generate_with_store(name, variables, &db_config.environment, store)
+    generate_with_store(name, variables, &db_config.environment, store).await
 }
 
-pub fn generate_with_store(
+pub async fn generate_with_store(
     name: &Path,
     variables: Option<Variables>,
     environment: &str,
     store: Store,
 ) -> Result<Generation> {
+    // Read contents from our object store first:
+    let contents = store.load_migration(name).await?;
+
+    // Create template environment
     let mut env = template::template_env(store)?;
 
-    // Read contents from our object store:
-
     // Add our main script to environment:
-    env.add_template("migration.sql", contents)?;
+    env.add_template("migration.sql", &contents)?;
 
     // Render with provided variables
     let tmpl = env.get_template("migration.sql")?;

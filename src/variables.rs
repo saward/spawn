@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::Result;
@@ -35,22 +34,22 @@ impl FromStr for Variables {
     type Err = String;
 
     fn from_str(path_str: &str) -> Result<Self, Self::Err> {
-        let path = Path::new(path_str);
-        let content = fs::read_to_string(path)
+        let content = fs::read_to_string(path_str)
             .map_err(|e| format!("Failed to read file {}: {}", path_str, e))?;
 
-        match path.extension().and_then(|s| s.to_str()) {
-            Some("json") => {
+        let extension = path_str.split('.').last().unwrap_or("");
+        match extension {
+            "json" => {
                 let value: serde_json::Value =
                     serde_json::from_str(&content).map_err(|e| format!("Invalid JSON: {}", e))?;
                 Ok(Variables::Json(value))
             }
-            Some("toml") => {
+            "toml" => {
                 let value: toml::Value =
                     toml::from_str(&content).map_err(|e| format!("Invalid TOML: {}", e))?;
                 Ok(Variables::Toml(value))
             }
-            Some("yaml") | Some("yml") => {
+            "yaml" | "yml" => {
                 let value: serde_yaml::Value =
                     serde_yaml::from_str(&content).map_err(|e| format!("Invalid YAML: {}", e))?;
                 Ok(Variables::Yaml(value))

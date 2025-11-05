@@ -1,8 +1,7 @@
-use pretty_assertions::{assert_eq, assert_ne};
+use object_store::path::Path;
+use pretty_assertions::assert_eq;
 use spawn::cli::{run_cli, Cli, Commands, MigrationCommands, Outcome};
-use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio;
 
@@ -18,31 +17,29 @@ pub struct MigrationTestHelper {
 }
 
 impl MigrationTestHelper {
-    fn base_path(&self) -> PathBuf {
+    fn base_path(&self) -> String {
         // Returns static db folder:
-        self.temp_dir.path().join("db")
+        format!("{}/db", self.temp_dir.path().display())
     }
 
-    fn migrations_dir(&self) -> PathBuf {
-        self.base_path().join("migrations")
+    fn migrations_dir(&self) -> String {
+        format!("{}/migrations", self.base_path())
     }
 
-    fn migration_script_path(&self, full_migration_name: &str) -> PathBuf {
-        self.migrations_dir()
-            .join(full_migration_name)
-            .join("up.sql")
+    fn migration_script_path(&self, full_migration_name: &str) -> String {
+        format!("{}/{}/up.sql", self.migrations_dir(), full_migration_name)
     }
 
-    fn tests_dir(&self) -> PathBuf {
-        self.base_path().join("tests")
+    fn tests_dir(&self) -> String {
+        format!("{}/tests", self.base_path())
     }
 
-    fn components_dir(&self) -> PathBuf {
-        self.base_path().join("components")
+    fn components_dir(&self) -> String {
+        format!("{}/components", self.base_path())
     }
 
-    fn config_path(&self) -> PathBuf {
-        self.base_path().join("spawn.toml")
+    fn config_path(&self) -> String {
+        format!("{}/spawn.toml", self.base_path())
     }
 }
 
@@ -80,7 +77,7 @@ command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
     pub async fn create_migration(&self, name: &str) -> Result<String, anyhow::Error> {
         let cli = Cli {
             debug: false,
-            config_file: self.config_path().to_string_lossy().to_string(),
+            config_file: self.config_path(),
             database: None,
             command: Some(Commands::Migration {
                 command: Some(MigrationCommands::New {
@@ -128,11 +125,11 @@ command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
     ) -> Result<String, anyhow::Error> {
         let cli = Cli {
             debug: false,
-            config_file: self.config_path().to_string_lossy().to_string(),
+            config_file: self.config_path(),
             database: None,
             command: Some(Commands::Migration {
                 command: Some(MigrationCommands::Build {
-                    migration: OsString::from(migration_name),
+                    migration: Path::from(migration_name),
                     pinned,
                     variables: None,
                 }),
@@ -160,8 +157,11 @@ async fn test_create_migration() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Failed to create migration with helper");
 
     // Check that <migration folder>/up.sql exists:
-    let script_path = helper.migrations_dir().join(&migration_name).join("up.sql");
-    assert!(script_path.exists(), "new migration script does not exist");
+    let script_path = format!("{}/{}/up.sql", helper.migrations_dir(), migration_name);
+    assert!(
+        std::path::Path::new(&script_path).exists(),
+        "new migration script does not exist"
+    );
 
     // Check script has expected input:
     let created_script_str = std::fs::read_to_string(&script_path)?;
