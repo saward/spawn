@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 
 pub struct Tester {
     config: config::Config,
-    script_path: OsString,
+    script_path: Path,
 }
 
 #[derive(Debug)]
@@ -26,15 +26,15 @@ pub struct TestOutcome {
 }
 
 impl Tester {
-    pub fn new(config: &config::Config, script_path: OsString) -> Self {
+    pub fn new(config: &config::Config, script_path: Path) -> Self {
         Tester {
             config: config.clone(),
             script_path,
         }
     }
 
-    pub fn components_folder(&self) -> String {
-        format!("{}/components", self.config.spawn_folder)
+    pub fn components_folder(&self) -> Path {
+        self.config.spawn_folder_path().child("/components")
     }
 
     pub fn tests_folder(&self) -> Path {
@@ -43,11 +43,7 @@ impl Tester {
 
     pub fn test_folder(&self) -> Path {
         // TODO: use child rather than format to join
-        format!(
-            "{}/{}",
-            self.tests_folder(),
-            self.script_path.to_string_lossy()
-        )
+        self.tests_folder().child(self.script_path.as_ref())
     }
 
     pub fn script_file_path(&self) -> Path {
@@ -64,11 +60,12 @@ impl Tester {
         let lock_file = None;
 
         // Create and set up the component loader
-        let fs: Box<dyn ObjectStore> =
-            Box::new(LocalFileSystem::new_with_prefix(&self.config.spawn_folder)?);
+        let fs: Box<dyn ObjectStore> = Box::new(LocalFileSystem::new_with_prefix(
+            self.config.spawn_folder_path().as_ref(),
+        )?);
 
         // Convert OsString script_path to object_store::Path
-        let script_path = Path::from(self.script_path.to_string_lossy().as_ref());
+        let script_path = Path::from(self.script_path.as_ref());
 
         let gen = template::generate(&self.config, lock_file, &script_path, variables, fs).await?;
         let content = gen.content;

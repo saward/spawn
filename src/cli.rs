@@ -6,6 +6,7 @@ use crate::variables::Variables;
 use crate::{config::Config, store::pinner::Pinner};
 use object_store::local::LocalFileSystem;
 use object_store::{path::Path, ObjectStore};
+use similar::DiffableStr;
 use std::ffi::OsString;
 use std::fs;
 
@@ -89,18 +90,18 @@ pub enum MigrationCommands {
 #[derive(Subcommand)]
 pub enum TestCommands {
     Build {
-        name: OsString,
+        name: Path,
     },
     /// Run a particular test
     Run {
-        name: OsString,
+        name: Path,
     },
     /// Run tests and compare to expected.  Runs all tests if no name provided.
     Compare {
-        name: Option<OsString>,
+        name: Option<Path>,
     },
     Expect {
-        name: OsString,
+        name: Path,
     },
 }
 
@@ -115,8 +116,9 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
     let mut main_config = Config::load(&cli.config_file, cli.database)
         .context(format!("could not load config from {}", &cli.config_file,))?;
 
-    let fs: Box<dyn ObjectStore> =
-        Box::new(LocalFileSystem::new_with_prefix(&main_config.spawn_folder)?);
+    let fs: Box<dyn ObjectStore> = Box::new(LocalFileSystem::new_with_prefix(
+        main_config.spawn_folder_path().as_ref(),
+    )?);
 
     match &cli.command {
         Some(Commands::Init) => {
@@ -235,20 +237,21 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                 Ok(Outcome::Unimplemented)
             }
             Some(TestCommands::Compare { name }) => {
-                let test_files: Vec<OsString> = match name {
+                let test_files: Vec<Path> = match name {
                     Some(name) => vec![name.clone()],
                     None => {
-                        let mut tests = Vec::new();
+                        let mut tests: Vec<Path> = Vec::new();
                         // Grab all test files in the folder:
                         for entry in fs::read_dir(main_config.tests_folder().as_ref())? {
                             let entry = entry?;
                             let path = entry.path();
                             if path.is_dir() {
-                                tests.push(
+                                tests.push(Path::from(
                                     path.file_name()
                                         .ok_or(anyhow::anyhow!("no test found!"))?
-                                        .to_os_string(),
-                                );
+                                        .to_string_lossy()
+                                        .to_string(),
+                                ));
                             }
                         }
                         tests
@@ -259,18 +262,15 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
 
                 for test_file in test_files {
                     let config = Tester::new(&main_config, test_file.clone());
-                    let name = test_file
-                        .into_string()
-                        .unwrap_or_else(|_| "<invalid utf8>".to_string());
 
                     match config.run_compare(None).await {
                         Ok(result) => match result.diff {
                             None => {
-                                println!("{}[PASS]{} {}", GREEN, RESET, name);
+                                println!("{}[PASS]{} {}", GREEN, RESET, test_file);
                             }
                             Some(diff) => {
                                 failed = true;
-                                println!("\n{}[FAIL]{} {}{}{}", RED, RESET, BOLD, name, RESET);
+                                println!("\n{}[FAIL]{} {}{}{}", RED, RESET, BOLD, test_file, RESET);
                                 println!("{}--- Diff ---{}", BOLD, RESET);
                                 println!("{}", diff);
                                 println!("{}-------------{}\n", BOLD, RESET);

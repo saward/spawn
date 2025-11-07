@@ -26,7 +26,6 @@ impl Migrator {
     pub fn new(config: &config::Config, name: Path, use_pinned: bool) -> Self {
         Migrator {
             config: config.clone(),
-            script_path: name.clone(),
             name,
             use_pinned,
         }
@@ -61,7 +60,7 @@ impl Migrator {
     }
 
     pub fn script_file_path(&self) -> Result<String> {
-        let path = self.config.migration_script_file_path(&self.script_path);
+        let path = self.config.migration_script_file_path(&self.name);
         let path_str = path.as_ref();
         let canonical = std::path::Path::new(path_str)
             .canonicalize()
@@ -76,16 +75,17 @@ impl Migrator {
         variables: Option<crate::variables::Variables>,
     ) -> Result<template::Generation> {
         let lock_file = if self.use_pinned {
-            let path = self.config.migration_lock_file_path(&self.script_path);
+            let path = self.config.migration_lock_file_path(&self.name);
             Some(path.as_ref().to_string())
         } else {
             None
         };
 
         // Create and set up the component loader
-        let fs: Box<dyn ObjectStore> =
-            Box::new(LocalFileSystem::new_with_prefix(&self.config.spawn_folder)?);
+        let fs: Box<dyn ObjectStore> = Box::new(LocalFileSystem::new_with_prefix(
+            self.config.spawn_folder_path().as_ref(),
+        )?);
 
-        template::generate(&self.config, lock_file, &self.script_path, variables, fs).await
+        template::generate(&self.config, lock_file, &self.name, variables, fs).await
     }
 }
