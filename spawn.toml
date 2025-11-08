@@ -1,4 +1,4 @@
-spawn_folder = "./static/example"
+spawn_folder = "static/example"
 database = "postgres_psql"        # Sets default to use.
 
 [databases.postgres_builtin]

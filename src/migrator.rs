@@ -33,7 +33,7 @@ impl Migrator {
 
     /// Creates the migration folder with blank setup.
     pub fn create_migration(&self) -> Result<String> {
-        // Todo: return error if migration already exists.
+        // TODO: return error if migration already exists.
         let path = self.config.migration_folder(&self.name);
         // TODO: this should use object store
         let path_str = path.as_ref();
@@ -57,15 +57,6 @@ impl Migrator {
             .ok_or(anyhow::anyhow!("couldn't find name for created migration"))?;
 
         Ok(name.to_string())
-    }
-
-    pub fn script_file_path(&self) -> Result<String> {
-        let path = self.config.migration_script_file_path(&self.name);
-        let path_str = path.as_ref();
-        let canonical = std::path::Path::new(path_str)
-            .canonicalize()
-            .context(format!("Invalid script path for '{:?}'", path_str))?;
-        Ok(canonical.to_string_lossy().to_string())
     }
 
     /// Opens the specified script file and generates a migration script, compiled

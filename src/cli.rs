@@ -116,9 +116,14 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
     let mut main_config = Config::load(&cli.config_file, cli.database)
         .context(format!("could not load config from {}", &cli.config_file,))?;
 
-    let fs: Box<dyn ObjectStore> = Box::new(LocalFileSystem::new_with_prefix(
-        main_config.spawn_folder_path().as_ref(),
-    )?);
+    let fs: Box<dyn ObjectStore> = Box::new(
+        LocalFileSystem::new_with_prefix(main_config.spawn_folder_path().as_ref()).context(
+            format!(
+                "failed to initialise filesystem for folder path '{}'",
+                main_config.spawn_folder_path()
+            ),
+        )?,
+    );
 
     match &cli.command {
         Some(Commands::Init) => {
