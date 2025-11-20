@@ -3,7 +3,6 @@
 // build in PSQL helper commands.
 
 use crate::engine::{DatabaseConfig, Engine, EngineOutputter, EngineWriter};
-use crate::template;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;

@@ -34,6 +34,7 @@ object_store = { version = "0.12.3", features = ["fs"] }
 
 async-trait = "0.1.88"
 futures = "0.3"
+opendal = { version = ">=0.53, <1", features = ["services-fs", "services-memory"] }
 
 include_dir = "0.7.4"
 

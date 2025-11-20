@@ -1,5 +1,5 @@
 use anyhow::Result;
-use object_store::{path::Path, ObjectStore};
+use opendal::Operator;
 
 use crate::store::pinner::Pinner;
 
@@ -7,21 +7,11 @@ pub mod pinner;
 
 pub struct Store {
     pinner: Box<dyn Pinner>,
-    fs: Box<dyn ObjectStore>,
-}
-
-pub struct FS {
-    fs: Box<dyn ObjectStore>,
-}
-
-impl FS {
-    pub fn new(fs: Box<dyn ObjectStore>) -> Self {
-        Self { fs }
-    }
+    fs: Operator,
 }
 
 impl Store {
-    pub fn new(pinner: Box<dyn Pinner>, fs: Box<dyn ObjectStore>) -> Result<Store> {
+    pub fn new(pinner: Box<dyn Pinner>, fs: Operator) -> Result<Store> {
         Ok(Store { pinner, fs })
     }
 
@@ -31,11 +21,11 @@ impl Store {
         Ok(res)
     }
 
-    pub async fn load_migration(&self, name: &Path) -> Result<String> {
+    pub async fn load_migration(&self, name: &str) -> Result<String> {
         // Append the migration folder name to the path:
-        let name = Path::from(format!("migrations/{}", name.to_string()));
-        let result = self.fs.get(&name).await?;
-        let bytes = result.bytes().await?;
+        let name = format!("migrations/{}", name.to_string());
+        let result = self.fs.read(&name).await?;
+        let bytes = result.to_bytes();
         let contents = String::from_utf8(bytes.to_vec())?;
 
         Ok(contents)

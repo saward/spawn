@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use futures::TryStreamExt;
+use opendal::Operator;
 
-use object_store::ObjectStore;
-use object_store::PutPayload;
 use serde::{Deserialize, Serialize};
 
 use futures::StreamExt;
@@ -14,9 +14,8 @@ pub mod spawn;
 
 #[async_trait]
 pub trait Pinner: Send + Sync {
-    async fn load(&self, name: &str, object_store: &Box<dyn ObjectStore>)
-        -> Result<Option<String>>;
-    async fn snapshot(&mut self, object_store: &Box<dyn ObjectStore>) -> Result<String>;
+    async fn load(&self, name: &str, fs: &Operator) -> Result<Option<String>>;
+    async fn snapshot(&mut self, fs: &Operator) -> Result<String>;
 
     fn components_folder(&self) -> &'static str {
         "components"
@@ -41,18 +40,14 @@ pub struct Entry {
     pub name: String,
 }
 
-pub(crate) async fn pin_file(
-    object_store: &Box<dyn ObjectStore>,
-    store_path: &str,
-    file_path: &str,
-) -> Result<String> {
+pub(crate) async fn pin_file(fs: &Operator, store_path: &str, file_path: &str) -> Result<String> {
     let contents = fs::read_to_string(file_path)?;
 
-    pin_contents(object_store, store_path, contents).await
+    pin_contents(fs, store_path, contents).await
 }
 
 pub(crate) async fn pin_contents(
-    object_store: &Box<dyn ObjectStore>,
+    fs: &Operator,
     store_path: &str,
     contents: String,
 ) -> Result<String> {
@@ -60,8 +55,7 @@ pub(crate) async fn pin_contents(
     let hash = format!("{:032x}", hash);
     let dir = format!("{}/{}", store_path, hash_to_path(&hash)?);
 
-    let payload: PutPayload = contents.into();
-    object_store.put(&dir.into(), payload).await?;
+    fs.write(dir, contents).await?;
 
     Ok(hash)
 }
@@ -77,16 +71,12 @@ pub(crate) fn hash_to_path(hash: &str) -> Result<String> {
 }
 
 /// Reads the file corresponding to the hash from the given base path.
-pub(crate) async fn read_hash_file(
-    object_store: &Box<dyn ObjectStore>,
-    base_path: &str,
-    hash: &str,
-) -> Result<String> {
+pub(crate) async fn read_hash_file(fs: &Operator, base_path: &str, hash: &str) -> Result<String> {
     let relative_path = hash_to_path(hash)?;
     let file_path = format!("{}/{}", base_path, relative_path);
 
-    let get_result = object_store.get(&file_path.into()).await?;
-    let bytes = get_result.bytes().await?;
+    let get_result = fs.read(&file_path).await?;
+    let bytes = get_result.to_bytes();
     let contents = String::from_utf8(bytes.to_vec())?;
 
     Ok(contents)
@@ -94,98 +84,65 @@ pub(crate) async fn read_hash_file(
 
 /// Walks through objects in an ObjectStore, creating pinned entries as appropriate for every
 /// directory and file.  Returns a hash of the object.
-pub(crate) async fn snapshot(
-    object_store: &Box<dyn ObjectStore>,
-    store_path: &str,
-    prefix: &str,
-) -> Result<String> {
-    // Convert prefix to ObjectStore Path
-    let prefix_path = if prefix.is_empty() {
-        None
-    } else {
-        Some(object_store::path::Path::from(prefix))
-    };
-
+pub(crate) async fn snapshot(fs: &Operator, store_path: &str) -> Result<String> {
     // list_with_delimiter seems to return only immediate children objects and
     // folders, rather than every subfolder.  It behaves more like a directory
     // walk than a full list of all nested folders and objects like list.
-    let mut list_result = object_store
-        .list_with_delimiter(prefix_path.as_ref())
-        .await
-        .context("could not list object store")?;
+    let mut fs_lister = fs.lister(store_path).await?;
+    let mut list_result: Vec<opendal::Entry> = Vec::new();
+    while let Some(entry) = fs_lister.try_next().await? {
+        if entry.path() == store_path {
+            continue;
+        }
+        list_result.push(entry);
+    }
 
     let mut tree = Tree::default();
     let mut entries = Vec::new();
 
-    // snapshot runs recursively.  prefix tells us the full path of the current
-    // folder (common_prefix) we are processing.  First, we find all subfolders
-    // of that prefix, call snapshot for them to get the hashes, and store those
-    // Tree entries with their hashes.  We do this by stripping the current
-    // snapshot call's prefix, so we're left only with subfolders of this tree.
-    list_result.common_prefixes.sort();
-    for common_prefix in list_result.common_prefixes {
-        let dir_name = common_prefix
-            .as_ref()
-            .strip_prefix(&format!("{}/", prefix))
-            .unwrap_or(common_prefix.as_ref())
-            .trim_end_matches('/');
-
-        if !dir_name.is_empty() {
-            let branch = Box::pin(snapshot(object_store, store_path, common_prefix.as_ref()))
-                .await
-                .context("failed to snapshot subfolder")?;
-            entries.push((
-                dir_name.to_string(),
-                Entry {
-                    kind: EntryKind::Tree,
-                    name: dir_name.to_string(),
-                    hash: branch,
-                },
-            ));
-        }
-    }
-
-    // Now that all the directories have been hashes for this prefix, we can do
-    // the same for objects, finding those with the prefix we care about.  Look
-    // through all objects, and find the ones that have a prefix matching our
-    // current prefix.  Then, we add a blob entry with hash for each of those:
-    for object_meta in list_result.objects {
-        let full_path = object_meta.location.as_ref();
-
-        let file_name = if prefix.is_empty() {
-            full_path
-        } else {
-            full_path
-                .strip_prefix(&format!("{}/", prefix))
-                .unwrap_or(full_path)
-        };
-
-        // Skip if this is not a direct child (contains additional slashes)
-        if !file_name.contains('/') && !file_name.is_empty() {
-            // Stream-based hashing to avoid loading large files into memory
-            let object_result = object_store
-                .get(&object_meta.location)
-                .await
-                .context("could not get object to hash")?;
-
-            let mut reader = object_result.into_stream();
-            let mut hasher = xxhash3_128::Hasher::new();
-
-            while let Some(chunk) = reader.next().await {
-                let chunk = chunk.context("failed to read chunk from object stream")?;
-                hasher.write(&chunk);
+    for entry in list_result {
+        match entry.path().ends_with("/") {
+            true => {
+                // Folder
+                let branch = Box::pin(snapshot(fs, entry.path()))
+                    .await
+                    .context("failed to snapshot subfolder")?;
+                entries.push((
+                    entry.name().to_string(),
+                    Entry {
+                        kind: EntryKind::Tree,
+                        name: entry.name().to_string(),
+                        hash: branch,
+                    },
+                ));
             }
+            false => {
+                // File
+                // Stream-based hashing to avoid loading large files into memory
+                let object_result = fs
+                    .reader(entry.path())
+                    .await
+                    .context("could not get reader for file")?;
 
-            let hash = format!("{:032x}", hasher.finish_128());
+                let mut reader = object_result.into_stream(0..).await?;
+                let mut hasher = xxhash3_128::Hasher::new();
 
-            entries.push((
-                file_name.to_string(),
-                Entry {
-                    kind: EntryKind::Blob,
-                    name: file_name.to_string(),
-                    hash,
-                },
-            ));
+                while let Some(chunk) = reader.next().await {
+                    let chunk = chunk.context("failed to read chunk from object stream")?;
+                    hasher.write(&chunk.to_bytes());
+                }
+
+                let hash = format!("{:032x}", hasher.finish_128());
+
+                entries.push((
+                    entry.name().to_string(),
+                    Entry {
+                        kind: EntryKind::Blob,
+                        name: entry.name().to_string(),
+                        hash,
+                    },
+                ));
+            }
         }
     }
 
@@ -195,7 +152,7 @@ pub(crate) async fn snapshot(
     tree.entries = entries.into_iter().map(|(_, entry)| entry).collect();
 
     let contents = toml::to_string(&tree).unwrap();
-    let hash = pin_contents(object_store, store_path, contents)
+    let hash = pin_contents(fs, store_path, contents)
         .await
         .context("could not pin contents")?;
 
@@ -211,7 +168,7 @@ mod tests {
     use super::*;
 
     async fn populate_inmemory_from_object_store(
-        source_store: &Box<dyn ObjectStore>,
+        source_store: &Operator,
         target_store: &InMemory,
         prefix: &str,
     ) -> Result<()> {

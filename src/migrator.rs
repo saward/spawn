@@ -2,7 +2,7 @@ use crate::config;
 use crate::template;
 use std::fs;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::ObjectStore;
@@ -17,16 +17,16 @@ COMMIT;
 pub struct Migrator {
     config: config::Config,
     /// Name of the migration, as an object store path.
-    name: Path,
+    name: String,
     /// Whether to use pinned components
     use_pinned: bool,
 }
 
 impl Migrator {
-    pub fn new(config: &config::Config, name: Path, use_pinned: bool) -> Self {
+    pub fn new(config: &config::Config, name: &str, use_pinned: bool) -> Self {
         Migrator {
             config: config.clone(),
-            name,
+            name: name.to_string(),
             use_pinned,
         }
     }

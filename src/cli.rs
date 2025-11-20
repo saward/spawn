@@ -4,10 +4,9 @@ use crate::sqltest::Tester;
 use crate::store::pinner::spawn::Spawn;
 use crate::variables::Variables;
 use crate::{config::Config, store::pinner::Pinner};
-use object_store::local::LocalFileSystem;
-use object_store::{path::Path, ObjectStore};
-use similar::DiffableStr;
-use std::ffi::OsString;
+use futures::TryStreamExt;
+use opendal::services::Fs;
+use opendal::Operator;
 use std::fs;
 
 use anyhow::{Context, Result};
@@ -63,7 +62,7 @@ pub enum MigrationCommands {
     /// Pin a migration with current components
     Pin {
         /// Migration to pin
-        migration: OsString,
+        migration: String,
     },
     /// Build a migration into SQL
     Build {
@@ -72,7 +71,7 @@ pub enum MigrationCommands {
         pinned: bool,
         /// Migration to build.  Looks for up.sql inside this specified
         /// migration folder.
-        migration: object_store::path::Path,
+        migration: String,
         variables: Option<Variables>,
     },
     /// Apply will apply this migration to the database if not already applied,
@@ -82,7 +81,7 @@ pub enum MigrationCommands {
         #[arg(long)]
         pinned: bool,
 
-        migration: Option<Path>,
+        migration: Option<String>,
         variables: Option<Variables>,
     },
 }
@@ -90,18 +89,18 @@ pub enum MigrationCommands {
 #[derive(Subcommand)]
 pub enum TestCommands {
     Build {
-        name: Path,
+        name: String,
     },
     /// Run a particular test
     Run {
-        name: Path,
+        name: String,
     },
     /// Run tests and compare to expected.  Runs all tests if no name provided.
     Compare {
-        name: Option<Path>,
+        name: Option<String>,
     },
     Expect {
-        name: Path,
+        name: String,
     },
 }
 
@@ -116,14 +115,8 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
     let mut main_config = Config::load(&cli.config_file, cli.database)
         .context(format!("could not load config from {}", &cli.config_file,))?;
 
-    let fs: Box<dyn ObjectStore> = Box::new(
-        LocalFileSystem::new_with_prefix(main_config.spawn_folder_path().as_ref()).context(
-            format!(
-                "failed to initialise filesystem for folder path '{}'",
-                main_config.spawn_folder_path()
-            ),
-        )?,
-    );
+    let fs_builder = Fs::default().root(main_config.spawn_folder_path());
+    let fs = Operator::new(fs_builder)?.finish();
 
     match &cli.command {
         Some(Commands::Init) => {
@@ -139,7 +132,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     let migration_name: String =
                         format!("{}-{}", chrono::Utc::now().format("%Y%m%d%H%M%S"), name);
                     println!("creating migration with name {}", &migration_name);
-                    let mg = Migrator::new(&main_config, migration_name.into(), false);
+                    let mg = Migrator::new(&main_config, &migration_name, false);
 
                     Ok(Outcome::NewMigration(mg.create_migration()?))
                 }
@@ -150,9 +143,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     )?;
 
                     let root = pinner.snapshot(&fs).await?;
-                    let lock_file_path = main_config.migration_lock_file_path(&Path::from(
-                        migration.to_string_lossy().as_ref(),
-                    ));
+                    let lock_file_path = main_config.migration_lock_file_path(&migration);
                     let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
                     fs::write(lock_file_path.as_ref(), toml_str)?;
 
@@ -163,7 +154,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     pinned,
                     variables,
                 }) => {
-                    let mgrtr = Migrator::new(&main_config, migration.clone(), *pinned);
+                    let mgrtr = Migrator::new(&main_config, &migration, *pinned);
                     match mgrtr.generate(variables.clone()).await {
                         Ok(result) => {
                             println!("{}", result.content);
@@ -187,7 +178,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     }
 
                     for migration in migrations {
-                        let mgrtr = Migrator::new(&main_config, migration.clone(), *pinned);
+                        let mgrtr = Migrator::new(&main_config, &migration, *pinned);
                         match mgrtr.generate(variables.clone()).await {
                             Ok(result) => {
                                 let engine = main_config.new_engine()?;
@@ -220,7 +211,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
         }
         Some(Commands::Test { command }) => match command {
             Some(TestCommands::Build { name }) => {
-                let config = Tester::new(&main_config, name.clone());
+                let config = Tester::new(&main_config, &name);
                 match config.generate(None).await {
                     Ok(result) => {
                         println!("{}", result);
@@ -231,7 +222,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                 Ok(Outcome::Unimplemented)
             }
             Some(TestCommands::Run { name }) => {
-                let config = Tester::new(&main_config, name.clone());
+                let config = Tester::new(&main_config, &name);
                 match config.run(None).await {
                     Ok(result) => {
                         println!("{}", result);
@@ -242,23 +233,19 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                 Ok(Outcome::Unimplemented)
             }
             Some(TestCommands::Compare { name }) => {
-                let test_files: Vec<Path> = match name {
+                let test_files: Vec<String> = match name {
                     Some(name) => vec![name.clone()],
                     None => {
-                        let mut tests: Vec<Path> = Vec::new();
-                        // Grab all test files in the folder:
-                        for entry in fs::read_dir(main_config.tests_folder().as_ref())? {
-                            let entry = entry?;
-                            let path = entry.path();
-                            if path.is_dir() {
-                                tests.push(Path::from(
-                                    path.file_name()
-                                        .ok_or(anyhow::anyhow!("no test found!"))?
-                                        .to_string_lossy()
-                                        .to_string(),
-                                ));
+                        let mut tests: Vec<String> = Vec::new();
+                        let mut fs_lister = fs.lister(main_config.tests_folder()).await?;
+                        let mut fs_paths: Vec<String> = Vec::new();
+                        while let Some(entry) = fs_lister.try_next().await? {
+                            let path = entry.path().to_string();
+                            if path.ends_with("/") {
+                                tests.push(path)
                             }
                         }
+
                         tests
                     }
                 };
@@ -266,7 +253,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                 let mut failed = false;
 
                 for test_file in test_files {
-                    let config = Tester::new(&main_config, test_file.clone());
+                    let config = Tester::new(&main_config, &test_file);
 
                     match config.run_compare(None).await {
                         Ok(result) => match result.diff {
@@ -296,7 +283,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                 Ok(Outcome::Unimplemented)
             }
             Some(TestCommands::Expect { name }) => {
-                let tester = Tester::new(&main_config, name.clone());
+                let tester = Tester::new(&main_config, &name);
                 match tester.save_expected(None).await {
                     Ok(_) => (),
                     Err(e) => return Err(e),

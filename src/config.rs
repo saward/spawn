@@ -1,7 +1,6 @@
 use crate::engine::{postgres_psql::PSQL, DatabaseConfig, Engine};
 use crate::pinfile::LockData;
 use anyhow::{anyhow, Context, Result};
-use object_store::path::Path;
 use std::collections::HashMap;
 
 use std::fs;
@@ -20,8 +19,8 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn spawn_folder_path(&self) -> Path {
-        Path::from(self.spawn_folder.clone())
+    pub fn spawn_folder_path(&self) -> &str {
+        self.spawn_folder.as_ref()
     }
 
     pub fn new_engine(&self) -> Result<Box<dyn Engine>> {
@@ -73,46 +72,50 @@ impl Config {
         Ok(settings)
     }
 
-    pub fn pinned_folder(&self) -> Path {
-        self.spawn_folder_path().child("/pinned")
+    pub fn pinned_folder(&self) -> String {
+        let mut s = self.spawn_folder_path().to_string();
+        s.push_str("/pinned");
+        s
     }
 
-    pub fn components_folder(&self) -> Path {
-        self.spawn_folder_path().child("/components")
+    pub fn components_folder(&self) -> String {
+        let mut s = self.spawn_folder_path().to_string();
+        s.push_str("/components");
+        s
     }
 
-    pub fn migrations_folder(&self) -> Path {
+    pub fn migrations_folder(&self) -> String {
         self.spawn_folder_path().child("/migrations")
     }
 
-    pub fn tests_folder(&self) -> Path {
+    pub fn tests_folder(&self) -> String {
         self.spawn_folder_path().child("/tests")
     }
 
-    pub fn migration_folder(&self, script_path: &Path) -> Path {
+    pub fn migration_folder(&self, script_path: &str) -> String {
         self.migrations_folder().child(script_path.as_ref())
     }
 
-    pub fn migration_script_file_path(&self, script_path: &Path) -> Path {
+    pub fn migration_script_file_path(&self, script_path: &str) -> String {
         self.migration_folder(script_path).child("up.sql")
     }
 
-    pub fn test_folder(&self, test_path: &Path) -> Path {
+    pub fn test_folder(&self, test_path: &str) -> String {
         self.tests_folder().child(test_path.as_ref())
     }
 
-    pub fn test_file_path(&self, test_path: &Path) -> Path {
+    pub fn test_file_path(&self, test_path: &str) -> String {
         self.test_folder(test_path).child("test.sql")
     }
 
-    pub fn migration_lock_file_path(&self, script_path: &Path) -> Path {
+    pub fn migration_lock_file_path(&self, script_path: &str) -> String {
         // Use object_store::Path for consistent path handling
         self.migrations_folder()
             .child(script_path.as_ref())
             .child(PINFILE_LOCK_NAME)
     }
 
-    pub fn load_lock_file(&self, lock_file_path: &Path) -> Result<LockData> {
+    pub fn load_lock_file(&self, lock_file_path: &str) -> Result<LockData> {
         let path_str = lock_file_path.as_ref();
         let contents = fs::read_to_string(path_str)?;
         let lock_data: LockData = toml::from_str(&contents)?;

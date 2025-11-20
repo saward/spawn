@@ -6,7 +6,6 @@ use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::ObjectStore;
 use similar::{ChangeTag, TextDiff};
-use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io::Write;
@@ -17,7 +16,7 @@ use anyhow::{Context, Result};
 
 pub struct Tester {
     config: config::Config,
-    script_path: Path,
+    script_path: String,
 }
 
 #[derive(Debug)]
@@ -26,10 +25,10 @@ pub struct TestOutcome {
 }
 
 impl Tester {
-    pub fn new(config: &config::Config, script_path: Path) -> Self {
+    pub fn new(config: &config::Config, script_path: &str) -> Self {
         Tester {
             config: config.clone(),
-            script_path,
+            script_path: script_path.to_string(),
         }
     }
 
