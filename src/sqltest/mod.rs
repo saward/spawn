@@ -2,9 +2,8 @@ use crate::config;
 use crate::engine::EngineOutputter;
 use crate::template;
 use console::{style, Style};
-use object_store::local::LocalFileSystem;
-use object_store::path::Path;
-use object_store::ObjectStore;
+use opendal;
+
 use similar::{ChangeTag, TextDiff};
 use std::fmt;
 use std::fs;
@@ -32,21 +31,29 @@ impl Tester {
         }
     }
 
-    pub fn components_folder(&self) -> Path {
-        self.config.spawn_folder_path().child("/components")
+    pub fn components_folder(&self) -> String {
+        let mut s = self.config.spawn_folder_path().to_string();
+        s.push_str("/components");
+        s
     }
 
-    pub fn tests_folder(&self) -> Path {
-        self.config.spawn_folder_path().child("/tests")
+    pub fn tests_folder(&self) -> String {
+        let mut s = self.config.spawn_folder_path().to_string();
+        s.push_str("/tests");
+        s
     }
 
-    pub fn test_folder(&self) -> Path {
-        // TODO: use child rather than format to join
-        self.tests_folder().child(self.script_path.as_ref())
+    pub fn test_folder(&self) -> String {
+        let mut s = self.tests_folder();
+        s.push('/');
+        s.push_str(&self.script_path);
+        s
     }
 
-    pub fn script_file_path(&self) -> Path {
-        self.test_folder().child("/test.sql")
+    pub fn script_file_path(&self) -> String {
+        let mut s = self.test_folder();
+        s.push_str("/test.sql");
+        s
     }
 
     pub fn expected_file_path(&self) -> String {
@@ -58,15 +65,10 @@ impl Tester {
     pub async fn generate(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
         let lock_file = None;
 
-        // Create and set up the component loader
-        let fs: Box<dyn ObjectStore> = Box::new(LocalFileSystem::new_with_prefix(
-            self.config.spawn_folder_path().as_ref(),
-        )?);
-
-        // Convert OsString script_path to object_store::Path
-        let script_path = Path::from(self.script_path.as_ref());
-
-        let gen = template::generate(&self.config, lock_file, &script_path, variables, fs).await?;
+        check this let fs_service = opendal::services::Fs::default().root(self.config.spawn_folder_path());
+        let fs = opendal::Operator::new(fs_service)?.finish();
+        let gen =
+            template::generate(&self.config, lock_file, &self.script_path, variables, fs).await?;
         let content = gen.content;
 
         Ok(content)

@@ -145,7 +145,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     let root = pinner.snapshot(&fs).await?;
                     let lock_file_path = main_config.migration_lock_file_path(&migration);
                     let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
-                    fs::write(lock_file_path.as_ref(), toml_str)?;
+                    fs::write(&lock_file_path, toml_str)?;
 
                     Ok(Outcome::Unimplemented)
                 }
@@ -237,7 +237,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     Some(name) => vec![name.clone()],
                     None => {
                         let mut tests: Vec<String> = Vec::new();
-                        let mut fs_lister = fs.lister(main_config.tests_folder()).await?;
+                        let mut fs_lister = fs.lister(&main_config.tests_folder()).await?;
                         let mut fs_paths: Vec<String> = Vec::new();
                         while let Some(entry) = fs_lister.try_next().await? {
                             let path = entry.path().to_string();

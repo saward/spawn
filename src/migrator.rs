@@ -3,9 +3,7 @@ use crate::template;
 use std::fs;
 
 use anyhow::Result;
-use object_store::local::LocalFileSystem;
-use object_store::path::Path;
-use object_store::ObjectStore;
+use opendal;
 
 static BASE_MIGRATION: &str = "BEGIN;
 
@@ -36,7 +34,7 @@ impl Migrator {
         // TODO: return error if migration already exists.
         let path = self.config.migration_folder(&self.name);
         // TODO: this should use object store
-        let path_str = path.as_ref();
+        let path_str = &path;
         if std::path::Path::new(path_str).exists() {
             return Err(anyhow::anyhow!(
                 "folder for migration {:?} already exists, aborting.",
@@ -67,16 +65,13 @@ impl Migrator {
     ) -> Result<template::Generation> {
         let lock_file = if self.use_pinned {
             let path = self.config.migration_lock_file_path(&self.name);
-            Some(path.as_ref().to_string())
+            Some(path)
         } else {
             None
         };
 
-        // Create and set up the component loader
-        let fs: Box<dyn ObjectStore> = Box::new(LocalFileSystem::new_with_prefix(
-            self.config.spawn_folder_path().as_ref(),
-        )?);
-
+        check this let fs_service = opendal::services::Fs::default().root(self.config.spawn_folder_path());
+        let fs = opendal::Operator::new(fs_service)?.finish();
         template::generate(&self.config, lock_file, &self.name, variables, fs).await
     }
 }

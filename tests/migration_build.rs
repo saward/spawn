@@ -1,4 +1,3 @@
-use object_store::path::Path;
 use pretty_assertions::assert_eq;
 use spawn::cli::{run_cli, Cli, Commands, MigrationCommands, Outcome};
 use std::fs;
@@ -129,7 +128,7 @@ command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
             database: None,
             command: Some(Commands::Migration {
                 command: Some(MigrationCommands::Build {
-                    migration: Path::from(migration_name),
+                    migration: migration_name.to_string(),
                     pinned,
                     variables: None,
                 }),

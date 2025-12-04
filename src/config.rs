@@ -85,39 +85,54 @@ impl Config {
     }
 
     pub fn migrations_folder(&self) -> String {
-        self.spawn_folder_path().child("/migrations")
+        let mut s = self.spawn_folder_path().to_string();
+        s.push_str("/migrations");
+        s
     }
 
     pub fn tests_folder(&self) -> String {
-        self.spawn_folder_path().child("/tests")
+        let mut s = self.spawn_folder_path().to_string();
+        s.push_str("/tests");
+        s
     }
 
     pub fn migration_folder(&self, script_path: &str) -> String {
-        self.migrations_folder().child(script_path.as_ref())
+        let mut s = self.migrations_folder();
+        s.push('/');
+        s.push_str(script_path);
+        s
     }
 
     pub fn migration_script_file_path(&self, script_path: &str) -> String {
-        self.migration_folder(script_path).child("up.sql")
+        let mut s = self.migration_folder(script_path);
+        s.push_str("/up.sql");
+        s
     }
 
     pub fn test_folder(&self, test_path: &str) -> String {
-        self.tests_folder().child(test_path.as_ref())
+        let mut s = self.tests_folder();
+        s.push('/');
+        s.push_str(test_path);
+        s
     }
 
     pub fn test_file_path(&self, test_path: &str) -> String {
-        self.test_folder(test_path).child("test.sql")
+        let mut s = self.test_folder(test_path);
+        s.push_str("/test.sql");
+        s
     }
 
     pub fn migration_lock_file_path(&self, script_path: &str) -> String {
-        // Use object_store::Path for consistent path handling
-        self.migrations_folder()
-            .child(script_path.as_ref())
-            .child(PINFILE_LOCK_NAME)
+        let mut s = self.migrations_folder();
+        s.push('/');
+        s.push_str(script_path);
+        s.push('/');
+        s.push_str(PINFILE_LOCK_NAME);
+        s
     }
 
     pub fn load_lock_file(&self, lock_file_path: &str) -> Result<LockData> {
-        let path_str = lock_file_path.as_ref();
-        let contents = fs::read_to_string(path_str)?;
+        let contents = fs::read_to_string(lock_file_path)?;
         let lock_data: LockData = toml::from_str(&contents)?;
 
         Ok(lock_data)

@@ -6,8 +6,6 @@ use crate::store::Store;
 use crate::template;
 use crate::variables::Variables;
 use minijinja::Environment;
-use object_store::path::Path;
-use object_store::ObjectStore;
 
 use uuid::Uuid;
 
@@ -47,17 +45,17 @@ impl MiniJinjaLoader {
 pub async fn generate(
     cfg: &config::Config,
     lock_file: Option<String>,
-    name: &Path,
+    name: &str,
     variables: Option<Variables>,
-    fs: Box<dyn ObjectStore>,
+    fs: opendal::Operator,
 ) -> Result<Generation> {
     let pinner: Box<dyn Pinner> = if let Some(lock_file) = lock_file {
         let lock = cfg
-            .load_lock_file(&Path::from(lock_file))
+            .load_lock_file(&lock_file)
             .context("could not load pinned files lock file")?;
         let pinner = Spawn::new_with_root_hash(
-            cfg.pinned_folder().as_ref(),
-            cfg.components_folder().as_ref(),
+            &cfg.pinned_folder(),
+            &cfg.components_folder(),
             &lock.pin,
             &fs,
         )
@@ -75,7 +73,7 @@ pub async fn generate(
 }
 
 pub async fn generate_with_store(
-    name: &Path,
+    name: &str,
     variables: Option<Variables>,
     environment: &str,
     store: Store,

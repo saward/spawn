@@ -55,7 +55,7 @@ pub(crate) async fn pin_contents(
     let hash = format!("{:032x}", hash);
     let dir = format!("{}/{}", store_path, hash_to_path(&hash)?);
 
-    fs.write(dir, contents).await?;
+    fs.write(&dir, contents).await?;
 
     Ok(hash)
 }
@@ -161,29 +161,26 @@ pub(crate) async fn snapshot(fs: &Operator, store_path: &str) -> Result<String> 
 
 #[cfg(test)]
 mod tests {
-    use futures::StreamExt;
-    use object_store::local::LocalFileSystem;
-    use object_store::memory::InMemory;
+    use opendal::services::Memory as InMemory;
 
     use super::*;
 
+    #[cfg(test)]
     async fn populate_inmemory_from_object_store(
         source_store: &Operator,
-        target_store: &InMemory,
+        target_store: &Operator,
         prefix: &str,
     ) -> Result<()> {
-        let mut stream = source_store.list(Some(&prefix.into()));
+        let mut lister = source_store.lister(prefix).await?;
 
-        while let Some(meta) = stream.next().await {
-            let meta = meta?;
-            let object_path = &meta.location;
+        while let Some(entry) = lister.try_next().await? {
+            let object_path = entry.path();
 
             // Get the object data
-            let get_result = source_store.get(object_path).await?;
-            let bytes = get_result.bytes().await?;
+            let bytes = source_store.read(object_path).await?;
 
             // Store in target with the same path
-            target_store.put(object_path, bytes.into()).await?;
+            target_store.write(object_path, bytes).await?;
         }
 
         Ok(())
@@ -191,25 +188,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_snapshot() -> Result<()> {
-        // Simple test to ensure it runs without error.
-        let store_loc = "/store";
+        let store_loc = "store/";
 
-        let inmemory = InMemory::new();
+        let inmemory_service = InMemory::default();
+        let inmemory_op = Operator::new(inmemory_service)?.finish();
 
         // Create a LocalFileSystem to read from static/example
-        let source_store: Box<dyn ObjectStore> =
-            Box::new(LocalFileSystem::new_with_prefix("./static/example")?);
+        let fs_service = opendal::services::Fs::default().root("./static/example");
+        let source_store = Operator::new(fs_service)?.finish();
 
         // Populate the in-memory store with contents from static/example
-        populate_inmemory_from_object_store(&source_store, &inmemory, "").await?;
+        populate_inmemory_from_object_store(&source_store, &inmemory_op, "").await?;
 
-        let object_store: Box<dyn ObjectStore> = Box::new(inmemory);
-        let root = snapshot(&object_store, store_loc, "components").await?;
+        let root = snapshot(&inmemory_op, store_loc).await?;
         assert!(root.len() > 0);
         assert_eq!("cb59728fefa959672ef3c8c9f0b6df95", root);
 
         // Read and print the root level file
-        let root_content = read_hash_file(&object_store, store_loc, &root).await?;
+        let root_content = read_hash_file(&inmemory_op, store_loc, &root).await?;
 
         // Verify that the hash of the root content matches the snapshot hash
         let content_hash = format!(
