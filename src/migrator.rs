@@ -1,9 +1,9 @@
 use crate::config;
 use crate::template;
+use opendal::Operator;
 use std::fs;
 
 use anyhow::Result;
-use opendal;
 
 static BASE_MIGRATION: &str = "BEGIN;
 
@@ -18,14 +18,16 @@ pub struct Migrator {
     name: String,
     /// Whether to use pinned components
     use_pinned: bool,
+    operator: Operator,
 }
 
 impl Migrator {
-    pub fn new(config: &config::Config, name: &str, use_pinned: bool) -> Self {
+    pub fn new(config: &config::Config, operator: Operator, name: &str, use_pinned: bool) -> Self {
         Migrator {
             config: config.clone(),
             name: name.to_string(),
             use_pinned,
+            operator,
         }
     }
 
@@ -70,8 +72,13 @@ impl Migrator {
             None
         };
 
-        check this let fs_service = opendal::services::Fs::default().root(self.config.spawn_folder_path());
-        let fs = opendal::Operator::new(fs_service)?.finish();
-        template::generate(&self.config, lock_file, &self.name, variables, fs).await
+        template::generate(
+            &self.config,
+            lock_file,
+            &self.name,
+            variables,
+            &self.operator,
+        )
+        .await
     }
 }

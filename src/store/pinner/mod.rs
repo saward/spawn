@@ -6,6 +6,7 @@ use opendal::Operator;
 use serde::{Deserialize, Serialize};
 
 use futures::StreamExt;
+use std::fmt::Debug;
 use std::fs;
 use twox_hash::xxhash3_128;
 
@@ -13,7 +14,7 @@ pub mod latest;
 pub mod spawn;
 
 #[async_trait]
-pub trait Pinner: Send + Sync {
+pub trait Pinner: Debug + Send + Sync {
     async fn load(&self, name: &str, fs: &Operator) -> Result<Option<String>>;
     async fn snapshot(&mut self, fs: &Operator) -> Result<String>;
 

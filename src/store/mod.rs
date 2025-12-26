@@ -1,5 +1,6 @@
 use anyhow::Result;
 use opendal::Operator;
+use std::fmt::Debug;
 
 use crate::store::pinner::Pinner;
 
@@ -8,6 +9,15 @@ pub mod pinner;
 pub struct Store {
     pinner: Box<dyn Pinner>,
     fs: Operator,
+}
+
+impl Debug for Store {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Store")
+            .field("pinner", &self.pinner)
+            .field("fs", &self.fs)
+            .finish()
+    }
 }
 
 impl Store {

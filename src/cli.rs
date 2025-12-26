@@ -132,7 +132,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     let migration_name: String =
                         format!("{}-{}", chrono::Utc::now().format("%Y%m%d%H%M%S"), name);
                     println!("creating migration with name {}", &migration_name);
-                    let mg = Migrator::new(&main_config, &migration_name, false);
+                    let mg = Migrator::new(&main_config, fs, &migration_name, false);
 
                     Ok(Outcome::NewMigration(mg.create_migration()?))
                 }
@@ -154,7 +154,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     pinned,
                     variables,
                 }) => {
-                    let mgrtr = Migrator::new(&main_config, &migration, *pinned);
+                    let mgrtr = Migrator::new(&main_config, fs, &migration, *pinned);
                     match mgrtr.generate(variables.clone()).await {
                         Ok(result) => {
                             println!("{}", result.content);
@@ -178,7 +178,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     }
 
                     for migration in migrations {
-                        let mgrtr = Migrator::new(&main_config, &migration, *pinned);
+                        let mgrtr = Migrator::new(&main_config, fs.clone(), &migration, *pinned);
                         match mgrtr.generate(variables.clone()).await {
                             Ok(result) => {
                                 let engine = main_config.new_engine()?;
@@ -211,7 +211,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
         }
         Some(Commands::Test { command }) => match command {
             Some(TestCommands::Build { name }) => {
-                let config = Tester::new(&main_config, &name);
+                let config = Tester::new(&main_config, &fs, &name);
                 match config.generate(None).await {
                     Ok(result) => {
                         println!("{}", result);
@@ -222,7 +222,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                 Ok(Outcome::Unimplemented)
             }
             Some(TestCommands::Run { name }) => {
-                let config = Tester::new(&main_config, &name);
+                let config = Tester::new(&main_config, &fs, &name);
                 match config.run(None).await {
                     Ok(result) => {
                         println!("{}", result);
@@ -238,7 +238,6 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     None => {
                         let mut tests: Vec<String> = Vec::new();
                         let mut fs_lister = fs.lister(&main_config.tests_folder()).await?;
-                        let mut fs_paths: Vec<String> = Vec::new();
                         while let Some(entry) = fs_lister.try_next().await? {
                             let path = entry.path().to_string();
                             if path.ends_with("/") {
@@ -253,7 +252,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                 let mut failed = false;
 
                 for test_file in test_files {
-                    let config = Tester::new(&main_config, &test_file);
+                    let config = Tester::new(&main_config, &fs, &test_file);
 
                     match config.run_compare(None).await {
                         Ok(result) => match result.diff {
@@ -283,7 +282,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                 Ok(Outcome::Unimplemented)
             }
             Some(TestCommands::Expect { name }) => {
-                let tester = Tester::new(&main_config, &name);
+                let tester = Tester::new(&main_config, &fs, &name);
                 match tester.save_expected(None).await {
                     Ok(_) => (),
                     Err(e) => return Err(e),

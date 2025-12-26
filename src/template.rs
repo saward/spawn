@@ -7,6 +7,7 @@ use crate::template;
 use crate::variables::Variables;
 use minijinja::Environment;
 
+use opendal::Operator;
 use uuid::Uuid;
 
 use anyhow::{Context, Result};
@@ -47,7 +48,7 @@ pub async fn generate(
     lock_file: Option<String>,
     name: &str,
     variables: Option<Variables>,
-    fs: opendal::Operator,
+    fs: &Operator,
 ) -> Result<Generation> {
     let pinner: Box<dyn Pinner> = if let Some(lock_file) = lock_file {
         let lock = cfg
@@ -66,7 +67,7 @@ pub async fn generate(
         Box::new(pinner)
     };
 
-    let store = Store::new(pinner, fs)?;
+    let store = Store::new(pinner, fs.clone())?;
     let db_config = cfg.db_config()?;
 
     generate_with_store(name, variables, &db_config.environment, store).await
