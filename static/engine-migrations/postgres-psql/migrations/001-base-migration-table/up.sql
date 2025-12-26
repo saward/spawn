@@ -1,7 +1,7 @@
 CREATE SCHEMA IF NOT EXISTS {{schema}};
 
 CREATE TABLE IF NOT EXISTS {{schema}}.migration (
-    migration_id SERIAL PRIMARY KEY,
+    migration_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name VARCHAR(256),
     namespace TEXT NOT NULL DEFAULT 'default',
     CONSTRAINT name_namespace_uq UNIQUE (name, namespace)
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.status(
 );
 
 CREATE TABLE IF NOT EXISTS {{schema}}.migration_history (
-    migration_history_id SERIAL PRIMARY KEY,
+    migration_history_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     migration_id_migration BIGINT NOT NULL REFERENCES {{schema}}.migration (migration_id),
     activity_id_activity TEXT NOT NULL REFERENCES {{schema}}.activity (activity_id),
     created_by TEXT NOT NULL,
