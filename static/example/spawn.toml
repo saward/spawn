@@ -1,0 +1,3 @@
+db_connstring = "postgres://postgres:postgres@localhost:5432/postgres"
+spawn_folder = "./"
+psql_command = ["docker", "exec", "-i", "blhcdb", "psql", "-U", "postgres", "postgres"]

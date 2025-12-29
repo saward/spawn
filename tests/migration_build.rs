@@ -1,7 +1,8 @@
+use anyhow::Result;
+use opendal::services::Memory;
+use opendal::Operator;
 use pretty_assertions::assert_eq;
 use spawn::cli::{run_cli, Cli, Commands, MigrationCommands, Outcome};
-use std::fs;
-use tempfile::TempDir;
 use tokio;
 
 /// Expected default new migration content:
@@ -12,13 +13,13 @@ COMMIT;
 
 /// Reusable test helper structure for setting up migration tests
 pub struct MigrationTestHelper {
-    pub temp_dir: TempDir,
+    fs: Operator,
 }
 
 impl MigrationTestHelper {
     fn base_path(&self) -> String {
         // Returns static db folder:
-        format!("{}/db", self.temp_dir.path().display())
+        format!(".")
     }
 
     fn migrations_dir(&self) -> String {
@@ -44,20 +45,16 @@ impl MigrationTestHelper {
 
 impl MigrationTestHelper {
     /// Creates a new test environment with basic directory structure and config
-    pub fn new() -> Self {
-        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+    pub async fn new() -> Result<Self> {
+        let mem_service = Memory::default();
+        let mem_op = Operator::new(mem_service)?.finish();
 
-        let mth = Self { temp_dir };
-
-        // Create test directory structure
-        fs::create_dir_all(mth.migrations_dir()).expect("Failed to create migrations dir");
-        fs::create_dir_all(mth.components_dir()).expect("Failed to create components dir");
-        fs::create_dir_all(mth.tests_dir()).expect("Failed to create tests dir");
+        let mth = Self { fs: mem_op.clone() };
 
         // Create a test config file
         let config_content = format!(
             r#"
-spawn_folder = "{}/db"
+spawn_folder = "./db"
 database = "postgres_psql"
 
 [databases.postgres_psql]
@@ -65,11 +62,10 @@ spawn_database = "spawn"
 engine = "postgres-psql"
 command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
 "#,
-            mth.temp_dir.path().display(),
         );
-        fs::write(&mth.config_path(), config_content).expect("Failed to write config file");
+        mem_op.write(&mth.config_path(), config_content).await?;
 
-        mth
+        Ok(mth)
     }
 
     /// Creates a new migration using the CLI 'migration new' command
@@ -87,7 +83,7 @@ command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
         };
 
         // Run the CLI command to create migration
-        let outcome: Outcome = run_cli(cli).await?;
+        let outcome: Outcome = run_cli(cli, &self.fs).await?;
 
         // Find the created migration directory
         let name = match outcome {

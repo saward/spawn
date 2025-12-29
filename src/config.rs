@@ -1,6 +1,8 @@
 use crate::engine::{postgres_psql::PSQL, DatabaseConfig, Engine};
 use crate::pinfile::LockData;
 use anyhow::{anyhow, Context, Result};
+use config::FileSourceString;
+use opendal::Operator;
 use std::collections::HashMap;
 
 use std::fs;
@@ -54,11 +56,29 @@ impl Config {
 }
 
 impl Config {
-    pub fn load(path: &str, database: Option<String>) -> Result<Config> {
-        let settings: Config = config::Config::builder()
-            .add_source(config::File::with_name(path))
-            // Used to override the version in a repo with your own custom local overrides.
-            .add_source(config::File::with_name("spawn.override.toml").required(false))
+    pub async fn load(path: &str, op: &Operator, database: Option<String>) -> Result<Config> {
+        let bytes = op.read(path).await?.to_bytes();
+        let main_config = String::from_utf8(bytes.to_vec())?;
+        let source = config::File::from_str(&main_config, config::FileFormat::Toml);
+
+        let mut settings = config::Config::builder().add_source(source);
+
+        // Used to override the version in a repo.  For example, if you want to have your own local dev variables for testing reasons, that can be in .gitignore.
+        match op.read(path).await {
+            Ok(data) => {
+                let bytes = String::from_utf8(data.to_bytes().to_vec())?;
+                let override_config = config::File::from_str(&bytes, config::FileFormat::Toml);
+                settings = settings.add_source(override_config);
+            }
+            Err(e) => match e.kind() {
+                // If file not found, no override.  But any other failure is
+                // an error to attend to.
+                opendal::ErrorKind::NotFound => {}
+                _ => return Err(e.into()),
+            },
+        };
+
+        let settings = settings
             // Add in settings from the environment (with a prefix of APP)
             // Eg.. `APP_DEBUG=1 ./target/app` would set the `debug` key
             .add_source(config::Environment::with_prefix("SPAWN"))

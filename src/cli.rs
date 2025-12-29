@@ -110,13 +110,17 @@ pub enum Outcome {
     Unimplemented,
 }
 
-pub async fn run_cli(cli: Cli) -> Result<Outcome> {
+pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
     // Load config from file:
-    let mut main_config = Config::load(&cli.config_file, cli.database)
+    let fs: Operator;
+    let mut main_config = Config::load(&cli.config_file, &base_op, cli.database)
+        .await
         .context(format!("could not load config from {}", &cli.config_file,))?;
 
+    // Operator for
+    // Problem here: base op won't be set to the spawn folder path, because config may not be there.  And it can't be passed in to run_cli either because config dictates what it is.  I wonder if we can use an operator builder closure that we can call to get new fs setting root as main_config.spawn_folder_path(), and if that's not provided then we use whatever is specified in config, and if confit doesn't provide a preferred fs, then we default to local filesystem like below.  That way, tests can pass in an in memory closure.
     let fs_builder = Fs::default().root(main_config.spawn_folder_path());
-    let fs = Operator::new(fs_builder)?.finish();
+    fs = Operator::new(fs_builder)?.finish();
 
     match &cli.command {
         Some(Commands::Init) => {
