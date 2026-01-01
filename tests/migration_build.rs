@@ -1,4 +1,5 @@
 use anyhow::Result;
+use futures::TryStreamExt;
 use opendal::services::Memory;
 use opendal::Operator;
 use pretty_assertions::assert_eq;
@@ -83,7 +84,7 @@ command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
         };
 
         // Run the CLI command to create migration
-        let outcome: Outcome = run_cli(cli, &self.fs, None::<fn(&str) -> Result<Operator>>).await?;
+        let outcome: Outcome = run_cli(cli, &self.fs).await?;
 
         // Find the created migration directory
         let name = match outcome {
@@ -101,13 +102,13 @@ command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
     pub async fn create_migration_manual(
         &self,
         name: &str,
-        script_content: &str,
+        script_content: String,
     ) -> Result<String, anyhow::Error> {
         let migration_name = &self.create_migration(name).await?;
 
         // Replace the content of the migration file with the provided script content
         let migration_path = self.migration_script_path(&migration_name);
-        fs::write(&migration_path, script_content)?;
+        self.fs.write(&migration_path, script_content).await?;
 
         Ok(migration_name.clone())
     }
@@ -132,19 +133,29 @@ command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
             }),
         };
 
-        let _outcome: Outcome =
-            run_cli(cli, &self.fs, None::<fn(&str) -> Result<Operator>>).await?;
+        let _outcome: Outcome = run_cli(cli, &self.fs).await?;
 
         // Note: In a real implementation, you'd need to capture stdout
         // For now, we'll return a placeholder indicating success
         Ok("Migration built successfully".to_string())
+    }
+
+    pub async fn list_fs_contents(&self, label: &str) -> Result<()> {
+        let mut lister = self.fs.lister_with(".").recursive(true).await?;
+
+        println!("listing files for '{}'", label);
+        while let Some(entry) = lister.try_next().await? {
+            println!("found {}", entry.path());
+        }
+
+        Ok(())
     }
 }
 
 // Run a create migration test:
 #[tokio::test]
 async fn test_create_migration() -> Result<(), Box<dyn std::error::Error>> {
-    let helper = MigrationTestHelper::new();
+    let helper = MigrationTestHelper::new().await?;
 
     // Test that we can create a migration
     let migration_name = helper
@@ -152,8 +163,12 @@ async fn test_create_migration() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .expect("Failed to create migration with helper");
 
+    println!("migration name {}", migration_name);
+    helper.list_fs_contents("test_create_migration").await?;
+
     // Check that <migration folder>/up.sql exists:
     let script_path = format!("{}/{}/up.sql", helper.migrations_dir(), migration_name);
+    println!("checking for script at path {}", &script_path);
     assert!(
         std::path::Path::new(&script_path).exists(),
         "new migration script does not exist"
@@ -168,7 +183,7 @@ async fn test_create_migration() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_migration_build_basic() -> Result<(), Box<dyn std::error::Error>> {
-    let helper = MigrationTestHelper::new();
+    let helper = MigrationTestHelper::new().await?;
 
     // Create a simple migration script
     let script_content = r#"BEGIN;
@@ -183,7 +198,7 @@ CREATE TABLE users (
 // COMMIT;"#;
 
     let migration_name = helper
-        .create_migration_manual("test-migration-build-basic", script_content)
+        .create_migration_manual("test-migration-build-basic", script_content.to_string())
         .await?;
 
     // Build the migration

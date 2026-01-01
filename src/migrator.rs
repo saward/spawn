@@ -30,26 +30,19 @@ impl Migrator {
     }
 
     /// Creates the migration folder with blank setup.
-    pub fn create_migration(&self) -> Result<String> {
+    pub async fn create_migration(&self) -> Result<String> {
         // TODO: return error if migration already exists.
         let path = self.config.migration_folder(&self.name);
-        // TODO: this should use object store
-        let path_str = &path;
-        if std::path::Path::new(path_str).exists() {
-            return Err(anyhow::anyhow!(
-                "folder for migration {:?} already exists, aborting.",
-                path_str,
-            ));
-        }
-        fs::create_dir_all(path_str)?;
 
-        // Create our blank script file:
-        // TODO: use proper join/child here
-        let script_path = format!("{}/up.sql", path_str);
-        fs::write(&script_path, BASE_MIGRATION)?;
+        let script_path = format!("{}/up.sql", &path);
+        println!("creating migration at {}", &script_path);
+        self.config
+            .operator()
+            .write(&script_path, BASE_MIGRATION)
+            .await?;
 
         // TODO: change this to use filename from object store path object
-        let name = path_str
+        let name = script_path
             .split('/')
             .last()
             .ok_or(anyhow::anyhow!("couldn't find name for created migration"))?;

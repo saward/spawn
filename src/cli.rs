@@ -132,7 +132,7 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                     println!("creating migration with name {}", &migration_name);
                     let mg = Migrator::new(&main_config, &migration_name, false);
 
-                    Ok(Outcome::NewMigration(mg.create_migration()?))
+                    Ok(Outcome::NewMigration(mg.create_migration().await?))
                 }
                 Some(MigrationCommands::Pin { migration }) => {
                     let mut pinner = Spawn::new(
