@@ -66,7 +66,7 @@ pub async fn generate(
         Box::new(pinner)
     };
 
-    let store = Store::new(pinner, cfg.operator())?;
+    let store = Store::new(pinner, cfg.operator().clone())?;
     let db_config = cfg.db_config()?;
 
     generate_with_store(name, variables, &db_config.environment, store).await

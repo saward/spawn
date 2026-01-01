@@ -124,11 +124,11 @@ impl Config {
         Ok(config_loader.build(op.clone(), None))
     }
 
-    pub fn operator(&self) -> Operator {
+    pub fn operator(&self) -> &Operator {
         if let Some(spawn_fs) = &self.spawn_fs {
-            spawn_fs.clone()
+            &spawn_fs
         } else {
-            self.base_fs.clone()
+            &self.base_fs
         }
     }
 
