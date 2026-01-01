@@ -110,33 +110,11 @@ pub enum Outcome {
     Unimplemented,
 }
 
-// base_op provides us the operator where we can load the config from.  One day
-// we may wish to provide ways to auto update the config, so we don't pass the
-// config in directly.  Also, because the actual migration files data may be in
-// a different location to the config file, we have an optional second
-// fs_builder that will provide us an operator is not using local filesystem.
-pub async fn run_cli<F>(cli: Cli, base_op: &Operator, fs_builder: Option<F>) -> Result<Outcome>
-where
-    F: Fn(&str) -> Result<Operator>,
-{
+pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
     // Load config from file:
     let mut main_config = Config::load(&cli.config_file, &base_op, cli.database)
         .await
         .context(format!("could not load config from {}", &cli.config_file,))?;
-
-    // Create the main filesystem operator using one of three approaches:
-    // 1. From an optional closure passed in (allows tests to use in-memory filesystem)
-    // 2. From config specification (stub for future implementation)
-    // 3. Default to local filesystem
-    let fs: Operator = match fs_builder {
-        Some(builder) => builder(main_config.spawn_folder_path())?,
-        None => {
-            // TODO: Add config-specified filesystem builder here when designed
-            // For now, default to local filesystem
-            let fs_builder = Fs::default().root(main_config.spawn_folder_path());
-            Operator::new(fs_builder)?.finish()
-        }
-    };
 
     match &cli.command {
         Some(Commands::Init) => {
@@ -152,7 +130,7 @@ where
                     let migration_name: String =
                         format!("{}-{}", chrono::Utc::now().format("%Y%m%d%H%M%S"), name);
                     println!("creating migration with name {}", &migration_name);
-                    let mg = Migrator::new(&main_config, fs, &migration_name, false);
+                    let mg = Migrator::new(&main_config, &migration_name, false);
 
                     Ok(Outcome::NewMigration(mg.create_migration()?))
                 }
@@ -162,7 +140,7 @@ where
                         main_config.components_folder().as_ref(),
                     )?;
 
-                    let root = pinner.snapshot(&fs).await?;
+                    let root = pinner.snapshot(&main_config.operator()).await?;
                     let lock_file_path = main_config.migration_lock_file_path(&migration);
                     let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
                     fs::write(&lock_file_path, toml_str)?;
@@ -174,7 +152,7 @@ where
                     pinned,
                     variables,
                 }) => {
-                    let mgrtr = Migrator::new(&main_config, fs, &migration, *pinned);
+                    let mgrtr = Migrator::new(&main_config, &migration, *pinned);
                     match mgrtr.generate(variables.clone()).await {
                         Ok(result) => {
                             println!("{}", result.content);
@@ -198,7 +176,7 @@ where
                     }
 
                     for migration in migrations {
-                        let mgrtr = Migrator::new(&main_config, fs.clone(), &migration, *pinned);
+                        let mgrtr = Migrator::new(&main_config, &migration, *pinned);
                         match mgrtr.generate(variables.clone()).await {
                             Ok(result) => {
                                 let engine = main_config.new_engine()?;
@@ -231,7 +209,7 @@ where
         }
         Some(Commands::Test { command }) => match command {
             Some(TestCommands::Build { name }) => {
-                let config = Tester::new(&main_config, &fs, &name);
+                let config = Tester::new(&main_config, &name);
                 match config.generate(None).await {
                     Ok(result) => {
                         println!("{}", result);
@@ -242,7 +220,7 @@ where
                 Ok(Outcome::Unimplemented)
             }
             Some(TestCommands::Run { name }) => {
-                let config = Tester::new(&main_config, &fs, &name);
+                let config = Tester::new(&main_config, &name);
                 match config.run(None).await {
                     Ok(result) => {
                         println!("{}", result);
@@ -257,7 +235,10 @@ where
                     Some(name) => vec![name.clone()],
                     None => {
                         let mut tests: Vec<String> = Vec::new();
-                        let mut fs_lister = fs.lister(&main_config.tests_folder()).await?;
+                        let mut fs_lister = main_config
+                            .operator()
+                            .lister(&main_config.tests_folder())
+                            .await?;
                         while let Some(entry) = fs_lister.try_next().await? {
                             let path = entry.path().to_string();
                             if path.ends_with("/") {
@@ -272,7 +253,7 @@ where
                 let mut failed = false;
 
                 for test_file in test_files {
-                    let config = Tester::new(&main_config, &fs, &test_file);
+                    let config = Tester::new(&main_config, &test_file);
 
                     match config.run_compare(None).await {
                         Ok(result) => match result.diff {
@@ -302,7 +283,7 @@ where
                 Ok(Outcome::Unimplemented)
             }
             Some(TestCommands::Expect { name }) => {
-                let tester = Tester::new(&main_config, &fs, &name);
+                let tester = Tester::new(&main_config, &name);
                 match tester.save_expected(None).await {
                     Ok(_) => (),
                     Err(e) => return Err(e),

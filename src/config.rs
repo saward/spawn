@@ -1,7 +1,6 @@
 use crate::engine::{postgres_psql::PSQL, DatabaseConfig, Engine};
 use crate::pinfile::LockData;
 use anyhow::{anyhow, Context, Result};
-use config::FileSourceString;
 use opendal::Operator;
 use std::collections::HashMap;
 
@@ -11,13 +10,79 @@ use serde::{Deserialize, Serialize};
 
 static PINFILE_LOCK_NAME: &str = "lock.toml";
 
+// 1. The "Blueprint" struct. Use this for Deserialization.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ConfigLoader {
+    pub spawn_folder: String,
+    pub database: String,
+    pub environment: Option<String>,
+    pub databases: HashMap<String, DatabaseConfig>,
+}
+
+impl ConfigLoader {
+    // 2. A method to transform the Loader into the actual Config
+    pub fn build(self, base_fs: Operator, spawn_fs: Option<Operator>) -> Config {
+        Config {
+            spawn_folder: self.spawn_folder,
+            database: self.database,
+            environment: self.environment,
+            databases: self.databases,
+            base_fs,
+            spawn_fs,
+        }
+    }
+
+    pub async fn load(path: &str, op: &Operator, database: Option<String>) -> Result<ConfigLoader> {
+        let bytes = op.read(path).await?.to_bytes();
+        let main_config = String::from_utf8(bytes.to_vec())?;
+        let source = config::File::from_str(&main_config, config::FileFormat::Toml);
+
+        let mut settings = config::Config::builder().add_source(source);
+
+        // Used to override the version in a repo.  For example, if you want to have your own local dev variables for testing reasons, that can be in .gitignore.
+        match op.read(path).await {
+            Ok(data) => {
+                let bytes = String::from_utf8(data.to_bytes().to_vec())?;
+                let override_config = config::File::from_str(&bytes, config::FileFormat::Toml);
+                settings = settings.add_source(override_config);
+            }
+            Err(e) => match e.kind() {
+                // If file not found, no override.  But any other failure is
+                // an error to attend to.
+                opendal::ErrorKind::NotFound => {}
+                _ => return Err(e.into()),
+            },
+        };
+
+        let settings = settings
+            // Add in settings from the environment (with a prefix of APP)
+            // Eg.. `APP_DEBUG=1 ./target/app` would set the `debug` key
+            .add_source(config::Environment::with_prefix("SPAWN"))
+            .set_override_option("database", database)?
+            .set_default("environment", "prod")
+            .context("could not set default environment")?
+            .build()?
+            .try_deserialize()
+            .context("could not deserialise config struct")?;
+
+        Ok(settings)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Config {
     spawn_folder: String,
     pub database: String,
     pub environment: Option<String>, // Override the environment for the db config
-
     pub databases: HashMap<String, DatabaseConfig>,
+
+    // base_fs is the operator we used to load config, and may be the one we use
+    // for all other interactions too.
+    base_fs: Operator,
+    // spawn_fs, when set, is an operator that differs from the one we used to
+    // load the config.  Usually this will happen when our config file points to
+    // another filesystem/location that should be used for spawn.
+    spawn_fs: Option<Operator>,
 }
 
 impl Config {
@@ -53,43 +118,18 @@ impl Config {
 
         Ok(conf)
     }
-}
 
-impl Config {
     pub async fn load(path: &str, op: &Operator, database: Option<String>) -> Result<Config> {
-        let bytes = op.read(path).await?.to_bytes();
-        let main_config = String::from_utf8(bytes.to_vec())?;
-        let source = config::File::from_str(&main_config, config::FileFormat::Toml);
+        let config_loader = ConfigLoader::load(path, op, database).await?;
+        Ok(config_loader.build(op.clone(), None))
+    }
 
-        let mut settings = config::Config::builder().add_source(source);
-
-        // Used to override the version in a repo.  For example, if you want to have your own local dev variables for testing reasons, that can be in .gitignore.
-        match op.read(path).await {
-            Ok(data) => {
-                let bytes = String::from_utf8(data.to_bytes().to_vec())?;
-                let override_config = config::File::from_str(&bytes, config::FileFormat::Toml);
-                settings = settings.add_source(override_config);
-            }
-            Err(e) => match e.kind() {
-                // If file not found, no override.  But any other failure is
-                // an error to attend to.
-                opendal::ErrorKind::NotFound => {}
-                _ => return Err(e.into()),
-            },
-        };
-
-        let settings = settings
-            // Add in settings from the environment (with a prefix of APP)
-            // Eg.. `APP_DEBUG=1 ./target/app` would set the `debug` key
-            .add_source(config::Environment::with_prefix("SPAWN"))
-            .set_override_option("database", database)?
-            .set_default("environment", "prod")
-            .context("could not set default environment")?
-            .build()?
-            .try_deserialize()
-            .context("could not deserialise config struct")?;
-
-        Ok(settings)
+    pub fn operator(&self) -> Operator {
+        if let Some(spawn_fs) = &self.spawn_fs {
+            spawn_fs.clone()
+        } else {
+            self.base_fs.clone()
+        }
     }
 
     pub fn pinned_folder(&self) -> String {

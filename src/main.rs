@@ -11,7 +11,7 @@ async fn main() -> Result<()> {
     let service = Fs::default().root(".");
     let config_fs = Operator::new(service)?.finish();
 
-    let _outcome = run_cli(cli, &config_fs, None::<fn(&str) -> Result<Operator>>).await?;
+    let _outcome = run_cli(cli, &config_fs).await?;
 
     Ok(())
 }

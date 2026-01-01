@@ -4,7 +4,6 @@ use crate::template;
 use console::{style, Style};
 use opendal;
 
-use opendal::Operator;
 use similar::{ChangeTag, TextDiff};
 use std::fmt;
 use std::fs;
@@ -17,7 +16,6 @@ use anyhow::{Context, Result};
 pub struct Tester {
     config: config::Config,
     script_path: String,
-    fs: Operator,
 }
 
 #[derive(Debug)]
@@ -26,11 +24,10 @@ pub struct TestOutcome {
 }
 
 impl Tester {
-    pub fn new(config: &config::Config, fs: &Operator, script_path: &str) -> Self {
+    pub fn new(config: &config::Config, script_path: &str) -> Self {
         Tester {
             config: config.clone(),
             script_path: script_path.to_string(),
-            fs: fs.clone(),
         }
     }
 
@@ -68,14 +65,7 @@ impl Tester {
     pub async fn generate(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
         let lock_file = None;
 
-        let gen = template::generate(
-            &self.config,
-            lock_file,
-            &self.script_path,
-            variables,
-            &self.fs,
-        )
-        .await?;
+        let gen = template::generate(&self.config, lock_file, &self.script_path, variables).await?;
         let content = gen.content;
 
         Ok(content)

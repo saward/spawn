@@ -48,7 +48,6 @@ pub async fn generate(
     lock_file: Option<String>,
     name: &str,
     variables: Option<Variables>,
-    fs: &Operator,
 ) -> Result<Generation> {
     let pinner: Box<dyn Pinner> = if let Some(lock_file) = lock_file {
         let lock = cfg
@@ -58,7 +57,7 @@ pub async fn generate(
             &cfg.pinned_folder(),
             &cfg.components_folder(),
             &lock.pin,
-            &fs,
+            &cfg.operator(),
         )
         .await?;
         Box::new(pinner)
@@ -67,7 +66,7 @@ pub async fn generate(
         Box::new(pinner)
     };
 
-    let store = Store::new(pinner, fs.clone())?;
+    let store = Store::new(pinner, cfg.operator())?;
     let db_config = cfg.db_config()?;
 
     generate_with_store(name, variables, &db_config.environment, store).await

@@ -18,16 +18,14 @@ pub struct Migrator {
     name: String,
     /// Whether to use pinned components
     use_pinned: bool,
-    operator: Operator,
 }
 
 impl Migrator {
-    pub fn new(config: &config::Config, operator: Operator, name: &str, use_pinned: bool) -> Self {
+    pub fn new(config: &config::Config, name: &str, use_pinned: bool) -> Self {
         Migrator {
             config: config.clone(),
             name: name.to_string(),
             use_pinned,
-            operator,
         }
     }
 
@@ -72,13 +70,6 @@ impl Migrator {
             None
         };
 
-        template::generate(
-            &self.config,
-            lock_file,
-            &self.name,
-            variables,
-            &self.operator,
-        )
-        .await
+        template::generate(&self.config, lock_file, &self.name, variables).await
     }
 }
