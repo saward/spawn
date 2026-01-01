@@ -83,7 +83,7 @@ command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
         };
 
         // Run the CLI command to create migration
-        let outcome: Outcome = run_cli(cli, &self.fs).await?;
+        let outcome: Outcome = run_cli(cli, &self.fs, None::<fn(&str) -> Result<Operator>>).await?;
 
         // Find the created migration directory
         let name = match outcome {
@@ -132,7 +132,8 @@ command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
             }),
         };
 
-        let _outcome: Outcome = run_cli(cli).await?;
+        let _outcome: Outcome =
+            run_cli(cli, &self.fs, None::<fn(&str) -> Result<Operator>>).await?;
 
         // Note: In a real implementation, you'd need to capture stdout
         // For now, we'll return a placeholder indicating success

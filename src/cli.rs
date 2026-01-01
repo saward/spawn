@@ -110,20 +110,33 @@ pub enum Outcome {
     Unimplemented,
 }
 
-pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
+// base_op provides us the operator where we can load the config from.  One day
+// we may wish to provide ways to auto update the config, so we don't pass the
+// config in directly.  Also, because the actual migration files data may be in
+// a different location to the config file, we have an optional second
+// fs_builder that will provide us an operator is not using local filesystem.
+pub async fn run_cli<F>(cli: Cli, base_op: &Operator, fs_builder: Option<F>) -> Result<Outcome>
+where
+    F: Fn(&str) -> Result<Operator>,
+{
     // Load config from file:
-    let fs: Operator;
     let mut main_config = Config::load(&cli.config_file, &base_op, cli.database)
         .await
         .context(format!("could not load config from {}", &cli.config_file,))?;
 
-    // Problem here: base op won't be set to the spawn folder path, because config may not be there.  And it can't be passed in to run_cli either because config dictates what it is.  I wonder if we can use an operator builder closure that we can call to get new fs setting root as main_config.spawn_folder_path(), and if that's not provided then we use whatever is specified in config, and if confit doesn't provide a preferred fs, then we default to local filesystem like below.  That way, tests can pass in an in memory closure.
-    // In short, we want to support three ways to create the main operator:
-    // 1. From an Option closer passed in, that allows us to specify root folder and it returns the operator we need.
-    // 2. From something specified in config (for now, leave as a stub, that needs to be designed later).
-    // 3. Default to local fs, like below.
-    let fs_builder = Fs::default().root(main_config.spawn_folder_path());
-    fs = Operator::new(fs_builder)?.finish();
+    // Create the main filesystem operator using one of three approaches:
+    // 1. From an optional closure passed in (allows tests to use in-memory filesystem)
+    // 2. From config specification (stub for future implementation)
+    // 3. Default to local filesystem
+    let fs: Operator = match fs_builder {
+        Some(builder) => builder(main_config.spawn_folder_path())?,
+        None => {
+            // TODO: Add config-specified filesystem builder here when designed
+            // For now, default to local filesystem
+            let fs_builder = Fs::default().root(main_config.spawn_folder_path());
+            Operator::new(fs_builder)?.finish()
+        }
+    };
 
     match &cli.command {
         Some(Commands::Init) => {
