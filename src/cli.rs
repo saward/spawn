@@ -5,7 +5,6 @@ use crate::store::pinner::spawn::Spawn;
 use crate::variables::Variables;
 use crate::{config::Config, store::pinner::Pinner};
 use futures::TryStreamExt;
-use opendal::services::Fs;
 use opendal::Operator;
 use std::fs;
 
@@ -106,6 +105,7 @@ pub enum TestCommands {
 
 pub enum Outcome {
     NewMigration(String),
+    BuiltMigration { content: String },
     AppliedMigrations,
     Unimplemented,
 }
@@ -154,13 +154,11 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                 }) => {
                     let mgrtr = Migrator::new(&main_config, &migration, *pinned);
                     match mgrtr.generate(variables.clone()).await {
-                        Ok(result) => {
-                            println!("{}", result.content);
-                            ()
-                        }
+                        Ok(result) => Ok(Outcome::BuiltMigration {
+                            content: result.content,
+                        }),
                         Err(e) => return Err(e),
-                    };
-                    Ok(Outcome::Unimplemented)
+                    }
                 }
                 Some(MigrationCommands::Apply {
                     migration,

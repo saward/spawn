@@ -32,8 +32,6 @@ impl Store {
     }
 
     pub async fn load_migration(&self, name: &str) -> Result<String> {
-        // Append the migration folder name to the path:
-        let name = format!("migrations/{}", name.to_string());
         let result = self.fs.read(&name).await?;
         let bytes = result.to_bytes();
         let contents = String::from_utf8(bytes.to_vec())?;

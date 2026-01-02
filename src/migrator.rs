@@ -56,7 +56,8 @@ impl Migrator {
         } else {
             None
         };
-
-        template::generate(&self.config, lock_file, &self.name, variables).await
+        let script_path = &self.config.migration_script_file_path(&self.name);
+        println!("generate script path: {}", script_path);
+        template::generate(&self.config, lock_file, script_path, variables).await
     }
 }

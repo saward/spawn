@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures::TryStreamExt;
 use opendal::services::Memory;
 use opendal::Operator;
@@ -91,10 +91,10 @@ command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
         script_content: String,
     ) -> Result<String, anyhow::Error> {
         let migration_name = &self.create_migration(name).await?;
+        let cfg = self.load_config().await?;
 
         // Replace the content of the migration file with the provided script content
-        // let migration_path = self.migration_script_path(&migration_name);
-        let migration_path = "broken by design";
+        let migration_path = cfg.migration_script_file_path(&migration_name);
         self.fs.write(&migration_path, script_content).await?;
 
         Ok(migration_name.clone())
@@ -120,11 +120,12 @@ command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
             }),
         };
 
-        let _outcome: Outcome = run_cli(cli, &self.fs).await?;
+        let outcome: Outcome = run_cli(cli, &self.fs).await?;
 
-        // Note: In a real implementation, you'd need to capture stdout
-        // For now, we'll return a placeholder indicating success
-        Ok("Migration built successfully".to_string())
+        match outcome {
+            Outcome::BuiltMigration { content } => Ok(content),
+            _ => Err(anyhow::anyhow!("Unexpected outcome")),
+        }
     }
 
     pub async fn list_fs_contents(&self, label: &str) -> Result<()> {
@@ -151,7 +152,6 @@ async fn test_create_migration() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .expect("Failed to create migration with helper");
 
-    helper.list_fs_contents("test_create_migration").await?;
     let cfg = helper.load_config().await?;
 
     // Check that <migration folder>/up.sql exists:
@@ -165,29 +165,29 @@ async fn test_create_migration() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// #[tokio::test]
-// async fn test_migration_build_basic() -> Result<(), Box<dyn std::error::Error>> {
-//     let helper = MigrationTestHelper::new().await?;
+#[tokio::test]
+async fn test_migration_build_basic() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new().await?;
 
-//     // Create a simple migration script
-//     let script_content = r#"BEGIN;
+    // Create a simple migration script
+    let script_content = r#"BEGIN;
 
-// CREATE TABLE users (
-//     id SERIAL PRIMARY KEY,
-//     name VARCHAR(255) NOT NULL,
-//     email VARCHAR(255) UNIQUE NOT NULL,
-//     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-// );
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-// // COMMIT;"#;
+COMMIT;"#;
 
-//     let migration_name = helper
-//         .create_migration_manual("test-migration-build-basic", script_content.to_string())
-//         .await?;
+    let migration_name = helper
+        .create_migration_manual("test-migration-build-basic", script_content.to_string())
+        .await?;
 
-//     // Build the migration
-//     let result = helper.build_migration(&migration_name, false).await;
-//     assert!(result.is_ok());
+    // Build the migration
+    let built = helper.build_migration(&migration_name, false).await?;
+    assert_eq!(script_content, built);
 
-//     Ok(())
-// }
+    Ok(())
+}

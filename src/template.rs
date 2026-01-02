@@ -59,15 +59,19 @@ pub async fn generate(
             &lock.pin,
             &cfg.operator(),
         )
-        .await?;
+        .await
+        .context("could not get new root with hash")?;
         Box::new(pinner)
     } else {
         let pinner = Latest::new()?;
         Box::new(pinner)
     };
 
-    let store = Store::new(pinner, cfg.operator().clone())?;
-    let db_config = cfg.db_config()?;
+    let store = Store::new(pinner, cfg.operator().clone())
+        .context("could not create new store for generate")?;
+    let db_config = cfg
+        .db_config()
+        .context("could not get db config for generate")?;
 
     generate_with_store(name, variables, &db_config.environment, store).await
 }
@@ -79,7 +83,10 @@ pub async fn generate_with_store(
     store: Store,
 ) -> Result<Generation> {
     // Read contents from our object store first:
-    let contents = store.load_migration(name).await?;
+    let contents = store
+        .load_migration(name)
+        .await
+        .context("generate_with_store could not read migration")?;
 
     // Create template environment
     let mut env = template::template_env(store)?;
