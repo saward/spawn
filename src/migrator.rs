@@ -41,13 +41,7 @@ impl Migrator {
             .write(&script_path, BASE_MIGRATION)
             .await?;
 
-        // TODO: change this to use filename from object store path object
-        let name = script_path
-            .split('/')
-            .last()
-            .ok_or(anyhow::anyhow!("couldn't find name for created migration"))?;
-
-        Ok(name.to_string())
+        Ok(self.name.to_string())
     }
 
     /// Opens the specified script file and generates a migration script, compiled
