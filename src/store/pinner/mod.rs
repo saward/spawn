@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use futures::StreamExt;
 use std::fmt::Debug;
-use std::fs;
 use twox_hash::xxhash3_128;
 
 pub mod latest;
@@ -39,12 +38,6 @@ pub struct Entry {
     pub kind: EntryKind,
     pub hash: String,
     pub name: String,
-}
-
-pub(crate) async fn pin_file(fs: &Operator, store_path: &str, file_path: &str) -> Result<String> {
-    let contents = fs::read_to_string(file_path)?;
-
-    pin_contents(fs, store_path, contents).await
 }
 
 pub(crate) async fn pin_contents(

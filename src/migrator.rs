@@ -1,7 +1,5 @@
 use crate::config;
 use crate::template;
-use opendal::Operator;
-use std::fs;
 
 use anyhow::Result;
 

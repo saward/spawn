@@ -2,7 +2,6 @@ use crate::config;
 use crate::engine::EngineOutputter;
 use crate::template;
 use console::{style, Style};
-use opendal;
 
 use similar::{ChangeTag, TextDiff};
 use std::fmt;

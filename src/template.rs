@@ -7,7 +7,6 @@ use crate::template;
 use crate::variables::Variables;
 use minijinja::Environment;
 
-use opendal::Operator;
 use uuid::Uuid;
 
 use anyhow::{Context, Result};
@@ -53,14 +52,9 @@ pub async fn generate(
         let lock = cfg
             .load_lock_file(&lock_file)
             .context("could not load pinned files lock file")?;
-        let pinner = Spawn::new_with_root_hash(
-            &cfg.pinned_folder(),
-            &cfg.components_folder(),
-            &lock.pin,
-            &cfg.operator(),
-        )
-        .await
-        .context("could not get new root with hash")?;
+        let pinner = Spawn::new_with_root_hash(&cfg.pinned_folder(), &lock.pin, &cfg.operator())
+            .await
+            .context("could not get new root with hash")?;
         Box::new(pinner)
     } else {
         let pinner = Latest::new()?;

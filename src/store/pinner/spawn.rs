@@ -9,15 +9,13 @@ use std::collections::HashMap;
 pub struct Spawn {
     files: Option<HashMap<String, String>>,
     store_path: String,
-    source_path: String,
 }
 
 impl Spawn {
-    pub fn new(store_path: &str, source_path: &str) -> Result<Self> {
+    pub fn new(store_path: &str) -> Result<Self> {
         let store = Self {
             files: None,
             store_path: store_path.to_string(),
-            source_path: source_path.to_string(),
         };
 
         Ok(store)
@@ -25,7 +23,6 @@ impl Spawn {
 
     pub async fn new_with_root_hash(
         store_path: &str,
-        source_path: &str,
         root_hash: &str,
         object_store: &Operator,
     ) -> Result<Self> {
@@ -35,7 +32,6 @@ impl Spawn {
         let store = Self {
             files: Some(files),
             store_path: store_path.to_string(),
-            source_path: source_path.to_string(),
         };
 
         Ok(store)

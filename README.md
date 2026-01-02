@@ -168,3 +168,7 @@ Here are some of my design goals with spawn:
 - [ ] Provide a way to import data from other sources? E.g., from a URL or script. Need to consider security implications.
 - [ ] Handle secrets.
 - [ ] Custom plugins or extensions.
+
+# Testing
+
+As we are using opendal for the filesystem, we can take advantage of its memory storage to run our tests. Therefore, a lot of tests will involve creating files within the memory storage, and inspecting it there, and also have automatic cleanup at the end.

@@ -135,10 +135,7 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                     Ok(Outcome::NewMigration(mg.create_migration().await?))
                 }
                 Some(MigrationCommands::Pin { migration }) => {
-                    let mut pinner = Spawn::new(
-                        main_config.pinned_folder().as_ref(),
-                        main_config.components_folder().as_ref(),
-                    )?;
+                    let mut pinner = Spawn::new(main_config.pinned_folder().as_ref())?;
 
                     let root = pinner.snapshot(&main_config.operator()).await?;
                     let lock_file_path = main_config.migration_lock_file_path(&migration);
