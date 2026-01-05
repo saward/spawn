@@ -185,6 +185,7 @@ impl PSQL {
         &self,
         migration_name: &str,
         migration_sql: &str,
+        pin_hash: &str,
     ) -> Result<()> {
         // Apply the migration
         let formatted_sql = migration_sql.replace("{schema}", &self.spawn_schema);
@@ -208,7 +209,8 @@ INSERT INTO {}.migration_history (
     status_note,
     status_id_status,
     checksum,
-    execution_time
+    execution_time,
+    pin_hash
 )
 SELECT
     migration_id,
@@ -218,6 +220,7 @@ SELECT
     '',
     'SUCCESS',
     '{}',
+    {},
     {}
 FROM {}.migration
 WHERE name = '{}' AND namespace = 'spawn';
@@ -228,7 +231,8 @@ WHERE name = '{}' AND namespace = 'spawn';
             checksum,
             format!("INTERVAL '{} second'", duration),
             &self.spawn_schema,
-            &migration_name
+            &migration_name,
+            &pin_hash,
         );
 
         self.execute_sql(&record_sql, None)?;

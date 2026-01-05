@@ -170,10 +170,11 @@ mod tests {
     async fn populate_store_from_store(
         source_store: &Operator,
         target_store: &Operator,
-        prefix: &str,
+        source_prefix: &str,
+        dest_prefix: &str,
     ) -> Result<()> {
         let mut lister = source_store
-            .lister_with(prefix)
+            .lister_with(source_prefix)
             .recursive(true)
             .await
             .context("lister call")?;
@@ -190,18 +191,19 @@ mod tests {
 
         for entry in list_result {
             // Print out the file we're writing:
-            println!("Writing {}", entry.path());
-            let object_path = entry.path();
+            let dest_object_path = format!("{}{}", dest_prefix, entry.path());
+            let source_object_path = entry.path();
+            println!("Writing {} to {}", &source_object_path, &dest_object_path);
 
             // Get the object data
             let bytes = source_store
-                .read(object_path)
+                .read(&source_object_path)
                 .await
-                .context(format!("read path {}", &object_path))?;
+                .context(format!("read path {}", &source_object_path))?;
 
             // Store in target with the same path
             target_store
-                .write(object_path, bytes)
+                .write(&dest_object_path, bytes)
                 .await
                 .context("write")?;
         }
@@ -225,7 +227,7 @@ mod tests {
         let source_store = Operator::new(fs_service).context("new operator")?.finish();
 
         // Populate the in-memory store with contents from static/example
-        populate_store_from_store(&source_store, &dest_op, "")
+        populate_store_from_store(&source_store, &dest_op, "", "")
             .await
             .context("call to populate memory fs from object store")?;
 

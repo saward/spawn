@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.migration_history (
     status_note TEXT NOT NULL,
     status_id_status TEXT NOT NULL REFERENCES {{schema}}.status (status_id),
     checksum BYTEA NOT NULL,
+    pin_hash TEXT,
     execution_time interval NOT NULL
 );
 

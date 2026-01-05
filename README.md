@@ -108,6 +108,7 @@ Here are some of my design goals with spawn:
 - [ ] Repeatable migrations, including hashing the output (with variables perhaps) to check if it's been applied yet, and apply it if not.
 - [ ] Migration dependencies, so that we can allow applying migrations out of order, but only if their dependencies have been applied.
 - [ ] Mark a migration as draft, so it does not yet get applied to database.
+- [ ] Allow advanced scripts that can run arbitrary commands at points within the migration to, e.g., update or pull from an external data source before proceeding further?
 
 ### Database Interaction & Safety
 
@@ -130,6 +131,7 @@ Here are some of my design goals with spawn:
 - [ ] `spawn pin report --unused`: Scan the `/pinned` folder to find component objects no longer referenced by any migration, allowing for safe cleanup.
 - [ ] `spawn pin validate`: Verify the integrity of all pinned objects, ensuring every object referenced in a migration's `lock.toml` exists and has the correct hash.
 - [ ] Report on which components have changes that have never been included in a migration. Basically, check for the hash of that component and see if it's in any lock files, and if the migration includes that file in its SQL.
+- [ ] Allow specifying per-env pin requirements. Not required, prompt, and required.
 
 ### Testing
 
