@@ -107,9 +107,7 @@ pub async fn populate_store_from_store(
         .context("lister call")?;
     let mut list_result: Vec<opendal::Entry> = Vec::new();
 
-    println!("Trying to write all");
     while let Some(entry) = lister.try_next().await? {
-        println!("found {}", entry.path());
         if entry.path().ends_with("/") {
             continue;
         }
@@ -120,7 +118,6 @@ pub async fn populate_store_from_store(
         // Print out the file we're writing:
         let dest_object_path = format!("{}{}", dest_prefix, entry.path());
         let source_object_path = entry.path();
-        println!("Writing {} to {}", &source_object_path, &dest_object_path);
 
         // Get the object data
         let bytes = source_store

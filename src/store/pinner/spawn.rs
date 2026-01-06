@@ -2,47 +2,41 @@ use super::Pinner;
 use anyhow::Result;
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
-use futures::TryStreamExt;
 use opendal::Operator;
 use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct Spawn {
     files: Option<HashMap<String, String>>,
-    store_path: String,
+    pin_path: String,
+    source_path: String,
 }
 
 impl Spawn {
-    pub fn new(store_path: &str) -> Result<Self> {
+    pub fn new(pin_path: String, source_path: String) -> Result<Self> {
         let store = Self {
             files: None,
-            store_path: store_path.to_string(),
+            pin_path,
+            source_path,
         };
 
         Ok(store)
     }
 
     pub async fn new_with_root_hash(
-        store_path: &str,
+        pin_path: String,
+        source_path: String,
         root_hash: &str,
         object_store: &Operator,
     ) -> Result<Self> {
         let mut files = HashMap::new();
-        Self::read_root_hash(object_store, store_path, &mut files, "", root_hash).await?;
+        Self::read_root_hash(object_store, &pin_path, &mut files, "", root_hash).await?;
 
         let store = Self {
             files: Some(files),
-            store_path: store_path.to_string(),
+            pin_path: pin_path.clone(),
+            source_path,
         };
-
-        // Print out files in object store:
-        let mut lister = object_store.lister_with(".").recursive(true).await?;
-
-        println!("listing files for store path '{}'", store_path);
-        while let Some(entry) = lister.try_next().await? {
-            let file_data = object_store.read(&entry.path()).await?.to_bytes();
-            println!("(len {}). found {}", file_data.len(), entry.path());
-        }
 
         Ok(store)
     }
@@ -59,7 +53,7 @@ impl Spawn {
             .context("cannot read root file")?;
         let tree: super::Tree = toml::from_str(&contents).context("failed to parse tree TOML")?;
 
-        for entry in tree.entries {
+        for (_, entry) in tree.entries.iter().enumerate() {
             match entry.kind {
                 super::EntryKind::Blob => {
                     let full_name = if base_path.is_empty() {
@@ -117,6 +111,6 @@ impl Pinner for Spawn {
     }
 
     async fn snapshot(&mut self, object_store: &Operator) -> Result<String> {
-        super::snapshot(object_store, &self.store_path, &self.components_folder()).await
+        super::snapshot(object_store, &self.pin_path, &self.source_path).await
     }
 }

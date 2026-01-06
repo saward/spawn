@@ -5,7 +5,6 @@ use opendal::Operator;
 
 use serde::{Deserialize, Serialize};
 
-use futures::StreamExt;
 use std::fmt::Debug;
 use twox_hash::xxhash3_128;
 
@@ -16,10 +15,6 @@ pub mod spawn;
 pub trait Pinner: Debug + Send + Sync {
     async fn load(&self, name: &str, fs: &Operator) -> Result<Option<String>>;
     async fn snapshot(&mut self, fs: &Operator) -> Result<String>;
-
-    fn components_folder(&self) -> &'static str {
-        "components"
-    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -78,10 +73,13 @@ pub(crate) async fn read_hash_file(fs: &Operator, base_path: &str, hash: &str) -
 
 /// Walks through objects in an ObjectStore, creating pinned entries as appropriate for every
 /// directory and file.  Returns a hash of the object.
-pub(crate) async fn snapshot(fs: &Operator, store_path: &str, prefix: &str) -> Result<String> {
-    // list_with_delimiter seems to return only immediate children objects and
-    // folders, rather than every subfolder.  It behaves more like a directory
-    // walk than a full list of all nested folders and objects like list.
+pub(crate) async fn snapshot(fs: &Operator, store_path: &str, mut prefix: &str) -> Result<String> {
+    let fixed;
+    if !prefix.ends_with("/") {
+        fixed = format!("{}/", prefix);
+        prefix = &fixed;
+    }
+
     let mut fs_lister = fs.lister(prefix).await?;
     let mut list_result: Vec<opendal::Entry> = Vec::new();
     while let Some(entry) = fs_lister.try_next().await? {
@@ -91,14 +89,12 @@ pub(crate) async fn snapshot(fs: &Operator, store_path: &str, prefix: &str) -> R
         list_result.push(entry);
     }
 
-    let mut tree = Tree::default();
     let mut entries = Vec::new();
 
     for entry in list_result {
         match entry.path().ends_with("/") {
             true => {
                 // Folder
-                println!("new prefix: {}, current prefix: {}", entry.path(), prefix);
                 let branch = Box::pin(snapshot(fs, store_path, entry.path()))
                     .await
                     .context("failed to snapshot subfolder")?;
@@ -116,24 +112,9 @@ pub(crate) async fn snapshot(fs: &Operator, store_path: &str, prefix: &str) -> R
                 ));
             }
             false => {
-                // File
-                // Stream-based hashing to avoid loading large files into memory
-                let object_result = fs
-                    .reader(entry.path())
-                    .await
-                    .context("could not get reader for file")?;
-
-                println!("Snapshotting {}", entry.path());
-
-                let mut reader = object_result.into_stream(0..).await?;
-                let mut hasher = xxhash3_128::Hasher::new();
-
-                while let Some(chunk) = reader.next().await {
-                    let chunk = chunk.context("failed to read chunk from object stream")?;
-                    hasher.write(&chunk.to_bytes());
-                }
-
-                let hash = format!("{:032x}", hasher.finish_128());
+                let contents = fs.read(entry.path()).await?;
+                let contents = String::from_utf8(contents.to_bytes().to_vec())?;
+                let hash = pin_contents(fs, store_path, contents).await?;
 
                 entries.push((
                     entry.name().to_string(),
@@ -149,6 +130,7 @@ pub(crate) async fn snapshot(fs: &Operator, store_path: &str, prefix: &str) -> R
 
     // Sort entries by name for consistent ordering, and then return a hash for
     // this node.
+    let mut tree = Tree::default();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
     tree.entries = entries.into_iter().map(|(_, entry)| entry).collect();
 
@@ -174,15 +156,7 @@ mod tests {
 
         let store_loc = "store/";
         let root = snapshot(&dest_op, store_loc, "components/").await?;
-        let mut lister = dest_op
-            .lister_with("store/")
-            .recursive(true)
-            .await
-            .context("lister call")?;
 
-        while let Some(entry) = lister.try_next().await? {
-            println!("in in memory found {}", entry.path());
-        }
         assert!(root.len() > 0);
         assert_eq!("cb59728fefa959672ef3c8c9f0b6df95", root);
 

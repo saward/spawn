@@ -4,8 +4,6 @@ use anyhow::{anyhow, Context, Result};
 use opendal::Operator;
 use std::collections::HashMap;
 
-use std::fs;
-
 use serde::{Deserialize, Serialize};
 
 static PINFILE_LOCK_NAME: &str = "lock.toml";

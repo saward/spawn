@@ -42,7 +42,7 @@ impl MigrationTestHelper {
 
     pub async fn new_from_local_folder(folder: &str) -> Result<Self> {
         let mem_op =
-            store::disk_to_operator(folder, Some("./db/"), store::DesiredOperator::Memory).await?;
+            store::disk_to_operator(folder, Some("/db/"), store::DesiredOperator::Memory).await?;
 
         Self::new_from_operator(mem_op).await
     }
@@ -53,7 +53,7 @@ impl MigrationTestHelper {
         // Create a test config file
         let config_content = format!(
             r#"
-    spawn_folder = "./db"
+    spawn_folder = "/db"
     database = "postgres_psql"
 
     [databases.postgres_psql]
@@ -230,7 +230,8 @@ COMMIT;"#;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_migration_build_with_component() -> Result<(), Box<dyn std::error::Error>> {
-    let helper = MigrationTestHelper::new_from_local_folder("./static/example").await?;
+    let helper =
+        MigrationTestHelper::new_from_local_folder("./static/tests/build_with_component").await?;
 
     let migration_name = "20240907212659-initial";
     let expected = concat!(
@@ -259,8 +260,50 @@ COMMIT;"#
     // Pin, and try again:
     let pin_hash = helper.pin_migration(migration_name).await?;
     println!("pinned with hash {}", pin_hash);
+
+    // Now, if we change the contents of util.sql, that should not affect
+    // our output.  Replace with new function:
+    let new_add_func = concat!(
+        r#"CREATE OR REPLACE FUNCTION add_three_numbers(a NUMERIC, b NUMERIC, c NUMERIC)
+RETURNS NUMERIC AS $$
+BEGIN
+    RETURN a + b + c;
+END;
+$$ LANGUAGE plpgsql;"#
+    );
+
+    helper
+        .fs
+        .write("/db/components/util/add_func.sql", new_add_func)
+        .await?;
+
+    // Verify that building migration using pinned components, we get the
+    // same expedcted back.
     let built = helper.build_migration(&migration_name, true).await?;
     assert_eq!(expected, built);
+
+    // But using the unpinned version should use the new function:
+    let expected_new = concat!(
+        r#"BEGIN;
+-- Created by"#,
+        " \n",
+        r#"-- Environment: dev
+
+
+-- uuid var: 9cf58fa3-ed23-5cf3-986c-bb1b76f74b2e
+
+CREATE OR REPLACE FUNCTION add_three_numbers(a NUMERIC, b NUMERIC, c NUMERIC)
+RETURNS NUMERIC AS $$
+BEGIN
+    RETURN a + b + c;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMIT;"#
+    );
+
+    let built = helper.build_migration(&migration_name, false).await?;
+    assert_eq!(expected_new, built);
 
     Ok(())
 }
