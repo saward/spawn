@@ -11,7 +11,6 @@ pub mod pinner;
 pub struct Store {
     pinner: Box<dyn Pinner>,
     fs: Operator,
-    spawn_folder: String,
 }
 
 impl Debug for Store {
@@ -24,7 +23,7 @@ impl Debug for Store {
 }
 
 impl Store {
-    pub fn new(pinner: Box<dyn Pinner>, fs: Operator, spawn_folder: &str) -> Result<Store> {
+    pub fn new(pinner: Box<dyn Pinner>, fs: Operator) -> Result<Store> {
         // We need subdirectory passed in, because we can't guarantee that
         // operator is set to the root spawn folder.  The reason why operator
         // isn't guaranteed is because doing so made it tricky to implement
@@ -34,11 +33,7 @@ impl Store {
         // opendal one day supports the ability to get a new operator from
         // an old, with a new root set, that will solve issue.  RFC:
         // https://github.com/apache/opendal/blob/main/core/core/src/docs/rfcs/3197_config.md
-        Ok(Store {
-            pinner,
-            fs,
-            spawn_folder: spawn_folder.to_string(),
-        })
+        Ok(Store { pinner, fs })
     }
 
     pub async fn load_component(&self, name: &str) -> Result<Option<String>> {

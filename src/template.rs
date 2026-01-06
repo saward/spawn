@@ -68,7 +68,7 @@ pub async fn generate(
         Box::new(pinner)
     };
 
-    let store = Store::new(pinner, cfg.operator().clone(), cfg.spawn_folder_path())
+    let store = Store::new(pinner, cfg.operator().clone())
         .context("could not create new store for generate")?;
     let db_config = cfg
         .db_config()
