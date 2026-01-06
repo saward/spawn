@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::TryStreamExt;
 use opendal::services::Memory;
 use opendal::Operator;
@@ -6,6 +6,7 @@ use pretty_assertions::assert_eq;
 use spawn::{
     cli::{run_cli, Cli, Commands, MigrationCommands, Outcome},
     config::Config,
+    store,
 };
 use tokio;
 
@@ -31,26 +32,37 @@ impl MigrationTestHelper {
         Config::load(&self.config_path(), &self.fs, None).await
     }
 
-    /// Creates a new test environment with basic directory structure and config
-    pub async fn new() -> Result<Self> {
+    /// Creates a new test environment with no data
+    pub async fn new_empty() -> Result<Self> {
         let mem_service = Memory::default();
         let mem_op = Operator::new(mem_service)?.finish();
 
-        let mth = Self { fs: mem_op.clone() };
+        Self::new_from_operator(mem_op).await
+    }
+
+    pub async fn new_from_local_folder(folder: &str) -> Result<Self> {
+        let mem_op =
+            store::disk_to_operator(folder, Some("./db/"), store::DesiredOperator::Memory).await?;
+
+        Self::new_from_operator(mem_op).await
+    }
+
+    pub async fn new_from_operator(op: Operator) -> Result<Self> {
+        let mth = Self { fs: op };
 
         // Create a test config file
         let config_content = format!(
             r#"
-spawn_folder = "./db"
-database = "postgres_psql"
+    spawn_folder = "./db"
+    database = "postgres_psql"
 
-[databases.postgres_psql]
-spawn_database = "spawn"
-engine = "postgres-psql"
-command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
-"#,
+    [databases.postgres_psql]
+    spawn_database = "spawn"
+    engine = "postgres-psql"
+    command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
+    "#,
         );
-        mem_op.write(&mth.config_path(), config_content).await?;
+        mth.fs.write(&mth.config_path(), config_content).await?;
 
         Ok(mth)
     }
@@ -128,6 +140,30 @@ command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
         }
     }
 
+    /// Pins a migration
+    pub async fn pin_migration(&self, migration_name: &str) -> Result<String, anyhow::Error> {
+        let cli = Cli {
+            debug: false,
+            config_file: self.config_path(),
+            database: None,
+            command: Some(Commands::Migration {
+                command: Some(MigrationCommands::Pin {
+                    migration: migration_name.to_string(),
+                }),
+                environment: None,
+            }),
+        };
+
+        let outcome: Outcome = run_cli(cli, &self.fs)
+            .await
+            .context("error calling pin_migration")?;
+
+        match outcome {
+            Outcome::PinnedMigration { hash } => Ok(hash),
+            _ => Err(anyhow::anyhow!("Unexpected outcome")),
+        }
+    }
+
     pub async fn list_fs_contents(&self, label: &str) -> Result<()> {
         let mut lister = self.fs.lister_with(".").recursive(true).await?;
 
@@ -144,7 +180,7 @@ command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
 // Run a create migration test:
 #[tokio::test]
 async fn test_create_migration() -> Result<(), Box<dyn std::error::Error>> {
-    let helper = MigrationTestHelper::new().await?;
+    let helper = MigrationTestHelper::new_empty().await?;
 
     // Test that we can create a migration
     let migration_name = helper
@@ -167,7 +203,7 @@ async fn test_create_migration() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_migration_build_basic() -> Result<(), Box<dyn std::error::Error>> {
-    let helper = MigrationTestHelper::new().await?;
+    let helper = MigrationTestHelper::new_empty().await?;
 
     // Create a simple migration script
     let script_content = r#"BEGIN;
@@ -192,29 +228,39 @@ COMMIT;"#;
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_migration_build_with_component() -> Result<(), Box<dyn std::error::Error>> {
-    let helper = MigrationTestHelper::new().await?;
+    let helper = MigrationTestHelper::new_from_local_folder("./static/example").await?;
 
-    // Create a simple migration script
-    let script_content = r#"BEGIN;
+    let migration_name = "20240907212659-initial";
+    let expected = concat!(
+        r#"BEGIN;
+-- Created by"#,
+        " \n",
+        r#"-- Environment: dev
 
-CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
 
-COMMIT;"#;
+-- uuid var: 9cf58fa3-ed23-5cf3-986c-bb1b76f74b2e
 
-    let migration_name = helper
-        .create_migration_manual("test-migration-build-basic", script_content.to_string())
-        .await?;
+CREATE OR REPLACE FUNCTION add_two_numbers(a NUMERIC, b NUMERIC)
+RETURNS NUMERIC AS $$
+BEGIN
+    RETURN a + b;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMIT;"#
+    );
 
     // Build the migration
     let built = helper.build_migration(&migration_name, false).await?;
-    assert_eq!(script_content, built);
+    assert_eq!(expected, built);
+
+    // Pin, and try again:
+    let pin_hash = helper.pin_migration(migration_name).await?;
+    println!("pinned with hash {}", pin_hash);
+    let built = helper.build_migration(&migration_name, true).await?;
+    assert_eq!(expected, built);
 
     Ok(())
 }

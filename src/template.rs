@@ -18,6 +18,7 @@ pub fn template_env(store: Store) -> Result<Environment<'static>> {
     let mj_store = MiniJinjaLoader { store };
     env.set_loader(move |name: &str| mj_store.load(name));
     env.add_function("gen_uuid_v4", gen_uuid_v4);
+    env.add_function("gen_uuid_v5", gen_uuid_v5);
 
     Ok(env)
 }
@@ -51,17 +52,18 @@ pub async fn generate(
     let pinner: Box<dyn Pinner> = if let Some(lock_file) = lock_file {
         let lock = cfg
             .load_lock_file(&lock_file)
+            .await
             .context("could not load pinned files lock file")?;
         let pinner = Spawn::new_with_root_hash(&cfg.pinned_folder(), &lock.pin, &cfg.operator())
             .await
             .context("could not get new root with hash")?;
         Box::new(pinner)
     } else {
-        let pinner = Latest::new()?;
+        let pinner = Latest::new(cfg.spawn_folder_path())?;
         Box::new(pinner)
     };
 
-    let store = Store::new(pinner, cfg.operator().clone())
+    let store = Store::new(pinner, cfg.operator().clone(), cfg.spawn_folder_path())
         .context("could not create new store for generate")?;
     let db_config = cfg
         .db_config()
@@ -102,6 +104,10 @@ pub async fn generate_with_store(
 
 fn gen_uuid_v4() -> Result<String, minijinja::Error> {
     Ok(Uuid::new_v4().to_string())
+}
+
+fn gen_uuid_v5(seed: &str) -> Result<String, minijinja::Error> {
+    Ok(Uuid::new_v5(&Uuid::NAMESPACE_DNS, seed.as_bytes()).to_string())
 }
 
 pub struct Generation {

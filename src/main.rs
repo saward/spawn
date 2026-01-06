@@ -23,6 +23,9 @@ async fn main() -> Result<()> {
         Outcome::NewMigration(name) => {
             println!("New migration created: {}", name);
         }
+        Outcome::PinnedMigration { hash } => {
+            println!("Migration pinned: {}", hash);
+        }
         Outcome::Unimplemented => {
             println!("Unimplemented command.");
         }

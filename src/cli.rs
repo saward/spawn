@@ -6,7 +6,6 @@ use crate::variables::Variables;
 use crate::{config::Config, store::pinner::Pinner};
 use futures::TryStreamExt;
 use opendal::Operator;
-use std::fs;
 
 use anyhow::{Context, Result};
 use chrono;
@@ -108,6 +107,7 @@ pub enum Outcome {
     BuiltMigration { content: String },
     AppliedMigrations,
     Unimplemented,
+    PinnedMigration { hash: String },
 }
 
 pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
@@ -135,14 +135,22 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                     Ok(Outcome::NewMigration(mg.create_migration().await?))
                 }
                 Some(MigrationCommands::Pin { migration }) => {
-                    let mut pinner = Spawn::new(main_config.pinned_folder().as_ref())?;
+                    let mut pinner = Spawn::new(main_config.pinned_folder().as_ref())
+                        .context("could not get pinned_folder")?;
 
-                    let root = pinner.snapshot(&main_config.operator()).await?;
+                    let root = pinner
+                        .snapshot(&main_config.operator())
+                        .await
+                        .context("error calling pinner snapshot")?;
                     let lock_file_path = main_config.migration_lock_file_path(&migration);
-                    let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
-                    fs::write(&lock_file_path, toml_str)?;
+                    let toml_str = toml::to_string_pretty(&LockData { pin: root.clone() })
+                        .context("could not not convert pin data to toml")?;
+                    base_op
+                        .write(&lock_file_path, toml_str)
+                        .await
+                        .context("failed writing migration lockfile")?;
 
-                    Ok(Outcome::Unimplemented)
+                    Ok(Outcome::PinnedMigration { hash: root })
                 }
                 Some(MigrationCommands::Build {
                     migration,

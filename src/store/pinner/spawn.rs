@@ -2,6 +2,7 @@ use super::Pinner;
 use anyhow::Result;
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
+use futures::TryStreamExt;
 use opendal::Operator;
 use std::collections::HashMap;
 
@@ -33,6 +34,15 @@ impl Spawn {
             files: Some(files),
             store_path: store_path.to_string(),
         };
+
+        // Print out files in object store:
+        let mut lister = object_store.lister_with(".").recursive(true).await?;
+
+        println!("listing files for store path '{}'", store_path);
+        while let Some(entry) = lister.try_next().await? {
+            let file_data = object_store.read(&entry.path()).await?.to_bytes();
+            println!("(len {}). found {}", file_data.len(), entry.path());
+        }
 
         Ok(store)
     }
