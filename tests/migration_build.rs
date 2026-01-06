@@ -237,7 +237,7 @@ async fn test_migration_build_with_component() -> Result<(), Box<dyn std::error:
     let expected = concat!(
         r#"BEGIN;
 -- Created by"#,
-        " \n",
+        " \n", // prevents trim space from removing the extra space here
         r#"-- Environment: dev
 
 
