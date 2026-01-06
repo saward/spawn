@@ -191,3 +191,30 @@ COMMIT;"#;
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_migration_build_with_component() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new().await?;
+
+    // Create a simple migration script
+    let script_content = r#"BEGIN;
+
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMIT;"#;
+
+    let migration_name = helper
+        .create_migration_manual("test-migration-build-basic", script_content.to_string())
+        .await?;
+
+    // Build the migration
+    let built = helper.build_migration(&migration_name, false).await?;
+    assert_eq!(script_content, built);
+
+    Ok(())
+}

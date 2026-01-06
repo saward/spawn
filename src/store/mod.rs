@@ -1,4 +1,6 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use futures::TryStreamExt;
+use opendal::services::Memory;
 use opendal::Operator;
 use std::fmt::Debug;
 
@@ -38,4 +40,86 @@ impl Store {
 
         Ok(contents)
     }
+}
+
+pub enum DesiredOperator {
+    Memory,
+    FileSystem,
+}
+
+// Handy function for getting a disk based folder of data and reeturn an in
+// memory operator that has the same contents.  Particularly useful for tests.
+pub async fn disk_to_operator(
+    source_folder: &str,
+    dest_prefix: Option<&str>,
+    desired_operator: DesiredOperator,
+) -> Result<Operator> {
+    let dest_op = match desired_operator {
+        DesiredOperator::FileSystem => {
+            let dest_service = opendal::services::Fs::default().root("./testout");
+            Operator::new(dest_service)?.finish()
+        }
+        DesiredOperator::Memory => {
+            let dest_service = Memory::default();
+            Operator::new(dest_service)?.finish()
+        }
+    };
+
+    // Create a LocalFileSystem to read from static/example
+    let fs_service = opendal::services::Fs::default().root(source_folder);
+    let source_store = Operator::new(fs_service)
+        .context("disk_to_mem_operator failed to create operator")?
+        .finish();
+
+    // Populate the in-memory store with contents from static/example
+    let store_loc = dest_prefix.unwrap_or_default();
+    crate::store::populate_store_from_store(&source_store, &dest_op, "", store_loc)
+        .await
+        .context("call to populate memory fs from object store")?;
+
+    Ok(dest_op)
+}
+
+pub async fn populate_store_from_store(
+    source_store: &Operator,
+    target_store: &Operator,
+    source_prefix: &str,
+    dest_prefix: &str,
+) -> Result<()> {
+    let mut lister = source_store
+        .lister_with(source_prefix)
+        .recursive(true)
+        .await
+        .context("lister call")?;
+    let mut list_result: Vec<opendal::Entry> = Vec::new();
+
+    println!("Trying to write all");
+    while let Some(entry) = lister.try_next().await? {
+        println!("found {}", entry.path());
+        if entry.path().ends_with("/") {
+            continue;
+        }
+        list_result.push(entry);
+    }
+
+    for entry in list_result {
+        // Print out the file we're writing:
+        let dest_object_path = format!("{}{}", dest_prefix, entry.path());
+        let source_object_path = entry.path();
+        println!("Writing {} to {}", &source_object_path, &dest_object_path);
+
+        // Get the object data
+        let bytes = source_store
+            .read(&source_object_path)
+            .await
+            .context(format!("read path {}", &source_object_path))?;
+
+        // Store in target with the same path
+        target_store
+            .write(&dest_object_path, bytes)
+            .await
+            .context("write")?;
+    }
+
+    Ok(())
 }

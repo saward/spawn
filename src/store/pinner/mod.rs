@@ -162,75 +162,17 @@ pub(crate) async fn snapshot(fs: &Operator, store_path: &str, prefix: &str) -> R
 
 #[cfg(test)]
 mod tests {
-    use opendal::services::Memory;
+    use crate::store;
 
     use super::*;
 
-    #[cfg(test)]
-    async fn populate_store_from_store(
-        source_store: &Operator,
-        target_store: &Operator,
-        source_prefix: &str,
-        dest_prefix: &str,
-    ) -> Result<()> {
-        let mut lister = source_store
-            .lister_with(source_prefix)
-            .recursive(true)
-            .await
-            .context("lister call")?;
-        let mut list_result: Vec<opendal::Entry> = Vec::new();
-
-        println!("Trying to write all");
-        while let Some(entry) = lister.try_next().await? {
-            println!("found {}", entry.path());
-            if entry.path().ends_with("/") {
-                continue;
-            }
-            list_result.push(entry);
-        }
-
-        for entry in list_result {
-            // Print out the file we're writing:
-            let dest_object_path = format!("{}{}", dest_prefix, entry.path());
-            let source_object_path = entry.path();
-            println!("Writing {} to {}", &source_object_path, &dest_object_path);
-
-            // Get the object data
-            let bytes = source_store
-                .read(&source_object_path)
-                .await
-                .context(format!("read path {}", &source_object_path))?;
-
-            // Store in target with the same path
-            target_store
-                .write(&dest_object_path, bytes)
-                .await
-                .context("write")?;
-        }
-
-        Ok(())
-    }
-
     #[tokio::test]
     async fn test_snapshot() -> Result<()> {
+        let dest_op =
+            store::disk_to_operator("./static/example", None, store::DesiredOperator::Memory)
+                .await?;
+
         let store_loc = "store/";
-
-        let dest_service = Memory::default();
-        let dest_op = Operator::new(dest_service)?.finish();
-
-        // Useful for writing to local file system for testing/debugging:
-        // let dest_service = opendal::services::Fs::default().root("./testout");
-        // let dest_op = Operator::new(dest_service)?.finish();
-
-        // Create a LocalFileSystem to read from static/example
-        let fs_service = opendal::services::Fs::default().root("./static/example");
-        let source_store = Operator::new(fs_service).context("new operator")?.finish();
-
-        // Populate the in-memory store with contents from static/example
-        populate_store_from_store(&source_store, &dest_op, "", "")
-            .await
-            .context("call to populate memory fs from object store")?;
-
         let root = snapshot(&dest_op, store_loc, "components/").await?;
         let mut lister = dest_op
             .lister_with("store/")
