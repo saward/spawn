@@ -5,9 +5,11 @@ use opendal::Operator;
 use pretty_assertions::assert_eq;
 use spawn::{
     cli::{run_cli, Cli, Commands, MigrationCommands, Outcome},
-    config::Config,
+    config::{Config, ConfigLoaderSaver},
+    engine::DatabaseConfig,
     store,
 };
+use std::collections::HashMap;
 use tokio;
 
 /// Expected default new migration content:
@@ -50,21 +52,40 @@ impl MigrationTestHelper {
     pub async fn new_from_operator(op: Operator) -> Result<Self> {
         let mth = Self { fs: op };
 
-        // Create a test config file
-        let config_content = format!(
-            r#"
-    spawn_folder = "/db"
-    database = "postgres_psql"
-
-    [databases.postgres_psql]
-    spawn_database = "spawn"
-    engine = "postgres-psql"
-    command = ["docker", "exec", "-i", "spawn-db", "psql", "-U", "spawn", "spawn"]
-    "#,
-        );
-        mth.fs.write(&mth.config_path(), config_content).await?;
+        let config_loader = Self::default_config_loadersaver();
+        config_loader.save(&mth.config_path(), &mth.fs).await?;
 
         Ok(mth)
+    }
+
+    fn default_config_loadersaver() -> ConfigLoaderSaver {
+        let mut databases = HashMap::new();
+        databases.insert(
+            "postgres_psql".to_string(),
+            DatabaseConfig {
+                engine: "postgres-psql".to_string(),
+                spawn_database: "spawn".to_string(),
+                spawn_schema: "public".to_string(),
+                environment: "dev".to_string(),
+                command: Some(vec![
+                    "docker".to_string(),
+                    "exec".to_string(),
+                    "-i".to_string(),
+                    "spawn-db".to_string(),
+                    "psql".to_string(),
+                    "-U".to_string(),
+                    "spawn".to_string(),
+                    "spawn".to_string(),
+                ]),
+            },
+        );
+
+        ConfigLoaderSaver {
+            spawn_folder: "/db".to_string(),
+            database: "postgres_psql".to_string(),
+            environment: None,
+            databases,
+        }
     }
 
     /// Creates a new migration using the CLI 'migration new' command

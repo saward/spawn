@@ -10,14 +10,14 @@ static PINFILE_LOCK_NAME: &str = "lock.toml";
 
 // 1. The "Blueprint" struct. Use this for Deserialization.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ConfigLoader {
+pub struct ConfigLoaderSaver {
     pub spawn_folder: String,
     pub database: String,
     pub environment: Option<String>,
     pub databases: HashMap<String, DatabaseConfig>,
 }
 
-impl ConfigLoader {
+impl ConfigLoaderSaver {
     // 2. A method to transform the Loader into the actual Config
     pub fn build(self, base_fs: Operator, spawn_fs: Option<Operator>) -> Config {
         Config {
@@ -30,7 +30,11 @@ impl ConfigLoader {
         }
     }
 
-    pub async fn load(path: &str, op: &Operator, database: Option<String>) -> Result<ConfigLoader> {
+    pub async fn load(
+        path: &str,
+        op: &Operator,
+        database: Option<String>,
+    ) -> Result<ConfigLoaderSaver> {
         let bytes = op.read(path).await?.to_bytes();
         let main_config = String::from_utf8(bytes.to_vec())?;
         let source = config::File::from_str(&main_config, config::FileFormat::Toml);
@@ -64,6 +68,12 @@ impl ConfigLoader {
             .context("could not deserialise config struct")?;
 
         Ok(settings)
+    }
+
+    pub async fn save(&self, path: &str, op: &Operator) -> Result<()> {
+        let toml_content = toml::to_string(self)?;
+        op.write(path, toml_content).await?;
+        Ok(())
     }
 }
 
@@ -118,7 +128,7 @@ impl Config {
     }
 
     pub async fn load(path: &str, op: &Operator, database: Option<String>) -> Result<Config> {
-        let config_loader = ConfigLoader::load(path, op, database).await?;
+        let config_loader = ConfigLoaderSaver::load(path, op, database).await?;
         Ok(config_loader.build(op.clone(), None))
     }
 
