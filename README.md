@@ -92,84 +92,104 @@ There are two different goals we want to achieve:
 
 Ideally then we can choose any combination of these two things. Our pin choice (none, spawn, git) should be a separate choice from our files/directories fetching method (local, embedded, remote).
 
-# Features and plans
+# Features
 
-Here are some of my design goals with spawn:
+## Currently Available
 
-### Core Migration Workflow
+### Core Migration Management
 
-- [x] Handle history of functions/stored procs, so we can see proper history.
-- [x] Ability to write custom hand-crafted migrations.
-- [x] Plain SQL mostly, or rather generates plain SQL that can be modified.
-- [x] Create empty migrations.
-- [x] Variables supported, for substitution (`spawn run migration build 20240907212659-initial testvars.[json|toml|yamll]`, available under `variables` in templates).
-- [ ] Idempotently apply migrations to database.
-- [ ] Support for rollback scripts as an optional part of migrations.
-- [ ] Repeatable migrations, including hashing the output (with variables perhaps) to check if it's been applied yet, and apply it if not.
-- [ ] Migration dependencies, so that we can allow applying migrations out of order, but only if their dependencies have been applied.
-- [ ] Mark a migration as draft, so it does not yet get applied to database.
-- [ ] Allow advanced scripts that can run arbitrary commands at points within the migration to, e.g., update or pull from an external data source before proceeding further?
+- ✅ **Project initialization** - `spawn init` to set up new projects
+- ✅ **Migration creation** - `spawn migration new <name>` creates timestamped migrations
+- ✅ **Migration building** - `spawn migration build` generates SQL from templates
+- ✅ **Component system** - Reusable SQL snippets with proper git history tracking
+- ✅ **Variable substitution** - Support for JSON/TOML/YAML variable files in templates
+- ✅ **Minijinja templating** - Full templating support for migrations and components
 
-### Database Interaction & Safety
+### Pinning System
 
-- [ ] Migration status checking, to see what's been applied to a database.
-- [ ] List migrations in database.
-- [ ] Ability to apply specific migration or all.
-  - [ ] Ensure database lock when doing so, where possible.
-    - [ ] Advisory lock like sqitch has, to avoid multiple deployments all trying to apply the same migration at the same time: `pg_advisory_lock` etc.
-- [ ] Allow for 'adopting' a migration, where you record in the database that it's been applied, without doing anything. Useful for if you're bringing in existing migrations from another system that have already been applied to the database.
-- [ ] Store full schema changes applied in a migration table in database, so we have a record of what was done.
-- [ ] Store variables used for applying a migration within the database migration table.
-  - [ ] Allow encryption of variables in case they contain sensitive data.
-- [ ] Store environment in Spawn database table in the target, so that you can't accidentally run a script with env set to `dev` and target `prod` with it. Spawn should check the target db to ensure it self reports as that env, and use that.
-- [ ] Report on schema drift, comparing migrations vs some real database as it should be at given which migrations have been applied.
+- ✅ **Migration pinning** - `spawn migration pin <migration>` creates reproducible snapshots
+- ✅ **Git-like object storage** - Hash-based storage of pinned components in `/pinned` folder
+- ✅ **Reproducible builds** - `--pinned` flag uses locked component versions
 
-### Pinning and Component Management
+### Testing Framework
 
-- [ ] `spawn pin checkout <pin_hash>`: Restore just the `spawn` component files to the state they were in for a specific pin. This provides a focused way to inspect, debug, or modify historical migrations without affecting the entire project state like `git checkout` would.
-- [ ] `spawn pin diff <migration1> <migration2>`: Show the exact changes to all shared components between two different migrations, providing a surgical diff for auditing and debugging.
-- [ ] `spawn pin report --unused`: Scan the `/pinned` folder to find component objects no longer referenced by any migration, allowing for safe cleanup.
-- [ ] `spawn pin validate`: Verify the integrity of all pinned objects, ensuring every object referenced in a migration's `lock.toml` exists and has the correct hash.
-- [ ] Report on which components have changes that have never been included in a migration. Basically, check for the hash of that component and see if it's in any lock files, and if the migration includes that file in its SQL.
-- [ ] Allow specifying per-env pin requirements. Not required, prompt, and required.
+- ✅ **Test execution** - `spawn test run <test>` runs tests against database
+- ✅ **Expected output comparison** - PostgreSQL-style diff-based testing
+- ✅ **Test expectation generation** - `spawn test expect <test>` creates baseline outputs
+- ✅ **Batch test running** - `spawn test compare` runs all tests
 
-### Testing
+### Configuration & Structure
 
-- [x] `spawn test run <test>`: Allow creating a test script that you run against a database, which compares the output to expected output, and returns diff and exit status 1 if there's a difference.
-- [x] `spawn test expect <test>` to generate the output expectations.
-- [x] Option to run all tests (`spawn test compare`).
-- [ ] Migration specific tests that run when migration is applied (similar to Sqitch).
-- [ ] If useful, create helper functions like pgtap has, and optionally apply them to the database at test time, or to the copy that is used for tests.
-- [ ] Handle deterministic migrations somehow with non-deterministic variables, particularly for tests where the same output is expected. E.g., `gen_uuid_v4` would return a new value on each invocation.
-  - [ ] Interim option is to track when an undeterministic function is called, and optionally report on that when it's used as part of a test.
-- [ ] Option to have spawn itself create the copy of the database with template, and exit before running psql commands if that fails.
+- ✅ **TOML configuration** - `spawn.toml` for project settings
+- ✅ **Organized folder structure** - `/components`, `/migrations`, `/tests`, `/pinned`
+- ✅ **Database targeting** - `--database` flag for multiple database configurations
+- ✅ **PostgreSQL focus** - Optimized for PostgreSQL features and workflows
 
-### Multi-Tenancy and Advanced Architectures
+# Roadmap
 
-- [ ] Easy to spin up new tenant schema.
-- [ ] Easy to migrate each tenant schema.
-- [ ] Allow a migration to have some parts that apply to shared schema, and some that apply to tenant schemas (e.g., via matrix). But even more complicated, allow us to reapply that change again, with different tenants, and it will only apply the tenant related changes to the new tenants, and not the shared schema changes.
-- [ ] Allow migrations bundled in another package, like a framework. See [Multiple package migrations design](#multiple-package-migrations-design).
-- [ ] Supporting migrations from multiple folders. E.g., if a separate project provided some of your migrations, then you can apply migrations from both folders.
-- [ ] Flatten schema. E.g., deploy to local db with unique random values for variables (e.g., schema and user names), export again, and replace all references to the unique schema name with template variables again.
-  - [ ] Optionally export the schema into a structured hierarchy of folders and files so that you can browse it easily on filesystem?
+## Phase 1: Database Integration & Safety (Next Priority)
 
-### Developer Experience & Tooling
+- 🚧 **Migration application** - Idempotently apply migrations to database
+- 🚧 **Migration tracking** - Track applied migrations in database table
+- 🚧 **Migration status** - Check what migrations have been applied
+- 🚧 **Database locking** - Advisory locks to prevent concurrent migrations
+- 🚧 **Migration adoption** - Mark existing migrations as applied without running
 
-- [ ] Watch a particular function or view, and re-apply automatically upon file change, to help with local testing.
-  - [ ] Support a jinja template watch for local dev against local database, where if the rendered jinja template changes it gets re-applied. Useful in cases where we're updating views that depend on each other, and want to automatically recreate all those views as we edit files.
-- [ ] Ability to preview in neovim and/or vscode the outputted sql, as you make changes to the migration template.
-- [ ] If you have a view or function that depends on components that have changed, it would be nice to have a way to alert that the view or function should be recreated because it will now be different. Maybe via `pg_depend`.
-- [ ] Enable writing scripts. We have migrations, and tests, but what if we want to run actions against a database that aren't part of a migration? E.g., to update, insert, or delete data for some test we are doing locally.
-- [ ] SQL validation, perhaps similar to sqlx in Rust.
-- [ ] Github action to call this easily in Github's CI/CD.
+## Phase 2: Enhanced Migration Features
 
-### Data & I/O
+- 🔄 **Rollback support** - Optional down scripts for migrations
+- 🔄 **Repeatable migrations** - Hash-based detection for re-runnable migrations
+- 🔄 **Migration dependencies** - Apply migrations out of order based on dependencies
+- 🔄 **Draft migrations** - Mark migrations to exclude from database application
+- 🔄 **Advanced scripting** - Run arbitrary commands during migration execution
 
-- [ ] Allow reading data from file types like csv's and use in templates, so you can loop over csv data to create insert(s), updates, whatever.
-- [ ] Provide a way to import data from other sources? E.g., from a URL or script. Need to consider security implications.
-- [ ] Handle secrets.
-- [ ] Custom plugins or extensions.
+## Phase 3: Enhanced Pinning & Component Management
+
+- 🔄 **Pin checkout** - `spawn pin checkout <pin_hash>` to restore component states
+- 🔄 **Pin diffing** - `spawn pin diff <migration1> <migration2>` between migrations
+- 🔄 **Pin cleanup** - `spawn pin report --unused` to find orphaned objects
+- 🔄 **Pin validation** - Verify integrity of all pinned objects
+- 🔄 **Component change tracking** - Report components with unapplied changes
+- 🔄 **Environment-specific pinning** - Per-environment pin requirements
+
+## Phase 4: Multi-Tenancy & Advanced Architectures
+
+- 🔄 **Tenant schema management** - Easy tenant schema creation and migration
+- 🔄 **Mixed schema migrations** - Apply parts to shared vs tenant schemas
+- 🔄 **Package migration support** - Import migrations from external packages
+- 🔄 **Multi-folder migrations** - Support migrations from multiple sources
+- 🔄 **Schema flattening** - Export/import with variable substitution
+
+## Phase 5: Developer Experience & Tooling
+
+- 🔄 **File watching** - Auto-apply changes for local development
+- 🔄 **Live preview** - Real-time SQL preview in editors (Neovim/VSCode)
+- 🔄 **Dependency tracking** - Alert when components need recreation
+- 🔄 **Script execution** - Run ad-hoc database scripts outside migrations
+- 🔄 **SQL validation** - Static analysis similar to sqlx
+- 🔄 **GitHub Actions** - Official CI/CD integration
+
+## Phase 6: Enhanced Testing & Safety
+
+- 🔄 **Migration-specific tests** - Tests that run when migrations are applied
+- 🔄 **Helper functions** - Optional pgTAP-style testing utilities
+- 🔄 **Deterministic handling** - Manage non-deterministic functions in tests
+- 🔄 **Automatic test databases** - Spawn-managed test database creation
+- 🔄 **Schema drift detection** - Compare expected vs actual database state
+- 🔄 **Variable encryption** - Secure storage of sensitive migration variables
+
+## Phase 7: Data & I/O Integration
+
+- 🔄 **CSV/data file support** - Import and loop over data files in templates
+- 🔄 **External data sources** - Import from URLs and external scripts
+- 🔄 **Secret management** - Secure handling of sensitive data
+- 🔄 **Plugin system** - Custom extensions and plugins
+
+## Legend
+
+- ✅ **Complete** - Feature is implemented and available
+- 🚧 **In Progress** - Currently being developed
+- 🔄 **Planned** - Scheduled for future development
 
 # Testing
 

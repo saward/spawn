@@ -278,7 +278,7 @@ $$ LANGUAGE plpgsql;"#
         .await?;
 
     // Verify that building migration using pinned components, we get the
-    // same expedcted back.
+    // same expected back.
     let built = helper.build_migration(&migration_name, true).await?;
     assert_eq!(expected, built);
 
