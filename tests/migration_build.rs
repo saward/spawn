@@ -6,7 +6,7 @@ use pretty_assertions::assert_eq;
 use spawn::{
     cli::{run_cli, Cli, Commands, MigrationCommands, Outcome},
     config::{Config, ConfigLoaderSaver},
-    engine::DatabaseConfig,
+    engine::{DatabaseConfig, EngineType},
     store,
 };
 use std::collections::HashMap;
@@ -63,7 +63,7 @@ impl MigrationTestHelper {
         databases.insert(
             "postgres_psql".to_string(),
             DatabaseConfig {
-                engine: "postgres-psql".to_string(),
+                engine: EngineType::PostgresPSQL,
                 spawn_database: "spawn".to_string(),
                 spawn_schema: "public".to_string(),
                 environment: "dev".to_string(),

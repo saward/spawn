@@ -3,7 +3,6 @@
 // build in PSQL helper commands.
 
 use crate::engine::{DatabaseConfig, Engine, EngineOutputter, EngineWriter};
-
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use include_dir::{include_dir, Dir, DirEntry};
@@ -48,7 +47,7 @@ impl PSQL {
 }
 
 #[async_trait]
-impl crate::engine::Engine for PSQL {
+impl Engine for PSQL {
     fn new_writer(&self) -> Result<Box<dyn EngineWriter>> {
         let mut parts = self.psql_command.clone();
         let command = parts.remove(0);

@@ -1,13 +1,29 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::io;
+use std::{fmt, io};
 
 pub mod postgres_psql;
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum EngineType {
+    #[serde(rename = "postgres-psql")]
+    PostgresPSQL,
+}
+
+impl fmt::Display for EngineType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            EngineType::PostgresPSQL => {
+                write!(f, "postgres-psql")
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DatabaseConfig {
-    pub engine: String,
+    pub engine: EngineType,
     pub spawn_database: String,
     #[serde(default = "default_schema")]
     pub spawn_schema: String,
@@ -19,7 +35,7 @@ pub struct DatabaseConfig {
 }
 
 fn default_environment() -> String {
-    "dev".to_string()
+    "prod".to_string()
 }
 
 fn default_schema() -> String {

@@ -1,4 +1,4 @@
-use crate::engine::{postgres_psql::PSQL, DatabaseConfig, Engine};
+use crate::engine::{postgres_psql::PSQL, DatabaseConfig, Engine, EngineType};
 use crate::pinfile::LockData;
 use anyhow::{anyhow, Context, Result};
 use opendal::Operator;
@@ -101,8 +101,8 @@ impl Config {
     pub fn new_engine(&self) -> Result<Box<dyn Engine>> {
         let db_config = self.db_config()?;
 
-        match db_config.engine.as_str() {
-            "postgres-psql" => Ok(PSQL::new(&db_config)?),
+        match db_config.engine {
+            EngineType::PostgresPSQL => Ok(PSQL::new(&db_config)?),
             _ => Err(anyhow!(
                 "no engine with name '{}' exists",
                 &db_config.engine
