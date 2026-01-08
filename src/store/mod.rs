@@ -56,7 +56,7 @@ pub enum DesiredOperator {
     FileSystem,
 }
 
-// Handy function for getting a disk based folder of data and reeturn an in
+// Handy function for getting a disk based folder of data and return an in
 // memory operator that has the same contents.  Particularly useful for tests.
 pub async fn disk_to_operator(
     source_folder: &str,

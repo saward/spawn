@@ -3,6 +3,7 @@
 // build in PSQL helper commands.
 
 use crate::engine::{DatabaseConfig, Engine, EngineOutputter, EngineWriter};
+use crate::template;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use include_dir::{include_dir, Dir, DirEntry};
@@ -72,6 +73,12 @@ impl Engine for PSQL {
     async fn migration_apply(&self, migration: &str) -> Result<String> {
         // Ensure we have latest schema:
         self.update_schema().await?;
+        return self.internal_migration_apply(migration).await;
+    }
+}
+
+impl PSQL {
+    async fn internal_migration_apply(&self, migration: &str) -> Result<String> {
         let mut writer = self.new_writer()?;
 
         // Write migration to writer:
@@ -83,9 +90,7 @@ impl Engine for PSQL {
         let output = String::from_utf8(output).unwrap_or_default();
         Ok(output)
     }
-}
 
-impl PSQL {
     // Helper function to recursively collect all files
     async fn collect_files(dir: &Dir<'_>, fs: &mut Box<InMemory>) -> Result<()> {
         for entry in dir.entries() {
@@ -115,9 +120,7 @@ impl PSQL {
         // Write all files from PROJECT_DIR to fs:
         PSQL::collect_files(&PROJECT_DIR, &mut fs).await?;
 
-        Err(anyhow!("not implemented"))
-
-        // template::generate_with_store(contents, variables, environment, store);
+        template::generate_with_store(contents, variables, environment, store);
 
         // if migration_table_exists {
         //     // Check which migrations have been applied and apply missing ones
@@ -134,7 +137,7 @@ impl PSQL {
         //     }
         // }
 
-        // Ok(())
+        Ok(())
     }
 
     fn execute_sql(&self, sql: &str, format: Option<&str>) -> Result<String> {
