@@ -1,6 +1,7 @@
 pub mod cli;
 pub mod config;
 pub mod engine;
+pub mod escape;
 pub mod migrator;
 pub mod pinfile;
 pub mod sqltest;

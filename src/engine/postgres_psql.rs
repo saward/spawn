@@ -2,12 +2,15 @@
 // scripts, which enables user's scripts to take advantage of things like the
 // build in PSQL helper commands.
 
+use crate::config::FolderPather;
 use crate::engine::{DatabaseConfig, Engine, EngineOutputter, EngineWriter};
-use crate::store::operator_from_includedir;
-use crate::template;
-use anyhow::{anyhow, Result};
+use crate::escape::{EscapedIdentifier, EscapedLiteral};
+use crate::store::pinner::latest::Latest;
+use crate::store::{operator_from_includedir, Store};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use include_dir::{include_dir, Dir};
+use std::collections::HashSet;
 use std::io::{self, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::Instant;
@@ -16,8 +19,12 @@ use twox_hash::xxhash3_128;
 #[derive(Debug)]
 pub struct PSQL {
     psql_command: Vec<String>,
-    spawn_schema: String,
-    spawn_database: String,
+    /// Schema name as an escaped identifier (for use as schema.table)
+    spawn_schema_ident: EscapedIdentifier,
+    /// Schema name as an escaped literal (for use in WHERE clauses)
+    spawn_schema_literal: EscapedLiteral,
+    /// Database name as an escaped identifier
+    spawn_database_ident: EscapedIdentifier,
 }
 
 static PROJECT_DIR: Dir<'_> = include_dir!("./static/engine-migrations/postgres-psql");
@@ -38,10 +45,16 @@ impl PSQL {
             .clone()
             .ok_or(anyhow!("Command command must be defined"))?;
 
+        // Use type-safe escaped types - escaping happens at construction time
+        let spawn_schema_ident = EscapedIdentifier::new(&config.spawn_schema);
+        let spawn_schema_literal = EscapedLiteral::new(&config.spawn_schema);
+        let spawn_database_ident = EscapedIdentifier::new(&config.spawn_database);
+
         Ok(Box::new(Self {
             psql_command,
-            spawn_schema: config.spawn_schema.clone(),
-            spawn_database: config.spawn_database.clone(),
+            spawn_schema_ident,
+            spawn_schema_literal,
+            spawn_database_ident,
         }))
     }
 }
@@ -92,36 +105,79 @@ impl PSQL {
     }
 
     pub async fn update_schema(&self) -> Result<()> {
-        // create a store so that we can generate our migrations using the
-        // standard methods.
+        // Create a memory operator from the included directory containing
+        // the engine's own migration scripts
+        let op = operator_from_includedir(&PROJECT_DIR, None)
+            .await
+            .context("Failed to create operator from included directory")?;
+
+        // Create a pinner and store to list and load migrations
+        let pinner = Latest::new("").context("Failed to create Latest pinner")?;
+        let pather = FolderPather {
+            spawn_folder: "".to_string(),
+        };
+        let store = Store::new(Box::new(pinner), op, pather)
+            .context("Failed to create store for update_schema")?;
+
+        // Get list of all available migrations (sorted oldest to newest)
+        let available_migrations = store
+            .list_migrations()
+            .await
+            .context("Failed to list migrations")?;
+
+        // Check if migration table exists to determine if this is bootstrap
         let migration_table_exists = self.migration_table_exists()?;
 
-        // // Create a memory operator from the included directory:
-        // let op = operator_from_includedir(&PROJECT_DIR, None).await?;
+        // Get set of already applied migrations (empty if table doesn't exist)
+        let applied_migrations: HashSet<String> = if migration_table_exists {
+            self.get_applied_migrations_set()?
+        } else {
+            HashSet::new()
+        };
 
-        // template::generate_with_store(contents, variables, environment, op);
+        // Apply each migration that hasn't been applied yet
+        for migration_path in available_migrations {
+            // Extract migration name from path (e.g., "migrations/001-base-migration-table/" -> "001-base-migration-table")
+            let migration_name = migration_path
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or(&migration_path);
 
-        // if migration_table_exists {
-        //     // Check which migrations have been applied and apply missing ones
-        //     let applied_migrations = self.get_applied_migrations()?;
-        //     for (migration_name, migration_sql) in MIGRATION_TABLE_MIGRATIONS {
-        //         if !applied_migrations.contains(migration_name) {
-        //             self.apply_and_record_migration_v1(migration_name, migration_sql)?;
-        //         }
-        //     }
-        // } else {
-        //     // Apply all migration table migrations
-        //     for (migration_name, migration_sql) in MIGRATION_TABLE_MIGRATIONS {
-        //         self.apply_and_record_migration_v1(migration_name, migration_sql)?;
-        //     }
-        // }
+            // Skip if already applied
+            if applied_migrations.contains(migration_name) {
+                continue;
+            }
+
+            // Load and render the migration
+            let up_sql_path = format!("{}up.sql", migration_path);
+            // Load the raw migration SQL
+            let migration_sql = store
+                .load_migration(&up_sql_path)
+                .await
+                .context(format!("Failed to load migration {}", migration_name))?;
+
+            // Render the template with variables (type-safe escaped identifier)
+            let rendered_sql =
+                migration_sql.replace("{{schema}}", self.spawn_schema_ident.as_str());
+
+            // Apply the migration and record it
+            // Note: even for bootstrap, the first migration creates the tables,
+            // so they exist by the time we record the migration.
+            self.apply_and_record_migration_v1(
+                migration_name,
+                &rendered_sql,
+                "", // pin_hash not used for engine migrations
+            )?;
+        }
 
         Ok(())
     }
 
     fn execute_sql(&self, sql: &str, format: Option<&str>) -> Result<String> {
         let mut writer = self.new_writer()?;
-        writer.write_all(format!("\\c {}\n", &self.spawn_database).as_bytes())?;
+        // Database name is type-safe escaped identifier
+        writer.write_all(format!("\\c {}\n", self.spawn_database_ident.as_str()).as_bytes())?;
         if let Some(format) = format {
             writer.write_all(format!("\\pset format {}\n", format).as_bytes())?;
         }
@@ -140,11 +196,11 @@ impl PSQL {
             \x
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
-                WHERE table_schema = '{}'
+                WHERE table_schema = {}
                 AND table_name = 'migration'
             );
             "#,
-            &self.spawn_schema
+            self.spawn_schema_literal.as_str()
         );
 
         let output = self.execute_sql(&check_table_sql, Some("csv"))?;
@@ -154,9 +210,27 @@ impl PSQL {
     fn get_applied_migrations(&self) -> Result<String> {
         // TODO: rewrite this to return a proper HashMap of names, rather than
         // relying on crude pattern matching.
-        let check_migrations_sql = format!("SELECT name FROM {}.migration;", &self.spawn_schema);
+        let check_migrations_sql = format!(
+            "SELECT name FROM {}.migration WHERE namespace = 'spawn';",
+            self.spawn_schema_ident.as_str()
+        );
 
         self.execute_sql(&check_migrations_sql, Some("csv"))
+    }
+
+    fn get_applied_migrations_set(&self) -> Result<HashSet<String>> {
+        let output = self.get_applied_migrations()?;
+        let mut migrations = HashSet::new();
+
+        // Parse CSV output - skip header line and extract migration names
+        for line in output.lines().skip(1) {
+            let name = line.trim();
+            if !name.is_empty() {
+                migrations.insert(name.to_string());
+            }
+        }
+
+        Ok(migrations)
     }
 
     // This is versioned because if we change the schema significantly enough
@@ -168,8 +242,8 @@ impl PSQL {
         migration_sql: &str,
         pin_hash: &str,
     ) -> Result<()> {
-        // Apply the migration
-        let formatted_sql = migration_sql.replace("{schema}", &self.spawn_schema);
+        // Apply the migration (use type-safe escaped identifier)
+        let formatted_sql = migration_sql.replace("{schema}", self.spawn_schema_ident.as_str());
 
         // Record duration of execute_sql:
         let start_time = Instant::now();
@@ -178,12 +252,17 @@ impl PSQL {
 
         let checksum = xxhash3_128::Hasher::oneshot(&formatted_sql.as_bytes());
 
-        // Record the migration
+        // Use type-safe escaped literals for dynamic values
+        let safe_migration_name = EscapedLiteral::new(migration_name);
+        let safe_checksum = EscapedLiteral::new(&format!("{:032x}", checksum));
+        let safe_pin_hash = EscapedLiteral::new(pin_hash);
+
+        // Record the migration (schema is pre-escaped in struct)
         let record_sql = format!(
             r#"
 BEGIN;
-INSERT INTO {}.migration (name, namespace) VALUES ('{}', 'spawn');
-INSERT INTO {}.migration_history (
+INSERT INTO {schema}.migration (name, namespace) VALUES ({name}, 'spawn');
+INSERT INTO {schema}.migration_history (
     migration_id_migration,
     activity_id_activity,
     created_by,
@@ -201,21 +280,18 @@ SELECT
     '',
     '',
     'SUCCESS',
-    '{}',
-    {},
-    {}
-FROM {}.migration
-WHERE name = '{}' AND namespace = 'spawn';
+    {checksum},
+    INTERVAL '{duration} second',
+    {pin_hash}
+FROM {schema}.migration
+WHERE name = {name} AND namespace = 'spawn';
 COMMIT;
 "#,
-            &self.spawn_schema,
-            &migration_name,
-            &self.spawn_schema,
-            checksum,
-            format!("INTERVAL '{} second'", duration),
-            &self.spawn_schema,
-            &migration_name,
-            &pin_hash,
+            schema = self.spawn_schema_ident.as_str(),
+            name = safe_migration_name.as_str(),
+            checksum = safe_checksum.as_str(),
+            duration = duration,
+            pin_hash = safe_pin_hash.as_str(),
         );
 
         self.execute_sql(&record_sql, None)?;

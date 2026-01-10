@@ -57,6 +57,9 @@ impl Store {
             }
         }
 
+        // Sort migrations by name to ensure oldest to newest order
+        migrations.sort();
+
         Ok(migrations)
     }
 }
@@ -155,7 +158,10 @@ pub async fn populate_store_from_store(
 /// # Returns
 ///
 /// A memory-based OpenDAL operator containing all files from the bundled directory
-pub async fn operator_from_includedir(dir: &Dir<'_>, dest_prefix: Option<&str>) -> Result<()> {
+pub async fn operator_from_includedir(
+    dir: &Dir<'_>,
+    dest_prefix: Option<&str>,
+) -> Result<Operator> {
     // Create a memory operator
     let dest_service = Memory::default();
     let operator = Operator::new(dest_service)?.finish();
@@ -175,7 +181,7 @@ pub async fn operator_from_includedir(dir: &Dir<'_>, dest_prefix: Option<&str>) 
             .context(format!("Failed to write file {}", final_path))?;
     }
 
-    Ok(())
+    Ok(operator)
 }
 
 // Helper function to recursively collect file information
