@@ -174,10 +174,6 @@ impl Config {
 
         match db_config.engine {
             EngineType::PostgresPSQL => Ok(PSQL::new(&db_config)?),
-            _ => Err(anyhow!(
-                "no engine with name '{}' exists",
-                &db_config.engine
-            )),
         }
     }
 
