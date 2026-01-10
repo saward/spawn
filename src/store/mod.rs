@@ -46,7 +46,10 @@ impl Store {
 
     pub async fn list_migrations(&self) -> Result<Vec<String>> {
         let mut migrations: Vec<String> = Vec::new();
-        let mut fs_lister = self.fs.lister(&self.pather.migrations_folder()).await?;
+        let mut fs_lister = self
+            .fs
+            .lister(format!("{}/", &self.pather.migrations_folder()).as_ref())
+            .await?;
         while let Some(entry) = fs_lister.try_next().await? {
             let path = entry.path().to_string();
             if path.ends_with("/") {
@@ -210,6 +213,7 @@ fn collect_files_from_dir(dir: &Dir<'_>, current_path: &str, files: &mut Vec<(St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::pinner::latest::Latest;
     use include_dir::{include_dir, Dir};
 
     // Create a test directory structure for testing
@@ -221,6 +225,58 @@ mod tests {
         assert!(
             result.is_ok(),
             "Should create operator with prefix successfully"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_migrations_returns_two_migrations() {
+        // Load the two_migrations test folder into a memory operator
+        let op = disk_to_operator(
+            "./static/tests/two_migrations",
+            None,
+            DesiredOperator::Memory,
+        )
+        .await
+        .expect("Failed to create operator from disk");
+
+        // Create a pinner and FolderPather
+        let pinner = Latest::new("").expect("Failed to create Latest pinner");
+        let pather = FolderPather {
+            spawn_folder: "".to_string(),
+        };
+
+        // Create the Store
+        let store = Store::new(Box::new(pinner), op, pather).expect("Failed to create Store");
+
+        // Call list_migrations and verify the result
+        let migrations: Vec<String> = store
+            .list_migrations()
+            .await
+            .expect("Failed to list migrations");
+
+        // Should have exactly 2 migrations
+        assert_eq!(
+            migrations.len(),
+            2,
+            "Expected 2 migrations, got {:?}",
+            migrations
+        );
+
+        // Verify the migration names are present (they end with /)
+        let migration_names: Vec<&str> = migrations.iter().map(|s| s.as_str()).collect();
+        assert!(
+            migration_names
+                .iter()
+                .any(|m| m.contains("20240907212659-initial")),
+            "Expected to find 20240907212659-initial migration, got {:?}",
+            migration_names
+        );
+        assert!(
+            migration_names
+                .iter()
+                .any(|m| m.contains("20240908123456-second")),
+            "Expected to find 20240908123456-second migration, got {:?}",
+            migration_names
         );
     }
 }
