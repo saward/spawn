@@ -43,11 +43,11 @@ fn default_schema() -> String {
 }
 
 pub struct MigrationStatus {
-    applied: bool,
+    _applied: bool,
 }
 
 pub struct EngineStatus {
-    connection_successful: Option<bool>,
+    _connection_successful: Option<bool>,
 }
 
 pub trait EngineOutputter {

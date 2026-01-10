@@ -30,20 +30,8 @@ impl Tester {
         }
     }
 
-    pub fn components_folder(&self) -> String {
-        let mut s = self.config.pather().spawn_folder_path().to_string();
-        s.push_str("/components");
-        s
-    }
-
-    pub fn tests_folder(&self) -> String {
-        let mut s = self.config.pather().spawn_folder_path().to_string();
-        s.push_str("/tests");
-        s
-    }
-
     pub fn test_folder(&self) -> String {
-        let mut s = self.tests_folder();
+        let mut s = self.config.pather().tests_folder();
         s.push('/');
         s.push_str(&self.script_path);
         s

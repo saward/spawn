@@ -76,8 +76,7 @@ impl Engine for PSQL {
             .take()
             .ok_or(anyhow::anyhow!("no stdin found"))?;
 
-        // Ok(Box::new(PSQLWriter { child, stdin }))
-        Err(anyhow!("Not implemented"))
+        Ok(Box::new(PSQLWriter { child, stdin }))
     }
 
     async fn migration_apply(&self, migration: &str) -> Result<String> {
