@@ -4,7 +4,8 @@
 
 use crate::config::FolderPather;
 use crate::engine::{DatabaseConfig, Engine, EngineOutputter, EngineWriter};
-use crate::escape::{EscapedIdentifier, EscapedLiteral};
+use crate::escape::{EscapedIdentifier, EscapedLiteral, EscapedQuery, InsecureRawSql};
+use crate::sql_query;
 use crate::store::pinner::latest::Latest;
 use crate::store::{operator_from_includedir, Store};
 use anyhow::{anyhow, Context, Result};
@@ -23,8 +24,6 @@ pub struct PSQL {
     spawn_schema_ident: EscapedIdentifier,
     /// Schema name as an escaped literal (for use in WHERE clauses)
     spawn_schema_literal: EscapedLiteral,
-    /// Database name as an escaped identifier
-    spawn_database_ident: EscapedIdentifier,
 }
 
 static PROJECT_DIR: Dir<'_> = include_dir!("./static/engine-migrations/postgres-psql");
@@ -48,13 +47,11 @@ impl PSQL {
         // Use type-safe escaped types - escaping happens at construction time
         let spawn_schema_ident = EscapedIdentifier::new(&config.spawn_schema);
         let spawn_schema_literal = EscapedLiteral::new(&config.spawn_schema);
-        let spawn_database_ident = EscapedIdentifier::new(&config.spawn_database);
 
         Ok(Box::new(Self {
             psql_command,
             spawn_schema_ident,
             spawn_schema_literal,
-            spawn_database_ident,
         }))
     }
 }
@@ -174,14 +171,13 @@ impl PSQL {
         Ok(())
     }
 
-    fn execute_sql(&self, sql: &str, format: Option<&str>) -> Result<String> {
+    fn execute_sql(&self, query: &EscapedQuery, format: Option<&str>) -> Result<String> {
         let mut writer = self.new_writer()?;
-        // Database name is type-safe escaped identifier
-        writer.write_all(format!("\\c {}\n", self.spawn_database_ident.as_str()).as_bytes())?;
+        // Assumes psql_command already connects to the correct database
         if let Some(format) = format {
             writer.write_all(format!("\\pset format {}\n", format).as_bytes())?;
         }
-        writer.write_all(sql.as_bytes())?;
+        writer.write_all(query.as_str().as_bytes())?;
         let mut outputter = writer.finalise()?;
         let output = outputter.output()?;
         // Error if we can't read:
@@ -191,7 +187,7 @@ impl PSQL {
     }
 
     fn migration_table_exists(&self) -> Result<bool> {
-        let check_table_sql = format!(
+        let query = sql_query!(
             r#"
             \x
             SELECT EXISTS (
@@ -200,22 +196,22 @@ impl PSQL {
                 AND table_name = 'migration'
             );
             "#,
-            self.spawn_schema_literal.as_str()
+            self.spawn_schema_literal
         );
 
-        let output = self.execute_sql(&check_table_sql, Some("csv"))?;
+        let output = self.execute_sql(&query, Some("csv"))?;
         Ok(output.contains("exists,t"))
     }
 
     fn get_applied_migrations(&self) -> Result<String> {
         // TODO: rewrite this to return a proper HashMap of names, rather than
         // relying on crude pattern matching.
-        let check_migrations_sql = format!(
+        let query = sql_query!(
             "SELECT name FROM {}.migration WHERE namespace = 'spawn';",
-            self.spawn_schema_ident.as_str()
+            self.spawn_schema_ident
         );
 
-        self.execute_sql(&check_migrations_sql, Some("csv"))
+        self.execute_sql(&query, Some("csv"))
     }
 
     fn get_applied_migrations_set(&self) -> Result<HashSet<String>> {
@@ -247,7 +243,8 @@ impl PSQL {
 
         // Record duration of execute_sql:
         let start_time = Instant::now();
-        self.execute_sql(&formatted_sql, None)?;
+        let apply_query = sql_query!("{}", InsecureRawSql::new(&formatted_sql));
+        self.execute_sql(&apply_query, None)?;
         let duration = start_time.elapsed().as_secs_f32();
 
         let checksum = xxhash3_128::Hasher::oneshot(&formatted_sql.as_bytes());
@@ -258,11 +255,12 @@ impl PSQL {
         let safe_pin_hash = EscapedLiteral::new(pin_hash);
 
         // Record the migration (schema is pre-escaped in struct)
-        let record_sql = format!(
+        let duration_interval = InsecureRawSql::new(&format!("INTERVAL '{} second'", duration));
+        let record_query = sql_query!(
             r#"
 BEGIN;
-INSERT INTO {schema}.migration (name, namespace) VALUES ({name}, 'spawn');
-INSERT INTO {schema}.migration_history (
+INSERT INTO {}.migration (name, namespace) VALUES ({}, 'spawn');
+INSERT INTO {}.migration_history (
     migration_id_migration,
     activity_id_activity,
     created_by,
@@ -280,21 +278,24 @@ SELECT
     '',
     '',
     'SUCCESS',
-    {checksum},
-    INTERVAL '{duration} second',
-    {pin_hash}
-FROM {schema}.migration
-WHERE name = {name} AND namespace = 'spawn';
+    {},
+    {},
+    {}
+FROM {}.migration
+WHERE name = {} AND namespace = 'spawn';
 COMMIT;
 "#,
-            schema = self.spawn_schema_ident.as_str(),
-            name = safe_migration_name.as_str(),
-            checksum = safe_checksum.as_str(),
-            duration = duration,
-            pin_hash = safe_pin_hash.as_str(),
+            self.spawn_schema_ident,
+            safe_migration_name,
+            self.spawn_schema_ident,
+            safe_checksum,
+            duration_interval,
+            safe_pin_hash,
+            self.spawn_schema_ident,
+            safe_migration_name,
         );
 
-        self.execute_sql(&record_sql, None)?;
+        self.execute_sql(&record_query, None)?;
         Ok(())
     }
 }
