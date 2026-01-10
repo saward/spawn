@@ -30,7 +30,7 @@ impl Migrator {
     /// Creates the migration folder with blank setup.
     pub async fn create_migration(&self) -> Result<String> {
         // TODO: return error if migration already exists.
-        let path = self.config.migration_folder(&self.name);
+        let path = self.config.pather().migration_folder(&self.name);
 
         let script_path = format!("{}/up.sql", &path);
         println!("creating migration at {}", &script_path);
@@ -49,12 +49,12 @@ impl Migrator {
         variables: Option<crate::variables::Variables>,
     ) -> Result<template::Generation> {
         let lock_file = if self.use_pinned {
-            let path = self.config.migration_lock_file_path(&self.name);
+            let path = self.config.pather().migration_lock_file_path(&self.name);
             Some(path)
         } else {
             None
         };
-        let script_path = &self.config.migration_script_file_path(&self.name);
+        let script_path = &self.config.pather().migration_script_file_path(&self.name);
         println!("generate script path: {}", script_path);
         template::generate(&self.config, lock_file, script_path, variables).await
     }

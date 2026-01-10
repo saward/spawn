@@ -55,8 +55,8 @@ pub async fn generate(
             .await
             .context("could not load pinned files lock file")?;
         let pinner = Spawn::new_with_root_hash(
-            cfg.pinned_folder(),
-            cfg.components_folder(),
+            cfg.pather().pinned_folder(),
+            cfg.pather().components_folder(),
             &lock.pin,
             &cfg.operator(),
         )
@@ -64,11 +64,11 @@ pub async fn generate(
         .context("could not get new root with hash")?;
         Box::new(pinner)
     } else {
-        let pinner = Latest::new(cfg.spawn_folder_path())?;
+        let pinner = Latest::new(cfg.pather().spawn_folder_path())?;
         Box::new(pinner)
     };
 
-    let store = Store::new(pinner, cfg.operator().clone())
+    let store = Store::new(pinner, cfg.operator().clone(), cfg.pather())
         .context("could not create new store for generate")?;
     let db_config = cfg
         .db_config()

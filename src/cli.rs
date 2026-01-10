@@ -135,15 +135,17 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                     Ok(Outcome::NewMigration(mg.create_migration().await?))
                 }
                 Some(MigrationCommands::Pin { migration }) => {
-                    let mut pinner =
-                        Spawn::new(main_config.pinned_folder(), main_config.components_folder())
-                            .context("could not get pinned_folder")?;
+                    let mut pinner = Spawn::new(
+                        main_config.pather().pinned_folder(),
+                        main_config.pather().components_folder(),
+                    )
+                    .context("could not get pinned_folder")?;
 
                     let root = pinner
                         .snapshot(&main_config.operator())
                         .await
                         .context("error calling pinner snapshot")?;
-                    let lock_file_path = main_config.migration_lock_file_path(&migration);
+                    let lock_file_path = main_config.pather().migration_lock_file_path(&migration);
                     let toml_str = toml::to_string_pretty(&LockData { pin: root.clone() })
                         .context("could not not convert pin data to toml")?;
                     base_op
@@ -241,7 +243,7 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                         let mut tests: Vec<String> = Vec::new();
                         let mut fs_lister = main_config
                             .operator()
-                            .lister(&main_config.tests_folder())
+                            .lister(&main_config.pather().tests_folder())
                             .await?;
                         while let Some(entry) = fs_lister.try_next().await? {
                             let path = entry.path().to_string();

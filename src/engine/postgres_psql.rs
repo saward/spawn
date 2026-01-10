@@ -3,12 +3,11 @@
 // build in PSQL helper commands.
 
 use crate::engine::{DatabaseConfig, Engine, EngineOutputter, EngineWriter};
+use crate::store::operator_from_includedir;
 use crate::template;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use include_dir::{include_dir, Dir, DirEntry};
-use object_store::memory::InMemory;
-use object_store::{ObjectStore, PutPayload};
+use include_dir::{include_dir, Dir};
 use std::io::{self, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::Instant;
@@ -67,7 +66,8 @@ impl Engine for PSQL {
             .take()
             .ok_or(anyhow::anyhow!("no stdin found"))?;
 
-        Ok(Box::new(PSQLWriter { child, stdin }))
+        // Ok(Box::new(PSQLWriter { child, stdin }))
+        Err(anyhow!("Not implemented"))
     }
 
     async fn migration_apply(&self, migration: &str) -> Result<String> {
@@ -91,36 +91,15 @@ impl PSQL {
         Ok(output)
     }
 
-    // Helper function to recursively collect all files
-    async fn collect_files(dir: &Dir<'_>, fs: &mut Box<InMemory>) -> Result<()> {
-        for entry in dir.entries() {
-            match entry {
-                DirEntry::Dir(subdir) => Box::pin(Self::collect_files(subdir, fs)).await?,
-                DirEntry::File(file) => {
-                    let path = file.path().to_string_lossy().to_string();
-                    let contents = file.contents().to_vec();
-                    let payload: PutPayload = contents.into();
-                    println!("pushing to path {:?}", path);
-                    fs.put(&path.into(), payload).await?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     pub async fn update_schema(&self) -> Result<()> {
         // create a store so that we can generate our migrations using the
         // standard methods.
-        let _migration_table_exists = self.migration_table_exists()?;
+        let migration_table_exists = self.migration_table_exists()?;
 
-        // Create a memory store to use with generation:
-        let mut fs = Box::new(InMemory::new());
+        // // Create a memory operator from the included directory:
+        // let op = operator_from_includedir(&PROJECT_DIR, None).await?;
 
-        // Write all files from PROJECT_DIR to fs:
-        PSQL::collect_files(&PROJECT_DIR, &mut fs).await?;
-
-        template::generate_with_store(contents, variables, environment, store);
+        // template::generate_with_store(contents, variables, environment, op);
 
         // if migration_table_exists {
         //     // Check which migrations have been applied and apply missing ones
@@ -202,6 +181,7 @@ impl PSQL {
         // Record the migration
         let record_sql = format!(
             r#"
+BEGIN;
 INSERT INTO {}.migration (name, namespace) VALUES ('{}', 'spawn');
 INSERT INTO {}.migration_history (
     migration_id_migration,
@@ -226,6 +206,7 @@ SELECT
     {}
 FROM {}.migration
 WHERE name = '{}' AND namespace = 'spawn';
+COMMIT;
 "#,
             &self.spawn_schema,
             &migration_name,

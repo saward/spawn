@@ -77,67 +77,13 @@ impl ConfigLoaderSaver {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Config {
-    spawn_folder: String,
-    pub database: String,
-    pub environment: Option<String>, // Override the environment for the db config
-    pub databases: HashMap<String, DatabaseConfig>,
-
-    // base_fs is the operator we used to load config, and may be the one we use
-    // for all other interactions too.
-    base_fs: Operator,
-    // spawn_fs, when set, is an operator that differs from the one we used to
-    // load the config.  Usually this will happen when our config file points to
-    // another filesystem/location that should be used for spawn.
-    spawn_fs: Option<Operator>,
+pub struct FolderPather {
+    pub spawn_folder: String,
 }
 
-impl Config {
+impl FolderPather {
     pub fn spawn_folder_path(&self) -> &str {
         self.spawn_folder.as_ref()
-    }
-
-    pub fn new_engine(&self) -> Result<Box<dyn Engine>> {
-        let db_config = self.db_config()?;
-
-        match db_config.engine {
-            EngineType::PostgresPSQL => Ok(PSQL::new(&db_config)?),
-            _ => Err(anyhow!(
-                "no engine with name '{}' exists",
-                &db_config.engine
-            )),
-        }
-    }
-
-    pub fn db_config(&self) -> Result<DatabaseConfig> {
-        let mut conf = self
-            .databases
-            .get(&self.database)
-            .ok_or(anyhow!(
-                "no database defined with name '{}'",
-                &self.database
-            ))?
-            .clone();
-
-        if let Some(env) = &self.environment {
-            conf.environment = env.clone();
-        }
-
-        Ok(conf)
-    }
-
-    pub async fn load(path: &str, op: &Operator, database: Option<String>) -> Result<Config> {
-        let config_loader = ConfigLoaderSaver::load(path, op, database).await?;
-        Ok(config_loader.build(op.clone(), None))
-    }
-
-    pub fn operator(&self) -> &Operator {
-        if let Some(spawn_fs) = &self.spawn_fs {
-            &spawn_fs
-        } else {
-            &self.base_fs
-        }
     }
 
     pub fn pinned_folder(&self) -> String {
@@ -197,6 +143,72 @@ impl Config {
         s.push('/');
         s.push_str(PINFILE_LOCK_NAME);
         s
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Config {
+    spawn_folder: String,
+    pub database: String,
+    pub environment: Option<String>, // Override the environment for the db config
+    pub databases: HashMap<String, DatabaseConfig>,
+
+    // base_fs is the operator we used to load config, and may be the one we use
+    // for all other interactions too.
+    base_fs: Operator,
+    // spawn_fs, when set, is an operator that differs from the one we used to
+    // load the config.  Usually this will happen when our config file points to
+    // another filesystem/location that should be used for spawn.
+    spawn_fs: Option<Operator>,
+}
+
+impl Config {
+    pub fn pather(&self) -> FolderPather {
+        FolderPather {
+            spawn_folder: self.spawn_folder.clone(),
+        }
+    }
+
+    pub fn new_engine(&self) -> Result<Box<dyn Engine>> {
+        let db_config = self.db_config()?;
+
+        match db_config.engine {
+            EngineType::PostgresPSQL => Ok(PSQL::new(&db_config)?),
+            _ => Err(anyhow!(
+                "no engine with name '{}' exists",
+                &db_config.engine
+            )),
+        }
+    }
+
+    pub fn db_config(&self) -> Result<DatabaseConfig> {
+        let mut conf = self
+            .databases
+            .get(&self.database)
+            .ok_or(anyhow!(
+                "no database defined with name '{}'",
+                &self.database
+            ))?
+            .clone();
+
+        if let Some(env) = &self.environment {
+            conf.environment = env.clone();
+        }
+
+        Ok(conf)
+    }
+
+    pub async fn load(path: &str, op: &Operator, database: Option<String>) -> Result<Config> {
+        let config_loader = ConfigLoaderSaver::load(path, op, database).await?;
+        Ok(config_loader.build(op.clone(), None))
+    }
+
+    pub fn operator(&self) -> &Operator {
+        if let Some(spawn_fs) = &self.spawn_fs {
+            &spawn_fs
+        } else {
+            &self.base_fs
+        }
     }
 
     pub async fn load_lock_file(&self, lock_file_path: &str) -> Result<LockData> {

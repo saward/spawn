@@ -127,7 +127,7 @@ impl MigrationTestHelper {
         let cfg = self.load_config().await?;
 
         // Replace the content of the migration file with the provided script content
-        let migration_path = cfg.migration_script_file_path(&migration_name);
+        let migration_path = cfg.pather().migration_script_file_path(&migration_name);
         self.fs.write(&migration_path, script_content).await?;
 
         Ok(migration_name.clone())
@@ -212,7 +212,7 @@ async fn test_create_migration() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = helper.load_config().await?;
 
     // Check that <migration folder>/up.sql exists:
-    let script_path = format!("{}/up.sql", cfg.migration_folder(&migration_name));
+    let script_path = format!("{}/up.sql", cfg.pather().migration_folder(&migration_name));
 
     // Check the contents are what we expect:
     let file_data = helper.fs.read(&script_path).await?.to_bytes();

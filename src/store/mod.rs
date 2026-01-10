@@ -1,5 +1,7 @@
+use crate::config::FolderPather;
 use anyhow::{Context, Result};
 use futures::TryStreamExt;
+use include_dir::{Dir, DirEntry};
 use opendal::services::Memory;
 use opendal::Operator;
 use std::fmt::Debug;
@@ -11,6 +13,7 @@ pub mod pinner;
 pub struct Store {
     pinner: Box<dyn Pinner>,
     fs: Operator,
+    pather: FolderPather,
 }
 
 impl Debug for Store {
@@ -23,17 +26,8 @@ impl Debug for Store {
 }
 
 impl Store {
-    pub fn new(pinner: Box<dyn Pinner>, fs: Operator) -> Result<Store> {
-        // We need subdirectory passed in, because we can't guarantee that
-        // operator is set to the root spawn folder.  The reason why operator
-        // isn't guaranteed is because doing so made it tricky to implement
-        // some tests, for reasons I cannot recall, but relate to the
-        // possibility that the location of the config file may or may not
-        // be the same filesystem as where the other spawn files are.  If
-        // opendal one day supports the ability to get a new operator from
-        // an old, with a new root set, that will solve issue.  RFC:
-        // https://github.com/apache/opendal/blob/main/core/core/src/docs/rfcs/3197_config.md
-        Ok(Store { pinner, fs })
+    pub fn new(pinner: Box<dyn Pinner>, fs: Operator, pather: FolderPather) -> Result<Store> {
+        Ok(Store { pinner, fs, pather })
     }
 
     pub async fn load_component(&self, name: &str) -> Result<Option<String>> {
@@ -48,6 +42,19 @@ impl Store {
         let contents = String::from_utf8(bytes.to_vec())?;
 
         Ok(contents)
+    }
+
+    pub async fn list_migrations(&self) -> Result<Vec<String>> {
+        let mut migrations: Vec<String> = Vec::new();
+        let mut fs_lister = self.fs.lister(&self.pather.migrations_folder()).await?;
+        while let Some(entry) = fs_lister.try_next().await? {
+            let path = entry.path().to_string();
+            if path.ends_with("/") {
+                migrations.push(path)
+            }
+        }
+
+        Ok(migrations)
     }
 }
 
@@ -128,4 +135,92 @@ pub async fn populate_store_from_store(
     }
 
     Ok(())
+}
+
+/// Creates a memory-based OpenDAL operator from an include_dir bundle.
+///
+/// This function takes a bundled directory (created with include_dir!) and
+/// creates an in-memory OpenDAL operator containing all files from that bundle.
+/// This is useful for embedding migrations, templates, or other static files
+/// directly into the binary while still being able to use OpenDAL's interface.
+///
+/// # Arguments
+///
+/// * `included_dir` - A reference to a Dir created with include_dir! macro
+/// * `dest_prefix` - Optional prefix to add to all file paths in the operator
+///
+/// # Returns
+///
+/// A memory-based OpenDAL operator containing all files from the bundled directory
+pub async fn operator_from_includedir(dir: &Dir<'_>, dest_prefix: Option<&str>) -> Result<()> {
+    // Create a memory operator
+    let dest_service = Memory::default();
+    let operator = Operator::new(dest_service)?.finish();
+
+    let prefix = dest_prefix.unwrap_or_default();
+
+    // First collect all file information
+    let mut files_to_write = Vec::new();
+    collect_files_from_dir(dir, "", &mut files_to_write);
+
+    // Then write all files to the operator
+    for (dest_path, contents) in files_to_write {
+        let final_path = format!("{}{}", prefix, dest_path);
+        operator
+            .write(&final_path, contents)
+            .await
+            .context(format!("Failed to write file {}", final_path))?;
+    }
+
+    Ok(())
+}
+
+// Helper function to recursively collect file information
+fn collect_files_from_dir(dir: &Dir<'_>, current_path: &str, files: &mut Vec<(String, Vec<u8>)>) {
+    for entry in dir.entries() {
+        match entry {
+            DirEntry::Dir(subdir) => {
+                let new_path = if current_path.is_empty() {
+                    subdir.path().to_string_lossy().to_string()
+                } else {
+                    format!(
+                        "{}/{}",
+                        current_path,
+                        subdir.path().file_name().unwrap().to_string_lossy()
+                    )
+                };
+                collect_files_from_dir(subdir, &new_path, files);
+            }
+            DirEntry::File(file) => {
+                let file_path = if current_path.is_empty() {
+                    file.path().to_string_lossy().to_string()
+                } else {
+                    format!(
+                        "{}/{}",
+                        current_path,
+                        file.path().file_name().unwrap().to_string_lossy()
+                    )
+                };
+                files.push((file_path, file.contents().to_vec()));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use include_dir::{include_dir, Dir};
+
+    // Create a test directory structure for testing
+    static TEST_DIR: Dir<'_> = include_dir!("./static");
+
+    #[tokio::test]
+    async fn test_operator_from_includedir_with_prefix() {
+        let result = operator_from_includedir(&TEST_DIR, Some("test-prefix/")).await;
+        assert!(
+            result.is_ok(),
+            "Should create operator with prefix successfully"
+        );
+    }
 }

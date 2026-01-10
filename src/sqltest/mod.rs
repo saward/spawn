@@ -31,13 +31,13 @@ impl Tester {
     }
 
     pub fn components_folder(&self) -> String {
-        let mut s = self.config.spawn_folder_path().to_string();
+        let mut s = self.config.pather().spawn_folder_path().to_string();
         s.push_str("/components");
         s
     }
 
     pub fn tests_folder(&self) -> String {
-        let mut s = self.config.spawn_folder_path().to_string();
+        let mut s = self.config.pather().spawn_folder_path().to_string();
         s.push_str("/tests");
         s
     }
