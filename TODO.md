@@ -6,7 +6,7 @@
 - [x] Create empty migrations.
 - [x] Variables supported, for substitution (`spawn run migration build 20240907212659-initial testvars.[json|toml|yamll]`, available under `variables` in templates).
 - [x] Escape variables by default so that injection attacks are harder.
-- [ ] Idempotently apply migrations to database.
+- [x] Idempotently apply migrations to database.
 - [ ] Support for rollback scripts as an optional part of migrations.
 - [ ] Repeatable migrations, including hashing the output (with variables perhaps) to check if it's been applied yet, and apply it if not.
 - [ ] Migration dependencies, so that we can allow applying migrations out of order, but only if their dependencies have been applied.
