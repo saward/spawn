@@ -5,6 +5,7 @@
 - [x] Plain SQL mostly, or rather generates plain SQL that can be modified.
 - [x] Create empty migrations.
 - [x] Variables supported, for substitution (`spawn run migration build 20240907212659-initial testvars.[json|toml|yamll]`, available under `variables` in templates).
+- [x] Escape variables by default so that injection attacks are harder.
 - [ ] Idempotently apply migrations to database.
 - [ ] Support for rollback scripts as an optional part of migrations.
 - [ ] Repeatable migrations, including hashing the output (with variables perhaps) to check if it's been applied yet, and apply it if not.
@@ -68,6 +69,7 @@
 
 ## Data & I/O
 
+- [ ] Refactor the migration execution to use tokio::task::spawn_blocking with the synchronous postgres crate, using SyncIoBridge to convert the async OpenDAL input into a synchronous stream. This restores deterministic RAII transaction rollback (Drop safety) while maintaining low-memory streaming from S3 through Minijinja. No need to store entire input or output in memory at one time.
 - [ ] Allow reading data from file types like csv's and use in templates, so you can loop over csv data to create insert(s), updates, whatever.
 - [ ] Provide a way to import data from other sources? E.g., from a URL or script. Need to consider security implications.
 - [ ] Handle secrets.

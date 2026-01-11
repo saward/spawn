@@ -194,3 +194,74 @@ Ideally then we can choose any combination of these two things. Our pin choice (
 # Testing
 
 As we are using opendal for the filesystem, we can take advantage of its memory storage to run our tests. Therefore, a lot of tests will involve creating files within the memory storage, and inspecting it there, and also have automatic cleanup at the end.
+
+## Running Tests
+
+### Unit Tests
+
+Unit tests use in-memory storage and don't require any external dependencies:
+
+```bash
+cargo test --lib --bins
+cargo test --test migration_build
+```
+
+### Integration Tests (PostgreSQL)
+
+Integration tests require a running PostgreSQL instance. They are marked with `#[ignore]` so they don't run during normal `cargo test`.
+
+**Local development (with Docker):**
+
+1. Start the PostgreSQL container:
+
+   ```bash
+   docker compose up -d
+   ```
+
+2. Run the integration tests:
+   ```bash
+   cargo test --test integration_postgres -- --ignored
+   ```
+
+**CI mode (direct PostgreSQL connection):**
+
+Set environment variables for direct psql connection:
+
+```bash
+SPAWN_TEST_PSQL_HOST=localhost \
+SPAWN_TEST_PSQL_PORT=5432 \
+SPAWN_TEST_PSQL_USER=spawn \
+PGPASSWORD=spawn \
+cargo test --test integration_postgres -- --ignored
+```
+
+**Running a specific integration test:**
+
+```bash
+cargo test --test integration_postgres test_migration_is_idempotent -- --ignored --nocapture
+```
+
+**Keeping test databases for inspection:**
+
+By default, test databases are dropped after each test. Set `SPAWN_TEST_KEEP_DB` to preserve them:
+
+```bash
+SPAWN_TEST_KEEP_DB=1 cargo test --test integration_postgres test_migration_creates_table -- --ignored --nocapture
+```
+
+This will print the database name and connection instructions so you can inspect the results.
+
+### Test Isolation
+
+Each integration test creates its own unique database, allowing tests to run in parallel without interference. The test databases are automatically cleaned up after each test completes.
+
+### Running All Tests
+
+```bash
+# Run unit tests only (fast, no dependencies)
+cargo test
+
+# Run everything including integration tests
+docker compose up -d
+cargo test -- --ignored
+```
