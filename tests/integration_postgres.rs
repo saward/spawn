@@ -34,7 +34,10 @@
 //! template, allowing tests to run in parallel without interference. The test
 //! databases are cleaned up after each test.
 
+mod migration_build;
+
 use anyhow::{Context, Result};
+use migration_build::MigrationTestHelper;
 use opendal::services::Memory;
 use opendal::Operator;
 use spawn::{
@@ -50,7 +53,9 @@ use uuid::Uuid;
 /// Configuration for connecting to the test PostgreSQL instance (Docker mode)
 const DOCKER_CONTAINER: &str = "spawn-db";
 const DEFAULT_POSTGRES_USER: &str = "spawn";
-const DEFAULT_CREATE_DATABASE_DATABASE: &str = "postgres";
+// This database is one that isn't used for tests or for with WITH TEMPLATE, so
+// that we don't cause issues with other tests.
+const DEFAULT_NEUTRAL_DATABASE: &str = "postgres";
 const TEMPLATE_DATABASE: &str = "spawn";
 
 /// Determines the connection mode based on environment variables
@@ -115,7 +120,7 @@ impl ConnectionMode {
     }
 
     /// Execute a SQL command and return the output. The PSQL engine itself has
-    /// its own execute function. This is used for test verification reasons
+    /// its own execute function. This is used for test verification.
     fn execute_sql(&self, database: &str, sql: &str) -> Result<std::process::Output> {
         match self {
             ConnectionMode::Docker { container, user } => Command::new("docker")
@@ -150,7 +155,7 @@ impl ConnectionMode {
 
 /// Helper struct for integration tests that manages database lifecycle
 pub struct IntegrationTestHelper {
-    fs: Operator,
+    migration_helper: MigrationTestHelper,
     db_name: String,
     test_name: String,
     connection_mode: ConnectionMode,
@@ -190,38 +195,35 @@ impl IntegrationTestHelper {
         let mem_service = Memory::default();
         let mem_op = Operator::new(mem_service)?.finish();
 
+        // Create the database config for this test
+        let config_loader = Self::create_config(&db_name, &connection_mode);
+
+        // Use MigrationTestHelper for filesystem and config management
+        let migration_helper =
+            MigrationTestHelper::new_from_operator_with_config(mem_op, config_loader).await?;
+
         let helper = Self {
-            fs: mem_op,
+            migration_helper,
             db_name: db_name.clone(),
             test_name: test_name.to_string(),
             connection_mode,
             keep_db,
         };
 
-        // Initialize config pointing to our test database
-        let config_loader = helper.create_config();
-        config_loader
-            .save(&helper.config_path(), &helper.fs)
-            .await?;
-
         Ok(helper)
     }
 
-    fn config_path(&self) -> String {
-        "./spawn.toml".to_string()
-    }
-
     /// Creates a database config that points to our isolated test database
-    fn create_config(&self) -> ConfigLoaderSaver {
+    fn create_config(db_name: &str, connection_mode: &ConnectionMode) -> ConfigLoaderSaver {
         let mut databases = HashMap::new();
         databases.insert(
             "postgres_psql".to_string(),
             DatabaseConfig {
                 engine: EngineType::PostgresPSQL,
-                spawn_database: self.db_name.clone(),
+                spawn_database: db_name.to_string(),
                 spawn_schema: "_spawn".to_string(),
                 environment: "test".to_string(),
-                command: Some(self.connection_mode.psql_command(&self.db_name)),
+                command: Some(connection_mode.psql_command(db_name)),
             },
         );
 
@@ -238,7 +240,7 @@ impl IntegrationTestHelper {
         // Don't connect to our database we intend to run WITH TEMPLATE against
         // because then it will sometimes fail.
         let output = mode.execute_sql(
-            DEFAULT_CREATE_DATABASE_DATABASE,
+            DEFAULT_NEUTRAL_DATABASE,
             &format!(
                 "CREATE DATABASE \"{}\" WITH TEMPLATE \"{}\"",
                 db_name, TEMPLATE_DATABASE
@@ -261,7 +263,7 @@ impl IntegrationTestHelper {
     fn drop_test_database(&self) -> Result<()> {
         // First, terminate any connections to the database
         let _ = self.connection_mode.execute_sql(
-            TEMPLATE_DATABASE,
+            DEFAULT_NEUTRAL_DATABASE,
             &format!(
                 "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{}'",
                 self.db_name
@@ -269,7 +271,7 @@ impl IntegrationTestHelper {
         );
 
         let output = self.connection_mode.execute_sql(
-            TEMPLATE_DATABASE,
+            DEFAULT_NEUTRAL_DATABASE,
             &format!("DROP DATABASE IF EXISTS \"{}\"", self.db_name),
         )?;
 
@@ -284,44 +286,11 @@ impl IntegrationTestHelper {
         Ok(())
     }
 
-    /// Creates a new migration in the test environment
-    pub async fn create_migration(&self, name: &str) -> Result<String> {
-        let cli = Cli {
-            debug: false,
-            config_file: self.config_path(),
-            database: None,
-            command: Some(Commands::Migration {
-                command: Some(MigrationCommands::New {
-                    name: name.to_string(),
-                }),
-                environment: None,
-            }),
-        };
-
-        let outcome = run_cli(cli, &self.fs).await?;
-
-        match outcome {
-            Outcome::NewMigration(name) => Ok(name),
-            _ => Err(anyhow::anyhow!("Unexpected outcome from migration new")),
-        }
-    }
-
-    /// Creates a migration with custom SQL content
-    pub async fn create_migration_with_content(&self, name: &str, content: &str) -> Result<String> {
-        let migration_name = self.create_migration(name).await?;
-
-        // Write the custom content to the migration file
-        let migration_path = format!("/db/migrations/{}/up.sql", migration_name);
-        self.fs.write(&migration_path, content.to_string()).await?;
-
-        Ok(migration_name)
-    }
-
     /// Applies a migration to the test database
     pub async fn apply_migration(&self, migration_name: &str) -> Result<()> {
         let cli = Cli {
             debug: false,
-            config_file: self.config_path(),
+            config_file: self.migration_helper.config_path().to_string(),
             database: None,
             command: Some(Commands::Migration {
                 command: Some(MigrationCommands::Apply {
@@ -333,7 +302,7 @@ impl IntegrationTestHelper {
             }),
         };
 
-        let outcome = run_cli(cli, &self.fs).await?;
+        let outcome = run_cli(cli, self.migration_helper.fs()).await?;
 
         match outcome {
             Outcome::AppliedMigrations => Ok(()),
@@ -388,14 +357,9 @@ impl Drop for IntegrationTestHelper {
     }
 }
 
-/// Checks if PostgreSQL is available (works for both Docker and direct modes)
-fn postgres_available() -> bool {
-    ConnectionMode::from_env().is_ready()
-}
-
 /// Helper to check PostgreSQL availability and fail the test if not available
 fn require_postgres() -> Result<()> {
-    if !postgres_available() {
+    if !ConnectionMode::from_env().is_ready() {
         return Err(anyhow::anyhow!(
             "PostgreSQL is not available. Start it with: docker compose up -d"
         ));
@@ -441,7 +405,8 @@ CREATE TABLE test_users (
 COMMIT;"#;
 
     let migration_name = helper
-        .create_migration_with_content("create-users-table", migration_content)
+        .migration_helper
+        .create_migration_manual("create-users-table", migration_content.to_string())
         .await?;
 
     // Apply the migration
@@ -473,7 +438,8 @@ CREATE TABLE IF NOT EXISTS idempotent_test (
 COMMIT;"#;
 
     let migration_name = helper
-        .create_migration_with_content("idempotent-table", migration_content)
+        .migration_helper
+        .create_migration_manual("idempotent-table", migration_content.to_string())
         .await?;
 
     // Apply the migration twice - should not error
@@ -481,7 +447,6 @@ COMMIT;"#;
 
     // The second apply should recognize it's already applied
     // (This tests the migration tracking in _spawn schema)
-    // Note: Depending on implementation, this might skip or error gracefully
 
     assert!(
         helper.table_exists("public", "idempotent_test")?,
@@ -504,7 +469,8 @@ SELECT 1;
 COMMIT;"#;
 
     let migration_name = helper
-        .create_migration_with_content("trigger-schema", migration_content)
+        .migration_helper
+        .create_migration_manual("trigger-schema", migration_content.to_string())
         .await?;
 
     helper.apply_migration(&migration_name).await?;
@@ -534,7 +500,8 @@ CREATE TABLE recorded_test (
 COMMIT;"#;
 
     let migration_name = helper
-        .create_migration_with_content("recorded-migration", migration_content)
+        .migration_helper
+        .create_migration_manual("recorded-migration", migration_content.to_string())
         .await?;
 
     helper.apply_migration(&migration_name).await?;

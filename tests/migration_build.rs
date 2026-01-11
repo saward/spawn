@@ -21,11 +21,16 @@ COMMIT;
 /// Reusable test helper structure for setting up migration tests
 pub struct MigrationTestHelper {
     fs: Operator,
+    config_path: String,
 }
 
 impl MigrationTestHelper {
-    fn config_path(&self) -> String {
-        "./spawn.toml".to_string()
+    pub fn config_path(&self) -> &str {
+        &self.config_path
+    }
+
+    pub fn fs(&self) -> &Operator {
+        &self.fs
     }
 }
 
@@ -50,10 +55,20 @@ impl MigrationTestHelper {
     }
 
     pub async fn new_from_operator(op: Operator) -> Result<Self> {
-        let mth = Self { fs: op };
+        Self::new_from_operator_with_config(op, Self::default_config_loadersaver()).await
+    }
 
-        let config_loader = Self::default_config_loadersaver();
-        config_loader.save(&mth.config_path(), &mth.fs).await?;
+    pub async fn new_from_operator_with_config(
+        op: Operator,
+        config_loader: ConfigLoaderSaver,
+    ) -> Result<Self> {
+        let config_path = "./spawn.toml".to_string();
+        let mth = Self {
+            fs: op,
+            config_path,
+        };
+
+        config_loader.save(&mth.config_path, &mth.fs).await?;
 
         Ok(mth)
     }
@@ -92,7 +107,7 @@ impl MigrationTestHelper {
     pub async fn create_migration(&self, name: &str) -> Result<String, anyhow::Error> {
         let cli = Cli {
             debug: false,
-            config_file: self.config_path(),
+            config_file: self.config_path().to_string(),
             database: None,
             command: Some(Commands::Migration {
                 command: Some(MigrationCommands::New {
@@ -127,7 +142,7 @@ impl MigrationTestHelper {
         let cfg = self.load_config().await?;
 
         // Replace the content of the migration file with the provided script content
-        let migration_path = cfg.pather().migration_script_file_path(&migration_name);
+        let migration_path = cfg.pather().migration_script_file_path(migration_name);
         self.fs.write(&migration_path, script_content).await?;
 
         Ok(migration_name.clone())
@@ -141,7 +156,7 @@ impl MigrationTestHelper {
     ) -> Result<String, anyhow::Error> {
         let cli = Cli {
             debug: false,
-            config_file: self.config_path(),
+            config_file: self.config_path().to_string(),
             database: None,
             command: Some(Commands::Migration {
                 command: Some(MigrationCommands::Build {
@@ -165,7 +180,7 @@ impl MigrationTestHelper {
     pub async fn pin_migration(&self, migration_name: &str) -> Result<String, anyhow::Error> {
         let cli = Cli {
             debug: false,
-            config_file: self.config_path(),
+            config_file: self.config_path().to_string(),
             database: None,
             command: Some(Commands::Migration {
                 command: Some(MigrationCommands::Pin {
