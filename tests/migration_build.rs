@@ -4,7 +4,7 @@ use opendal::services::Memory;
 use opendal::Operator;
 use pretty_assertions::assert_eq;
 use spawn::{
-    cli::{run_cli, Cli, Commands, MigrationCommands, Outcome},
+    cli::{run_cli, Cli, Commands, MigrationCommands, Outcome, TestCommands},
     config::{Config, ConfigLoaderSaver},
     engine::{DatabaseConfig, EngineType},
     store,
@@ -208,6 +208,42 @@ impl MigrationTestHelper {
             let file_data = self.fs.read(&entry.path()).await?.to_bytes();
             println!("(len {}). found {}", file_data.len(), entry.path());
         }
+
+        Ok(())
+    }
+
+    /// Runs test compare using the CLI 'test compare' command
+    pub async fn run_test_compare(&self, test_name: Option<String>) -> Result<(), anyhow::Error> {
+        let cli = Cli {
+            debug: false,
+            config_file: self.config_path().to_string(),
+            database: None,
+            command: Some(Commands::Test {
+                command: Some(TestCommands::Compare { name: test_name }),
+            }),
+        };
+
+        run_cli(cli, &self.fs)
+            .await
+            .context("error calling test compare")?;
+
+        Ok(())
+    }
+
+    /// Saves test expected output using the CLI 'test expect' command
+    pub async fn run_test_expect(&self, test_name: String) -> Result<(), anyhow::Error> {
+        let cli = Cli {
+            debug: false,
+            config_file: self.config_path().to_string(),
+            database: None,
+            command: Some(Commands::Test {
+                command: Some(TestCommands::Expect { name: test_name }),
+            }),
+        };
+
+        run_cli(cli, &self.fs)
+            .await
+            .context("error calling test expect")?;
 
         Ok(())
     }

@@ -5,7 +5,6 @@ use console::{style, Style};
 
 use similar::{ChangeTag, TextDiff};
 use std::fmt;
-use std::fs;
 use std::io::Write;
 
 use std::str;
@@ -37,7 +36,7 @@ impl Tester {
         s
     }
 
-    pub fn script_file_path(&self) -> String {
+    pub fn test_file_path(&self) -> String {
         let mut s = self.test_folder();
         s.push_str("/test.sql");
         s
@@ -47,12 +46,13 @@ impl Tester {
         format!("{}/expected", self.test_folder())
     }
 
-    /// Opens the specified script file and generates a migration script, compiled
+    /// Opens the specified script file and generates a test script, compiled
     /// using minijinja.
     pub async fn generate(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
         let lock_file = None;
 
-        let gen = template::generate(&self.config, lock_file, &self.script_path, variables).await?;
+        let gen =
+            template::generate(&self.config, lock_file, &self.test_file_path(), variables).await?;
         let content = gen.content;
 
         Ok(content)
@@ -82,8 +82,15 @@ impl Tester {
         variables: Option<crate::variables::Variables>,
     ) -> Result<TestOutcome> {
         let generated = self.run(variables).await?;
-        let expected = fs::read_to_string(&self.expected_file_path())
-            .context("unable to read expectations file")?;
+        let expected_bytes = self
+            .config
+            .operator()
+            .read(&self.expected_file_path())
+            .await
+            .context("unable to read expectations file")?
+            .to_bytes();
+        let expected = String::from_utf8(expected_bytes.to_vec())
+            .context("expected file is not valid UTF-8")?;
 
         let outcome = match self.compare(&generated, &expected) {
             Ok(()) => TestOutcome { diff: None },
@@ -100,7 +107,10 @@ impl Tester {
         variables: Option<crate::variables::Variables>,
     ) -> Result<()> {
         let content = self.run(variables).await?;
-        fs::write(&self.expected_file_path(), content)
+        self.config
+            .operator()
+            .write(&self.expected_file_path(), content)
+            .await
             .context("unable to write expectation file")?;
 
         Ok(())

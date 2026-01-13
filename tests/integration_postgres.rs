@@ -842,3 +842,18 @@ COMMIT;"#;
 
     Ok(())
 }
+
+#[tokio::test]
+#[ignore]
+async fn test_cli_test_compare() -> Result<()> {
+    require_postgres()?;
+
+    let helper = MigrationTestHelper::new_from_local_folder("./static/tests/test_cli_test").await?;
+
+    let test_name = "20250113000000-simple-test".to_string();
+
+    // Now run compare - it should pass since we just saved the expected output
+    helper.run_test_compare(Some(test_name)).await?;
+
+    Ok(())
+}

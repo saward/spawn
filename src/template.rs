@@ -1,12 +1,13 @@
 use crate::config;
 use crate::engine::EngineType;
+use crate::escape::EscapedIdentifier;
 use crate::store::pinner::latest::Latest;
 use crate::store::pinner::spawn::Spawn;
 use crate::store::pinner::Pinner;
 use crate::store::Store;
 use crate::template;
 use crate::variables::Variables;
-use minijinja::Environment;
+use minijinja::{Environment, Value};
 
 use crate::sql_formatter::SqlDialect;
 use uuid::Uuid;
@@ -36,6 +37,7 @@ pub fn template_env(store: Store, engine: &EngineType) -> Result<Environment<'st
     env.set_loader(move |name: &str| mj_store.load(name));
     env.add_function("gen_uuid_v4", gen_uuid_v4);
     env.add_function("gen_uuid_v5", gen_uuid_v5);
+    env.add_filter("escape_identifier", escape_identifier_filter);
 
     // Get the appropriate dialect for this engine
     let dialect = engine_to_dialect(engine);
@@ -147,6 +149,19 @@ fn gen_uuid_v4() -> Result<String, minijinja::Error> {
 
 fn gen_uuid_v5(seed: &str) -> Result<String, minijinja::Error> {
     Ok(Uuid::new_v5(&Uuid::NAMESPACE_DNS, seed.as_bytes()).to_string())
+}
+
+/// Filter to escape a value as a PostgreSQL identifier (e.g., database name, table name).
+///
+/// This wraps the value in double quotes and escapes any embedded double quotes,
+/// making it safe to use in SQL statements where an identifier is expected.
+///
+/// Usage in templates: `{{ dbname|escape_identifier }}`
+fn escape_identifier_filter(value: &Value) -> Result<Value, minijinja::Error> {
+    let s = value.to_string();
+    let escaped = EscapedIdentifier::new(&s);
+    // Return as a safe string so it won't be further escaped by the SQL formatter
+    Ok(Value::from_safe_string(escaped.to_string()))
 }
 
 pub struct Generation {
