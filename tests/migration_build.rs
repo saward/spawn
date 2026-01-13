@@ -4,7 +4,7 @@ use opendal::services::Memory;
 use opendal::Operator;
 use pretty_assertions::assert_eq;
 use spawn::{
-    cli::{run_cli, Cli, Commands, MigrationCommands, Outcome, TestCommands},
+    cli::{run_cli, Cli, Commands, MigrationCommands, Outcome},
     config::{Config, ConfigLoaderSaver},
     engine::{DatabaseConfig, EngineType},
     store,
@@ -20,7 +20,7 @@ COMMIT;
 
 /// Reusable test helper structure for setting up migration tests
 pub struct MigrationTestHelper {
-    fs: Operator,
+    pub fs: Operator,
     config_path: String,
 }
 
@@ -48,10 +48,11 @@ impl MigrationTestHelper {
     }
 
     pub async fn new_from_local_folder(folder: &str) -> Result<Self> {
-        let mem_op =
-            store::disk_to_operator(folder, Some("/db/"), store::DesiredOperator::Memory).await?;
+        Self::new_from_operator(Self::operator_from_local_folder(folder).await?).await
+    }
 
-        Self::new_from_operator(mem_op).await
+    pub async fn operator_from_local_folder(folder: &str) -> Result<Operator> {
+        store::disk_to_operator(folder, Some("/db/"), store::DesiredOperator::Memory).await
     }
 
     pub async fn new_from_operator(op: Operator) -> Result<Self> {
@@ -200,7 +201,7 @@ impl MigrationTestHelper {
         }
     }
 
-    pub async fn list_fs_contents(&self, label: &str) -> Result<()> {
+    pub async fn _list_fs_contents(&self, label: &str) -> Result<()> {
         let mut lister = self.fs.lister_with(".").recursive(true).await?;
 
         println!("listing files for '{}'", label);
@@ -208,42 +209,6 @@ impl MigrationTestHelper {
             let file_data = self.fs.read(&entry.path()).await?.to_bytes();
             println!("(len {}). found {}", file_data.len(), entry.path());
         }
-
-        Ok(())
-    }
-
-    /// Runs test compare using the CLI 'test compare' command
-    pub async fn run_test_compare(&self, test_name: Option<String>) -> Result<(), anyhow::Error> {
-        let cli = Cli {
-            debug: false,
-            config_file: self.config_path().to_string(),
-            database: None,
-            command: Some(Commands::Test {
-                command: Some(TestCommands::Compare { name: test_name }),
-            }),
-        };
-
-        run_cli(cli, &self.fs)
-            .await
-            .context("error calling test compare")?;
-
-        Ok(())
-    }
-
-    /// Saves test expected output using the CLI 'test expect' command
-    pub async fn run_test_expect(&self, test_name: String) -> Result<(), anyhow::Error> {
-        let cli = Cli {
-            debug: false,
-            config_file: self.config_path().to_string(),
-            database: None,
-            command: Some(Commands::Test {
-                command: Some(TestCommands::Expect { name: test_name }),
-            }),
-        };
-
-        run_cli(cli, &self.fs)
-            .await
-            .context("error calling test expect")?;
 
         Ok(())
     }

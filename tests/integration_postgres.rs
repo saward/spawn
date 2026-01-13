@@ -36,12 +36,12 @@
 
 mod migration_build;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use migration_build::MigrationTestHelper;
 use opendal::services::Memory;
 use opendal::Operator;
 use spawn::{
-    cli::{run_cli, Cli, Commands, MigrationCommands, Outcome},
+    cli::{run_cli, Cli, Commands, MigrationCommands, Outcome, TestCommands},
     config::ConfigLoaderSaver,
     engine::{DatabaseConfig, EngineType},
 };
@@ -171,7 +171,7 @@ impl IntegrationTestHelper {
     /// Creates a new test environment with an isolated database.
     ///
     /// This creates a fresh database from the template for test isolation.
-    pub async fn new(test_name: &str) -> Result<Self> {
+    pub async fn new(test_name: &str, folder: Option<&str>) -> Result<Self> {
         let connection_mode = ConnectionMode::from_env();
         let keep_db = should_keep_db();
 
@@ -192,8 +192,13 @@ impl IntegrationTestHelper {
         Self::create_test_database(&db_name, &connection_mode)?;
 
         // Create in-memory filesystem for test files
-        let mem_service = Memory::default();
-        let mem_op = Operator::new(mem_service)?.finish();
+        let mem_op = match folder {
+            Some(folder) => MigrationTestHelper::operator_from_local_folder(folder).await?,
+            None => {
+                let mem_service = Memory::default();
+                Operator::new(mem_service)?.finish()
+            }
+        };
 
         // Create the database config for this test
         let config_loader = Self::create_config(&db_name, &connection_mode);
@@ -331,6 +336,42 @@ impl IntegrationTestHelper {
         let output = self.execute_sql(&sql)?;
         Ok(output.contains('t'))
     }
+
+    /// Runs test compare using the CLI 'test compare' command
+    pub async fn run_test_compare(&self, test_name: Option<String>) -> Result<(), anyhow::Error> {
+        let cli = Cli {
+            debug: false,
+            config_file: self.migration_helper.config_path().to_string(),
+            database: None,
+            command: Some(Commands::Test {
+                command: Some(TestCommands::Compare { name: test_name }),
+            }),
+        };
+
+        run_cli(cli, &self.migration_helper.fs)
+            .await
+            .context("error calling test compare")?;
+
+        Ok(())
+    }
+
+    /// Saves test expected output using the CLI 'test expect' command
+    pub async fn run_test_expect(&self, test_name: String) -> Result<(), anyhow::Error> {
+        let cli = Cli {
+            debug: false,
+            config_file: self.migration_helper.config_path().to_string(),
+            database: None,
+            command: Some(Commands::Test {
+                command: Some(TestCommands::Expect { name: test_name }),
+            }),
+        };
+
+        run_cli(cli, &self.migration_helper.fs)
+            .await
+            .context("error calling test expect")?;
+
+        Ok(())
+    }
 }
 
 impl Drop for IntegrationTestHelper {
@@ -378,7 +419,8 @@ fn require_postgres() -> Result<()> {
 async fn test_migration_applied_but_not_recorded_error() -> Result<()> {
     require_postgres()?;
 
-    let helper = IntegrationTestHelper::new("test_migration_applied_but_not_recorded").await?;
+    let helper =
+        IntegrationTestHelper::new("test_migration_applied_but_not_recorded", None).await?;
 
     // First, apply a simple migration to ensure the _spawn schema is set up
     let setup_migration = r#"BEGIN;
@@ -472,7 +514,7 @@ COMMIT;"#;
 async fn test_postgres_connection() -> Result<()> {
     require_postgres()?;
 
-    let helper = IntegrationTestHelper::new("test_postgres_connection").await?;
+    let helper = IntegrationTestHelper::new("test_postgres_connection", None).await?;
 
     // Simple connectivity test
     let result = helper.execute_sql("SELECT 1 as test;")?;
@@ -486,7 +528,7 @@ async fn test_postgres_connection() -> Result<()> {
 async fn test_migration_creates_table() -> Result<()> {
     require_postgres()?;
 
-    let helper = IntegrationTestHelper::new("test_migration_creates_table").await?;
+    let helper = IntegrationTestHelper::new("test_migration_creates_table", None).await?;
 
     // Create a migration that creates a table
     let migration_content = r#"BEGIN;
@@ -522,7 +564,7 @@ COMMIT;"#;
 async fn test_migration_is_idempotent() -> Result<()> {
     require_postgres()?;
 
-    let helper = IntegrationTestHelper::new("test_migration_is_idempotent").await?;
+    let helper = IntegrationTestHelper::new("test_migration_is_idempotent", None).await?;
 
     let migration_content = r#"BEGIN;
 
@@ -557,7 +599,7 @@ COMMIT;"#;
 async fn test_spawn_schema_created() -> Result<()> {
     require_postgres()?;
 
-    let helper = IntegrationTestHelper::new("test_spawn_schema_created").await?;
+    let helper = IntegrationTestHelper::new("test_spawn_schema_created", None).await?;
 
     // Create and apply a simple migration to trigger schema setup
     let migration_content = r#"BEGIN;
@@ -585,7 +627,7 @@ COMMIT;"#;
 async fn test_migration_recorded_in_history() -> Result<()> {
     require_postgres()?;
 
-    let helper = IntegrationTestHelper::new("test_migration_recorded").await?;
+    let helper = IntegrationTestHelper::new("test_migration_recorded", None).await?;
 
     let migration_content = r#"BEGIN;
 
@@ -619,7 +661,7 @@ COMMIT;"#;
 async fn test_migration_tables_correctness() -> Result<()> {
     require_postgres()?;
 
-    let helper = IntegrationTestHelper::new("test_migration_tables_correctness").await?;
+    let helper = IntegrationTestHelper::new("test_migration_tables_correctness", None).await?;
 
     // =========================================================================
     // Step 1: Create and apply first migration
@@ -848,12 +890,49 @@ COMMIT;"#;
 async fn test_cli_test_compare() -> Result<()> {
     require_postgres()?;
 
-    let helper = MigrationTestHelper::new_from_local_folder("./static/tests/test_cli_test").await?;
+    let helper = IntegrationTestHelper::new(
+        "test_cli_test_compare",
+        Some("./static/tests/test_cli_test"),
+    )
+    .await?;
 
     let test_name = "20250113000000-simple-test".to_string();
 
-    // Now run compare - it should pass since we just saved the expected output
-    helper.run_test_compare(Some(test_name)).await?;
+    // Run compare - it should pass since we just saved the expected output
+    helper.run_test_compare(Some(test_name.clone())).await?;
+
+    // Update our test with a new query:
+    let new_test = concat!(r#"select 'just this now' as changed;"#);
+
+    helper
+        .migration_helper
+        .fs
+        .write("/db/tests/20250113000000-simple-test/test.sql", new_test)
+        .await?;
+
+    // Run compare again and confirm it fails
+    let result = helper.run_test_compare(Some(test_name.clone())).await;
+    match result {
+        Ok(_) => {
+            return Err(anyhow!("comparison should have produced error"));
+        }
+        Err(e) => {
+            let err_str = e.to_string();
+            if !err_str.contains("error calling test compare") {
+                return Err(anyhow!("Unexpected comparison output"));
+            }
+        }
+    }
+
+    // Now expect this, and run again and check pass:
+    helper
+        .run_test_expect(test_name.clone())
+        .await
+        .context("failed to update expectation")?;
+    helper
+        .run_test_compare(Some(test_name.clone()))
+        .await
+        .context("failed to compare after updating expectation")?;
 
     Ok(())
 }
