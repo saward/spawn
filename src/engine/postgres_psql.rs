@@ -241,7 +241,6 @@ impl PSQL {
         pin_hash: Option<String>,
         namespace: EscapedLiteral,
     ) -> Result<String> {
-        Check if migration is already applied and don't apply again
         // Record duration of execute_sql:
         let start_time = Instant::now();
         // We need to trust that the migration_sql is already safely escaped
