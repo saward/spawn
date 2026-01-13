@@ -406,16 +406,28 @@ COMMIT;
         );
 
         // Use CSV format for parseable output
-        let output = self
-            .execute_sql(&record_query, Some("csv"))
-            .map_err(MigrationError::Database)?;
+        // CRITICAL: If this fails, the migration was applied but not recorded!
+        let output = self.execute_sql(&record_query, Some("csv")).map_err(|e| {
+            MigrationError::MigrationAppliedButNotRecorded {
+                name: migration_name.to_string(),
+                namespace: namespace.raw_value().to_string(),
+                schema: self.spawn_schema_ident.raw_value().to_string(),
+                recording_error: e.to_string(),
+            }
+        })?;
 
         // With QUIET mode and tuples_only, CSV output is just "1,1" for successful inserts
+        // CRITICAL: If this check fails, the migration was applied but recording may be incomplete!
         if output.trim() != "1,1" {
-            return Err(MigrationError::Database(anyhow!(
-                "expected 1 row inserted for both migration and history, got output: {}",
-                output
-            )));
+            return Err(MigrationError::MigrationAppliedButNotRecorded {
+                name: migration_name.to_string(),
+                namespace: namespace.raw_value().to_string(),
+                schema: self.spawn_schema_ident.raw_value().to_string(),
+                recording_error: format!(
+                    "expected 1 row inserted for both migration and history, got output: {}",
+                    output
+                ),
+            });
         }
 
         Ok(output)

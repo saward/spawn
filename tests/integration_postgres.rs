@@ -371,6 +371,102 @@ fn require_postgres() -> Result<()> {
 // Integration Tests
 // ============================================================================
 
+/// Tests that when a migration succeeds but recording fails, we get a clear
+/// critical error message indicating manual intervention is required.
+#[tokio::test]
+#[ignore]
+async fn test_migration_applied_but_not_recorded_error() -> Result<()> {
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new("test_migration_applied_but_not_recorded").await?;
+
+    // First, apply a simple migration to ensure the _spawn schema is set up
+    let setup_migration = r#"BEGIN;
+SELECT 1;
+COMMIT;"#;
+
+    let setup_name = helper
+        .migration_helper
+        .create_migration_manual("setup-schema", setup_migration.to_string())
+        .await?;
+
+    helper.apply_migration(&setup_name).await?;
+
+    // Create a trigger that will cause INSERT on _spawn.migration to fail
+    // This simulates a recording failure after migration succeeds
+    helper.execute_sql(
+        r#"
+        CREATE OR REPLACE FUNCTION _spawn.block_migration_insert()
+        RETURNS TRIGGER AS $$
+        BEGIN
+            IF NEW.name LIKE '%will-fail-recording%' THEN
+                RAISE EXCEPTION 'Simulated recording failure for testing';
+            END IF;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+
+        CREATE TRIGGER block_recording_trigger
+        BEFORE INSERT ON _spawn.migration
+        FOR EACH ROW
+        EXECUTE FUNCTION _spawn.block_migration_insert();
+        "#,
+    )?;
+
+    // Create a migration that will succeed but recording will fail
+    let test_migration = r#"BEGIN;
+
+CREATE TABLE recording_failure_test (
+    id SERIAL PRIMARY KEY,
+    name TEXT
+);
+
+COMMIT;"#;
+
+    let test_name = helper
+        .migration_helper
+        .create_migration_manual("will-fail-recording", test_migration.to_string())
+        .await?;
+
+    // Try to apply the migration - it should fail with the critical error
+    let result = helper.apply_migration(&test_name).await;
+
+    // Clean up the trigger
+    let _ =
+        helper.execute_sql("DROP TRIGGER IF EXISTS block_recording_trigger ON _spawn.migration;");
+    let _ = helper.execute_sql("DROP FUNCTION IF EXISTS _spawn.block_migration_insert();");
+
+    // The migration should have failed
+    assert!(result.is_err(), "Expected migration to fail");
+
+    let error_message = result.unwrap_err().to_string();
+
+    // Verify the error message contains the critical indicators
+    assert!(
+        error_message.contains("CRITICAL") || error_message.contains("MANUAL INTERVENTION"),
+        "Error should indicate critical/manual intervention needed, got: {}",
+        error_message
+    );
+
+    // Verify the table WAS created (migration succeeded, only recording failed)
+    assert!(
+        helper.table_exists("public", "recording_failure_test")?,
+        "Table should exist because migration SQL succeeded, only recording failed"
+    );
+
+    // Verify the migration was NOT recorded
+    let migration_check = helper.execute_sql(
+        "SELECT COUNT(*) FROM _spawn.migration WHERE name LIKE '%will-fail-recording%';",
+    )?;
+    assert!(
+        migration_check.contains('0'),
+        "Migration should NOT be recorded in _spawn.migration table, got: {}",
+        migration_check
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore]
 async fn test_postgres_connection() -> Result<()> {

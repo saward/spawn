@@ -68,27 +68,40 @@ impl<S: SqlSafe> SqlSafe for &S {
 /// assert_eq!(tricky.as_str(), "\"schema\"\"name\"");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct EscapedIdentifier(String);
+pub struct EscapedIdentifier {
+    raw: String,
+    escaped: String,
+}
 
 impl EscapedIdentifier {
     /// Creates a new escaped identifier from a raw string.
     ///
     /// The input is immediately escaped using PostgreSQL's identifier escaping rules.
     pub fn new(raw: &str) -> Self {
-        Self(escape_identifier(raw))
+        Self {
+            raw: raw.to_string(),
+            escaped: escape_identifier(raw),
+        }
     }
 
     /// Returns the escaped identifier as a string slice.
     ///
     /// This value is safe to interpolate directly into SQL queries.
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.escaped
+    }
+
+    /// Returns the original unescaped value.
+    ///
+    /// Useful for error messages or logging where the raw value is needed.
+    pub fn raw_value(&self) -> &str {
+        &self.raw
     }
 }
 
 impl fmt::Display for EscapedIdentifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.escaped)
     }
 }
 

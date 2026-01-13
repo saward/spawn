@@ -56,6 +56,39 @@ pub enum MigrationError {
     /// Database or connection error
     #[error("database error: {0}")]
     Database(#[from] anyhow::Error),
+
+    /// CRITICAL: Migration executed successfully but recording to migration tables failed.
+    /// The database is now in an inconsistent state - the migration has been applied
+    /// but spawn has no record of it. Manual intervention is required.
+    #[error(
+        "\n\
+        ********************************************************************************\n\
+        *                         CRITICAL ERROR - MANUAL INTERVENTION REQUIRED                          *\n\
+        ********************************************************************************\n\
+        \n\
+        Migration '{name}' in namespace '{namespace}' was SUCCESSFULLY APPLIED to the database,\n\
+        but FAILED to record in spawn's migration tracking tables.\n\
+        \n\
+        YOUR DATABASE IS NOW IN AN INCONSISTENT STATE.\n\
+        \n\
+        The migration changes ARE in your database, but spawn does not know about them.\n\
+        If you retry this migration, it may cause errors or duplicate changes.\n\
+        \n\
+        Recording error: {recording_error}\n\
+        \n\
+        TO RESOLVE:\n\
+        1. Verify the migration was applied by checking your database schema\n\
+        2. Manually insert a record into {schema}.migration and {schema}.migration_history\n\
+        3. Investigate why the recording failed (connection issue? permissions?)\n\
+        \n\
+        ********************************************************************************\n"
+    )]
+    MigrationAppliedButNotRecorded {
+        name: String,
+        namespace: String,
+        schema: String,
+        recording_error: String,
+    },
 }
 
 /// Result type for migration operations

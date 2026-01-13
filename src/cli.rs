@@ -219,6 +219,15 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                                             &migration
                                         )));
                                     }
+                                    Err(
+                                        e @ MigrationError::MigrationAppliedButNotRecorded {
+                                            ..
+                                        },
+                                    ) => {
+                                        // This is a critical error - the migration ran but wasn't recorded.
+                                        // Return it directly so the full error message is displayed.
+                                        return Err(anyhow::anyhow!("{}", e));
+                                    }
                                 }
                             }
                             Err(e) => {
