@@ -269,13 +269,18 @@ impl PSQL {
 
         let output = self.execute_sql(&query, Some("csv"))?;
 
-        // Parse CSV output - skip header line
+        // Parse CSV output - find header line and use the line after it.
+        // Output includes psql messages like "Output format is csv." before the actual data.
         let lines: Vec<&str> = output.lines().collect();
-        if lines.len() < 2 {
+        let header_idx = lines.iter().position(|l| l.starts_with("name,namespace,"));
+        let Some(header_idx) = header_idx else {
+            return Ok(None);
+        };
+        if lines.len() <= header_idx + 1 {
             return Ok(None);
         }
 
-        let data_line = lines[1].trim();
+        let data_line = lines[header_idx + 1].trim();
         if data_line.is_empty() {
             return Ok(None);
         }
@@ -357,50 +362,70 @@ impl PSQL {
         let safe_pin_hash = pin_hash.map(|hash| EscapedLiteral::new(&hash));
 
         // Record the migration (schema is pre-escaped in struct)
+        // Use CTEs to chain the inserts and return counts for verification.
+        // This avoids a separate SELECT that could silently return no rows.
         let duration_interval = InsecureRawSql::new(&format!("INTERVAL '{} second'", duration));
         let record_query = sql_query!(
             r#"
 BEGIN;
-INSERT INTO {}.migration (name, namespace) VALUES ({}, {});
-INSERT INTO {}.migration_history (
-    migration_id_migration,
-    activity_id_activity,
-    created_by,
-    description,
-    status_note,
-    status_id_status,
-    checksum,
-    execution_time,
-    pin_hash
+WITH inserted_migration AS (
+    INSERT INTO {}.migration (name, namespace) VALUES ({}, {})
+    RETURNING migration_id
+),
+inserted_history AS (
+    INSERT INTO {}.migration_history (
+        migration_id_migration,
+        activity_id_activity,
+        created_by,
+        description,
+        status_note,
+        status_id_status,
+        checksum,
+        execution_time,
+        pin_hash
+    )
+    SELECT
+        migration_id,
+        'APPLY',
+        'unused',
+        '',
+        '',
+        'SUCCESS',
+        {},
+        {},
+        {}
+    FROM inserted_migration
+    RETURNING migration_history_id
 )
 SELECT
-    migration_id,
-    'APPLY',
-    'unused',
-    '',
-    '',
-    'SUCCESS',
-    {},
-    {},
-    {}
-FROM {}.migration
-WHERE name = {} AND namespace = {};
+    (SELECT count(*) FROM inserted_migration) as migration_count,
+    (SELECT count(*) FROM inserted_history) as history_count;
 COMMIT;
 "#,
             self.spawn_schema_ident,
-            namespace,
             safe_migration_name,
+            namespace,
             self.spawn_schema_ident,
             safe_checksum,
             duration_interval,
             safe_pin_hash,
-            self.spawn_schema_ident,
-            safe_migration_name,
-            namespace,
         );
 
-        self.execute_sql(&record_query, None)
-            .map_err(MigrationError::Database)
+        // Use CSV format for parseable output
+        let output = self
+            .execute_sql(&record_query, Some("csv"))
+            .map_err(MigrationError::Database)?;
+
+        // CSV output should contain "migration_count,history_count" header
+        // followed by "1,1" for successful inserts
+        if !output.contains("migration_count,history_count\n1,1") {
+            return Err(MigrationError::Database(anyhow!(
+                "expected 1 row inserted for both migration and history, got output: {}",
+                output
+            )));
+        }
+
+        Ok(output)
     }
 }
 
