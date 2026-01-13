@@ -117,27 +117,40 @@ impl SqlSafe for EscapedIdentifier {
 /// assert_eq!(quoted.as_str(), "'it''s'");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct EscapedLiteral(String);
+pub struct EscapedLiteral {
+    raw: String,
+    escaped: String,
+}
 
 impl EscapedLiteral {
     /// Creates a new escaped literal from a raw string.
     ///
     /// The input is immediately escaped using PostgreSQL's literal escaping rules.
     pub fn new(raw: &str) -> Self {
-        Self(escape_literal(raw))
+        Self {
+            raw: raw.to_string(),
+            escaped: escape_literal(raw),
+        }
     }
 
     /// Returns the escaped literal as a string slice.
     ///
     /// This value is safe to interpolate directly into SQL queries.
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.escaped
+    }
+
+    /// Returns the original unescaped value.
+    ///
+    /// Useful for error messages or logging where the raw value is needed.
+    pub fn raw_value(&self) -> &str {
+        &self.raw
     }
 }
 
 impl fmt::Display for EscapedLiteral {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.escaped)
     }
 }
 

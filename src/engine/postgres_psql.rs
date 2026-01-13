@@ -3,7 +3,10 @@
 // build in PSQL helper commands.
 
 use crate::config::FolderPather;
-use crate::engine::{DatabaseConfig, Engine, EngineOutputter, EngineWriter};
+use crate::engine::{
+    DatabaseConfig, Engine, EngineOutputter, EngineWriter, ExistingMigrationInfo, MigrationError,
+    MigrationHistoryStatus, MigrationResult,
+};
 use crate::escape::{EscapedIdentifier, EscapedLiteral, EscapedQuery, InsecureRawSql};
 use crate::sql_query;
 use crate::store::pinner::latest::Latest;
@@ -27,6 +30,7 @@ pub struct PSQL {
 }
 
 static PROJECT_DIR: Dir<'_> = include_dir!("./static/engine-migrations/postgres-psql");
+static SPAWN_NAMESPACE: &'static str = "spawn";
 
 pub struct PSQLWriter {
     child: Child,
@@ -56,7 +60,7 @@ impl PSQL {
     }
 
     fn safe_spawn_namespace(&self) -> EscapedLiteral {
-        EscapedLiteral::new("spawn")
+        EscapedLiteral::new(SPAWN_NAMESPACE)
     }
 }
 
@@ -89,15 +93,17 @@ impl Engine for PSQL {
         migration: &str,
         pin_hash: Option<String>,
         namespace: &str,
-    ) -> Result<String> {
+    ) -> MigrationResult<String> {
         // Ensure we have latest schema:
-        self.update_schema().await?;
-        return self.apply_and_record_migration_v1(
+        self.update_schema()
+            .await
+            .map_err(MigrationError::Database)?;
+        self.apply_and_record_migration_v1(
             migration_name,
             migration,
             pin_hash,
             EscapedLiteral::new(namespace),
-        );
+        )
     }
 }
 
@@ -128,7 +134,7 @@ impl PSQL {
 
         // Get set of already applied migrations (empty if table doesn't exist)
         let applied_migrations: HashSet<String> = if migration_table_exists {
-            self.get_applied_migrations_set()?
+            self.get_applied_migrations_set(&self.safe_spawn_namespace())?
         } else {
             HashSet::new()
         };
@@ -162,12 +168,18 @@ impl PSQL {
             // Apply the migration and record it
             // Note: even for bootstrap, the first migration creates the tables,
             // so they exist by the time we record the migration.
-            self.apply_and_record_migration_v1(
+            match self.apply_and_record_migration_v1(
                 migration_name,
                 &rendered_sql,
                 None, // pin_hash not used for engine migrations
                 self.safe_spawn_namespace(),
-            )?;
+            ) {
+                Ok(_) => {}
+                // For internal schema migrations, already applied is fine
+                Err(MigrationError::AlreadyApplied { .. }) => {}
+                // Other errors should propagate
+                Err(e) => return Err(e.into()),
+            }
         }
 
         Ok(())
@@ -205,19 +217,20 @@ impl PSQL {
         Ok(output.contains("exists,t"))
     }
 
-    fn get_applied_migrations(&self) -> Result<String> {
+    fn get_applied_migrations(&self, namespace: &EscapedLiteral) -> Result<String> {
         // TODO: rewrite this to return a proper HashMap of names, rather than
         // relying on crude pattern matching.
         let query = sql_query!(
-            "SELECT name FROM {}.migration WHERE namespace = 'spawn';",
-            self.spawn_schema_ident
+            "SELECT name FROM {}.migration WHERE namespace = {};",
+            self.spawn_schema_ident,
+            namespace,
         );
 
         self.execute_sql(&query, Some("csv"))
     }
 
-    fn get_applied_migrations_set(&self) -> Result<HashSet<String>> {
-        let output = self.get_applied_migrations()?;
+    fn get_applied_migrations_set(&self, namespace: &EscapedLiteral) -> Result<HashSet<String>> {
+        let output = self.get_applied_migrations(namespace)?;
         let mut migrations = HashSet::new();
 
         // Parse CSV output - skip header line and extract migration names
@@ -231,6 +244,64 @@ impl PSQL {
         Ok(migrations)
     }
 
+    /// Get the latest migration history entry for a given migration name and namespace.
+    /// Returns None if no history entry exists.
+    fn get_migration_status(
+        &self,
+        migration_name: &str,
+        namespace: &EscapedLiteral,
+    ) -> Result<Option<ExistingMigrationInfo>> {
+        let safe_migration_name = EscapedLiteral::new(migration_name);
+        let query = sql_query!(
+            r#"
+            SELECT m.name, m.namespace, mh.status_id_status, mh.activity_id_activity, encode(mh.checksum, 'hex')
+            FROM {}.migration_history mh
+            JOIN {}.migration m ON mh.migration_id_migration = m.migration_id
+            WHERE m.name = {} AND m.namespace = {}
+            ORDER BY mh.migration_history_id DESC
+            LIMIT 1;
+            "#,
+            self.spawn_schema_ident,
+            self.spawn_schema_ident,
+            safe_migration_name,
+            namespace
+        );
+
+        let output = self.execute_sql(&query, Some("csv"))?;
+
+        // Parse CSV output - skip header line
+        let lines: Vec<&str> = output.lines().collect();
+        if lines.len() < 2 {
+            return Ok(None);
+        }
+
+        let data_line = lines[1].trim();
+        if data_line.is_empty() {
+            return Ok(None);
+        }
+
+        // Parse CSV: name,namespace,status_id_status,activity_id_activity,checksum
+        let parts: Vec<&str> = data_line.split(',').collect();
+        if parts.len() < 5 {
+            return Ok(None);
+        }
+
+        let status = match parts[2].trim() {
+            "SUCCESS" => MigrationHistoryStatus::Success,
+            "ATTEMPTED" => MigrationHistoryStatus::Attempted,
+            "FAILURE" => MigrationHistoryStatus::Failure,
+            _ => return Ok(None),
+        };
+
+        Ok(Some(ExistingMigrationInfo {
+            migration_name: parts[0].trim().to_string(),
+            namespace: parts[1].trim().to_string(),
+            last_status: status,
+            last_activity: parts[3].trim().to_string(),
+            checksum: parts[4].trim().to_string(),
+        }))
+    }
+
     // This is versioned because if we change the schema significantly enough
     // later, we'll have to still write earlier migrations to the table using
     // the format of the migration table as it is at that point.
@@ -240,13 +311,42 @@ impl PSQL {
         migration_sql: &str,
         pin_hash: Option<String>,
         namespace: EscapedLiteral,
-    ) -> Result<String> {
+    ) -> MigrationResult<String> {
+        // Check if migration already exists in history
+        let existing_status = self
+            .get_migration_status(migration_name, &namespace)
+            .map_err(MigrationError::Database)?;
+
+        if let Some(info) = existing_status {
+            let name = migration_name.to_string();
+            let ns = namespace.raw_value().to_string();
+
+            match info.last_status {
+                MigrationHistoryStatus::Success => {
+                    return Err(MigrationError::AlreadyApplied {
+                        name,
+                        namespace: ns,
+                        info,
+                    });
+                }
+                MigrationHistoryStatus::Attempted | MigrationHistoryStatus::Failure => {
+                    return Err(MigrationError::PreviousAttemptFailed {
+                        name: name,
+                        namespace: ns,
+                        status: info.last_status.clone(),
+                        info,
+                    });
+                }
+            }
+        }
+
         // Record duration of execute_sql:
         let start_time = Instant::now();
         // We need to trust that the migration_sql is already safely escaped
         // for now:
         let migration_sql = sql_query!("{}", InsecureRawSql::new(migration_sql));
-        self.execute_sql(&migration_sql, None)?;
+        self.execute_sql(&migration_sql, None)
+            .map_err(MigrationError::Database)?;
         let duration = start_time.elapsed().as_secs_f32();
 
         let checksum = xxhash3_128::Hasher::oneshot(migration_sql.as_str().as_bytes());
@@ -261,7 +361,7 @@ impl PSQL {
         let record_query = sql_query!(
             r#"
 BEGIN;
-INSERT INTO {}.migration (name, namespace) VALUES ({}, 'spawn');
+INSERT INTO {}.migration (name, namespace) VALUES ({}, {});
 INSERT INTO {}.migration_history (
     migration_id_migration,
     activity_id_activity,
@@ -288,6 +388,7 @@ WHERE name = {} AND namespace = {};
 COMMIT;
 "#,
             self.spawn_schema_ident,
+            namespace,
             safe_migration_name,
             self.spawn_schema_ident,
             safe_checksum,
@@ -299,6 +400,7 @@ COMMIT;
         );
 
         self.execute_sql(&record_query, None)
+            .map_err(MigrationError::Database)
     }
 }
 

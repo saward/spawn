@@ -38,6 +38,7 @@ opendal = { version = ">=0.53, <1", features = ["services-fs", "services-memory"
 postgres-protocol = "0.6"
 
 include_dir = "0.7.4"
+thiserror = "2.0.17"
 
 [dev-dependencies]
 tempfile = "3.8"
