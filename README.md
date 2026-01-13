@@ -129,8 +129,8 @@ Ideally then we can choose any combination of these two things. Our pin choice (
 
 ## Phase 1: Database Integration & Safety (Next Priority)
 
-- 🚧 **Migration application** - Idempotently apply migrations to database
-- 🚧 **Migration tracking** - Track applied migrations in database table
+- ✅ **Migration application** - Idempotently apply migrations to database
+- ✅ **Migration tracking** - Track applied migrations in database table
 - 🚧 **Migration status** - Check what migrations have been applied
 - 🚧 **Database locking** - Advisory locks to prevent concurrent migrations
 - 🚧 **Migration adoption** - Mark existing migrations as applied without running
