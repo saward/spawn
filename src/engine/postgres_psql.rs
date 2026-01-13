@@ -203,15 +203,25 @@ impl PSQL {
     }
 
     fn migration_table_exists(&self) -> Result<bool> {
+        self.table_exists("migration")
+    }
+
+    fn migration_history_table_exists(&self) -> Result<bool> {
+        self.table_exists("migration_history")
+    }
+
+    fn table_exists(&self, table_name: &str) -> Result<bool> {
+        let safe_table_name = EscapedLiteral::new(table_name);
         let query = sql_query!(
             r#"
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
                 WHERE table_schema = {}
-                AND table_name = 'migration'
+                AND table_name = {}
             );
             "#,
-            self.spawn_schema_literal
+            self.spawn_schema_literal,
+            safe_table_name
         );
 
         let output = self.execute_sql(&query, Some("csv"))?;
@@ -303,10 +313,16 @@ impl PSQL {
         pin_hash: Option<String>,
         namespace: EscapedLiteral,
     ) -> MigrationResult<String> {
-        // Check if migration already exists in history
-        let existing_status = self
-            .get_migration_status(migration_name, &namespace)
-            .map_err(MigrationError::Database)?;
+        // Check if migration already exists in history (skip if table doesn't exist yet)
+        let existing_status = if self
+            .migration_history_table_exists()
+            .map_err(MigrationError::Database)?
+        {
+            self.get_migration_status(migration_name, &namespace)
+                .map_err(MigrationError::Database)?
+        } else {
+            None
+        };
 
         if let Some(info) = existing_status {
             let name = migration_name.to_string();
