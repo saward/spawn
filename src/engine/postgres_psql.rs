@@ -46,7 +46,7 @@ impl PSQL {
         let psql_command = config
             .command
             .clone()
-            .ok_or(anyhow!("Command command must be defined"))?;
+            .ok_or(anyhow!("Command for database config must be defined"))?;
 
         // Use type-safe escaped types - escaping happens at construction time
         let spawn_schema_ident = EscapedIdentifier::new(&config.spawn_schema);

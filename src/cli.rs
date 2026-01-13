@@ -109,6 +109,7 @@ pub enum Outcome {
     AppliedMigrations,
     Unimplemented,
     PinnedMigration { hash: String },
+    Success,
 }
 
 pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
@@ -257,7 +258,7 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                     }
                     Err(e) => return Err(e),
                 };
-                Ok(Outcome::Unimplemented)
+                Ok(Outcome::Success)
             }
             Some(TestCommands::Run { name }) => {
                 let config = Tester::new(&main_config, &name);
@@ -268,7 +269,7 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                     }
                     Err(e) => return Err(e),
                 };
-                Ok(Outcome::Unimplemented)
+                Ok(Outcome::Success)
             }
             Some(TestCommands::Compare { name }) => {
                 let test_files: Vec<String> = match name {
@@ -320,7 +321,7 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                     ));
                 }
 
-                Ok(Outcome::Unimplemented)
+                Ok(Outcome::Success)
             }
             Some(TestCommands::Expect { name }) => {
                 let tester = Tester::new(&main_config, &name);
@@ -328,7 +329,7 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                     Ok(_) => (),
                     Err(e) => return Err(e),
                 };
-                Ok(Outcome::Unimplemented)
+                Ok(Outcome::Success)
             }
             None => {
                 eprintln!("No test subcommand specified");

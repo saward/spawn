@@ -26,6 +26,9 @@ async fn main() -> Result<()> {
         Outcome::PinnedMigration { hash } => {
             println!("Migration pinned: {}", hash);
         }
+        Outcome::Success => {
+            println!("Success.");
+        }
         Outcome::Unimplemented => {
             println!("Unimplemented command.");
         }
