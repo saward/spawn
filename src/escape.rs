@@ -35,6 +35,21 @@ pub trait SqlSafe {
     fn as_sql(&self) -> &str;
 }
 
+impl<S: SqlSafe> SqlSafe for Option<S> {
+    fn as_sql(&self) -> &str {
+        if let Some(inner) = self {
+            return inner.as_sql();
+        }
+        "NULL"
+    }
+}
+
+impl<S: SqlSafe> SqlSafe for &S {
+    fn as_sql(&self) -> &str {
+        (*self).as_sql()
+    }
+}
+
 /// A PostgreSQL identifier (schema, table, column name) that has been safely escaped.
 ///
 /// The value is escaped at construction time using PostgreSQL's `quote_ident` rules:

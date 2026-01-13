@@ -66,7 +66,13 @@ pub trait Engine {
     /// stream data to this as we go.  May not be implemented for all engines.
     fn new_writer(&self) -> Result<Box<dyn EngineWriter>>;
 
-    async fn migration_apply(&self, migration: &str) -> Result<String>;
+    async fn migration_apply(
+        &self,
+        migration_name: &str,
+        migration: &str,
+        pin_hash: Option<String>,
+        namespace: &str,
+    ) -> Result<String>;
 
     // /// Return information about this migration, such as whether it has been
     // /// applied.

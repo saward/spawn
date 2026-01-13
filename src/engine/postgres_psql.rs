@@ -54,6 +54,10 @@ impl PSQL {
             spawn_schema_literal,
         }))
     }
+
+    fn safe_spawn_namespace(&self) -> EscapedLiteral {
+        EscapedLiteral::new("spawn")
+    }
 }
 
 #[async_trait]
@@ -79,27 +83,25 @@ impl Engine for PSQL {
         Ok(Box::new(PSQLWriter { child, stdin }) as Box<dyn EngineWriter>)
     }
 
-    async fn migration_apply(&self, migration: &str) -> Result<String> {
+    async fn migration_apply(
+        &self,
+        migration_name: &str,
+        migration: &str,
+        pin_hash: Option<String>,
+        namespace: &str,
+    ) -> Result<String> {
         // Ensure we have latest schema:
         self.update_schema().await?;
-        return self.internal_migration_apply(migration).await;
+        return self.apply_and_record_migration_v1(
+            migration_name,
+            migration,
+            pin_hash,
+            EscapedLiteral::new(namespace),
+        );
     }
 }
 
 impl PSQL {
-    async fn internal_migration_apply(&self, migration: &str) -> Result<String> {
-        let mut writer = self.new_writer()?;
-
-        // Write migration to writer:
-        writer.write_all(migration.as_bytes())?;
-        let mut outputter = writer.finalise()?;
-
-        let output = outputter.output()?;
-        // Read the Vec<u8> as utf8 or ascii:
-        let output = String::from_utf8(output).unwrap_or_default();
-        Ok(output)
-    }
-
     pub async fn update_schema(&self) -> Result<()> {
         // Create a memory operator from the included directory containing
         // the engine's own migration scripts
@@ -163,7 +165,8 @@ impl PSQL {
             self.apply_and_record_migration_v1(
                 migration_name,
                 &rendered_sql,
-                "", // pin_hash not used for engine migrations
+                None, // pin_hash not used for engine migrations
+                self.safe_spawn_namespace(),
             )?;
         }
 
@@ -235,23 +238,24 @@ impl PSQL {
         &self,
         migration_name: &str,
         migration_sql: &str,
-        pin_hash: &str,
-    ) -> Result<()> {
-        // Apply the migration (use type-safe escaped identifier)
-        let formatted_sql = migration_sql.replace("{schema}", self.spawn_schema_ident.as_str());
-
+        pin_hash: Option<String>,
+        namespace: EscapedLiteral,
+    ) -> Result<String> {
+        Check if migration is already applied and don't apply again
         // Record duration of execute_sql:
         let start_time = Instant::now();
-        let apply_query = sql_query!("{}", InsecureRawSql::new(&formatted_sql));
-        self.execute_sql(&apply_query, None)?;
+        // We need to trust that the migration_sql is already safely escaped
+        // for now:
+        let migration_sql = sql_query!("{}", InsecureRawSql::new(migration_sql));
+        self.execute_sql(&migration_sql, None)?;
         let duration = start_time.elapsed().as_secs_f32();
 
-        let checksum = xxhash3_128::Hasher::oneshot(&formatted_sql.as_bytes());
+        let checksum = xxhash3_128::Hasher::oneshot(migration_sql.as_str().as_bytes());
 
         // Use type-safe escaped literals for dynamic values
         let safe_migration_name = EscapedLiteral::new(migration_name);
         let safe_checksum = EscapedLiteral::new(&format!("{:032x}", checksum));
-        let safe_pin_hash = EscapedLiteral::new(pin_hash);
+        let safe_pin_hash = pin_hash.map(|hash| EscapedLiteral::new(&hash));
 
         // Record the migration (schema is pre-escaped in struct)
         let duration_interval = InsecureRawSql::new(&format!("INTERVAL '{} second'", duration));
@@ -281,7 +285,7 @@ SELECT
     {},
     {}
 FROM {}.migration
-WHERE name = {} AND namespace = 'spawn';
+WHERE name = {} AND namespace = {};
 COMMIT;
 "#,
             self.spawn_schema_ident,
@@ -292,10 +296,10 @@ COMMIT;
             safe_pin_hash,
             self.spawn_schema_ident,
             safe_migration_name,
+            namespace,
         );
 
-        self.execute_sql(&record_query, None)?;
-        Ok(())
+        self.execute_sql(&record_query, None)
     }
 }
 

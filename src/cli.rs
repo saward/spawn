@@ -1,5 +1,7 @@
+use crate::escape::EscapedLiteral;
 use crate::migrator::Migrator;
 use crate::pinfile::LockData;
+use crate::sql_query;
 use crate::sqltest::Tester;
 use crate::store::pinner::spawn::Spawn;
 use crate::variables::Variables;
@@ -187,7 +189,7 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                             Ok(result) => {
                                 let engine = main_config.new_engine()?;
                                 engine
-                                    .migration_apply(&result.content)
+                                    .migration_apply(&migration, &result.content, None, "default")
                                     .await
                                     .context(format!(
                                         "Failed to apply migration '{}'",

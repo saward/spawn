@@ -517,3 +517,232 @@ COMMIT;"#;
 
     Ok(())
 }
+
+#[tokio::test]
+#[ignore]
+async fn test_migration_tables_correctness() -> Result<()> {
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new("test_migration_tables_correctness").await?;
+
+    // =========================================================================
+    // Step 1: Create and apply first migration
+    // =========================================================================
+    let migration1_content = r#"BEGIN;
+
+CREATE TABLE first_table (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL
+);
+
+COMMIT;"#;
+
+    let migration1_name = helper
+        .migration_helper
+        .create_migration_manual("first-migration", migration1_content.to_string())
+        .await?;
+
+    helper.apply_migration(&migration1_name).await?;
+
+    // Verify one row in migration table (excluding spawn's own internal migrations)
+    let migration_count =
+        helper.execute_sql("SELECT COUNT(*) FROM _spawn.migration WHERE namespace = 'default';")?;
+    assert!(
+        migration_count.contains("1"),
+        "Expected 1 migration in default namespace, got: {}",
+        migration_count
+    );
+
+    // Verify one row in migration_history for our migration
+    let history_count = helper.execute_sql(
+        "SELECT COUNT(*) FROM _spawn.migration_history mh \
+         JOIN _spawn.migration m ON mh.migration_id_migration = m.migration_id \
+         WHERE m.namespace = 'default';",
+    )?;
+    assert!(
+        history_count.contains("1"),
+        "Expected 1 history entry for default namespace, got: {}",
+        history_count
+    );
+
+    // Verify the migration data looks correct
+    let migration_data = helper
+        .execute_sql("SELECT name, namespace FROM _spawn.migration WHERE namespace = 'default';")?;
+    assert!(
+        migration_data.contains(&migration1_name),
+        "Migration table should contain migration name '{}', got: {}",
+        migration1_name,
+        migration_data
+    );
+    assert!(
+        migration_data.contains("default"),
+        "Migration should be in 'default' namespace, got: {}",
+        migration_data
+    );
+
+    // Verify migration_history data
+    let history_data = helper.execute_sql(
+        "SELECT mh.activity_id_activity, mh.status_id_status, mh.created_by \
+         FROM _spawn.migration_history mh \
+         JOIN _spawn.migration m ON mh.migration_id_migration = m.migration_id \
+         WHERE m.namespace = 'default';",
+    )?;
+    assert!(
+        history_data.contains("APPLY"),
+        "History should show APPLY activity, got: {}",
+        history_data
+    );
+    assert!(
+        history_data.contains("SUCCESS"),
+        "History should show SUCCESS status, got: {}",
+        history_data
+    );
+
+    // =========================================================================
+    // Step 2: Apply same migration again - should be idempotent
+    // =========================================================================
+    helper.apply_migration(&migration1_name).await?;
+
+    // Verify still only one row in migration table
+    let migration_count_after_reapply =
+        helper.execute_sql("SELECT COUNT(*) FROM _spawn.migration WHERE namespace = 'default';")?;
+    assert!(
+        migration_count_after_reapply.contains("1"),
+        "Expected still 1 migration after re-apply, got: {}",
+        migration_count_after_reapply
+    );
+
+    // Verify still only one history entry (no duplicate APPLY)
+    let history_count_after_reapply = helper.execute_sql(
+        "SELECT COUNT(*) FROM _spawn.migration_history mh \
+         JOIN _spawn.migration m ON mh.migration_id_migration = m.migration_id \
+         WHERE m.namespace = 'default';",
+    )?;
+    assert!(
+        history_count_after_reapply.contains("1"),
+        "Expected still 1 history entry after re-apply (idempotent), got: {}",
+        history_count_after_reapply
+    );
+
+    // =========================================================================
+    // Step 3: Create and apply second migration
+    // =========================================================================
+    let migration2_content = r#"BEGIN;
+
+CREATE TABLE second_table (
+    id SERIAL PRIMARY KEY,
+    value TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+COMMIT;"#;
+
+    let migration2_name = helper
+        .migration_helper
+        .create_migration_manual("second-migration", migration2_content.to_string())
+        .await?;
+
+    helper.apply_migration(&migration2_name).await?;
+
+    // Verify now two rows in migration table
+    let migration_count_final =
+        helper.execute_sql("SELECT COUNT(*) FROM _spawn.migration WHERE namespace = 'default';")?;
+    assert!(
+        migration_count_final.contains("2"),
+        "Expected 2 migrations after second apply, got: {}",
+        migration_count_final
+    );
+
+    // Verify now two rows in migration_history
+    let history_count_final = helper.execute_sql(
+        "SELECT COUNT(*) FROM _spawn.migration_history mh \
+         JOIN _spawn.migration m ON mh.migration_id_migration = m.migration_id \
+         WHERE m.namespace = 'default';",
+    )?;
+    assert!(
+        history_count_final.contains("2"),
+        "Expected 2 history entries after second apply, got: {}",
+        history_count_final
+    );
+
+    // Verify both migrations are recorded with correct names
+    let all_migrations = helper.execute_sql(
+        "SELECT name FROM _spawn.migration WHERE namespace = 'default' ORDER BY migration_id;",
+    )?;
+    assert!(
+        all_migrations.contains(&migration1_name),
+        "Should contain first migration name '{}', got: {}",
+        migration1_name,
+        all_migrations
+    );
+    assert!(
+        all_migrations.contains(&migration2_name),
+        "Should contain second migration name '{}', got: {}",
+        migration2_name,
+        all_migrations
+    );
+
+    // Verify both history entries have SUCCESS status and APPLY activity
+    let all_history = helper.execute_sql(
+        "SELECT mh.activity_id_activity, mh.status_id_status \
+         FROM _spawn.migration_history mh \
+         JOIN _spawn.migration m ON mh.migration_id_migration = m.migration_id \
+         WHERE m.namespace = 'default' \
+         ORDER BY mh.migration_history_id;",
+    )?;
+    // Count occurrences of SUCCESS and APPLY - should be 2 each
+    let success_count = all_history.matches("SUCCESS").count();
+    let apply_count = all_history.matches("APPLY").count();
+    assert_eq!(
+        success_count, 2,
+        "Expected 2 SUCCESS entries, got {} in: {}",
+        success_count, all_history
+    );
+    assert_eq!(
+        apply_count, 2,
+        "Expected 2 APPLY entries, got {} in: {}",
+        apply_count, all_history
+    );
+
+    // Verify checksum is non-empty for both entries
+    let checksums = helper.execute_sql(
+        "SELECT mh.checksum \
+         FROM _spawn.migration_history mh \
+         JOIN _spawn.migration m ON mh.migration_id_migration = m.migration_id \
+         WHERE m.namespace = 'default';",
+    )?;
+    // Checksums should be present (shown as hex like \x...)
+    let checksum_lines: Vec<&str> = checksums.lines().filter(|l| l.contains("\\x")).collect();
+    assert_eq!(
+        checksum_lines.len(),
+        2,
+        "Expected 2 non-empty checksums, got: {}",
+        checksums
+    );
+
+    // Verify execution_time is recorded (non-zero interval)
+    let execution_times = helper.execute_sql(
+        "SELECT mh.execution_time \
+         FROM _spawn.migration_history mh \
+         JOIN _spawn.migration m ON mh.migration_id_migration = m.migration_id \
+         WHERE m.namespace = 'default';",
+    )?;
+    // Should have some time values (even if small)
+    assert!(
+        !execution_times.contains("(0 rows)"),
+        "Expected execution times to be recorded, got: {}",
+        execution_times
+    );
+
+    // Verify the actual tables were created
+    assert!(
+        helper.table_exists("public", "first_table")?,
+        "first_table should exist in public schema"
+    );
+    assert!(
+        helper.table_exists("public", "second_table")?,
+        "second_table should exist in public schema"
+    );
+
+    Ok(())
+}
