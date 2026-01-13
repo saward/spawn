@@ -76,6 +76,7 @@ impl Engine for PSQL {
         let mut child = child
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
+            .stderr(Stdio::inherit()) // Let stderr go to terminal so users see errors
             .spawn()
             .expect("failed to execute command");
 
@@ -187,6 +188,8 @@ impl PSQL {
 
     fn execute_sql(&self, query: &EscapedQuery, format: Option<&str>) -> Result<String> {
         let mut writer = self.new_writer()?;
+        // Make psql exit with non-zero status on SQL errors
+        writer.write_all(b"\\set ON_ERROR_STOP on\n")?;
         // Assumes psql_command already connects to the correct database
         if let Some(format) = format {
             // tuples_only suppresses headers and extra psql messages
@@ -444,15 +447,23 @@ COMMIT;
 
 impl crate::engine::EngineOutputter for PSQLOutput {
     fn output(&mut self) -> io::Result<Vec<u8>> {
-        // Collect all output
-        let mut output = Vec::new();
+        // Collect stdout
+        let mut stdout = Vec::new();
         if let Some(mut out) = self.child.stdout.take() {
-            out.read_to_end(&mut output)?;
+            out.read_to_end(&mut stdout)?;
         }
 
-        // Reap the child to avoid a zombie process
-        let _ = self.child.wait()?;
-        Ok(output)
+        // Wait for the child and check exit status
+        // (stderr goes directly to terminal via Stdio::inherit)
+        let status = self.child.wait()?;
+
+        if !status.success() {
+            let stdout_str = String::from_utf8_lossy(&stdout);
+            let error_msg = format!("psql exited with status {}: {}", status, stdout_str.trim());
+            return Err(io::Error::new(io::ErrorKind::Other, error_msg));
+        }
+
+        Ok(stdout)
     }
 }
 

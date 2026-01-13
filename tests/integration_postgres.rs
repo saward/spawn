@@ -885,6 +885,47 @@ COMMIT;"#;
     Ok(())
 }
 
+/// Tests that SQL errors in migrations cause the migration to fail
+/// rather than being silently ignored and reported as successful.
+#[tokio::test]
+#[ignore]
+async fn test_migration_sql_error_causes_failure() -> Result<()> {
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_migration_sql_error_causes_failure", None).await?;
+
+    // Create a migration with invalid SQL that will cause an error
+    let bad_migration = r#"BEGIN;
+
+SELECT this_does_not_exist();
+
+COMMIT;"#;
+
+    let migration_name = helper
+        .migration_helper
+        .create_migration_manual("bad-migration", bad_migration.to_string())
+        .await?;
+
+    // Try to apply the migration - it should fail
+    let result = helper.apply_migration(&migration_name).await;
+
+    // The migration should have failed
+    assert!(
+        result.is_err(),
+        "Expected migration with SQL error to fail, but it succeeded"
+    );
+
+    // Verify the migration was NOT recorded as successful
+    let migration_check = helper.execute_sql(&format!(
+        "SELECT COUNT(*) FROM _spawn.migration WHERE name = '{}';",
+        migration_name
+    ))?;
+    assert_eq!(migration_check, " count \n-------\n     0\n(1 row)\n\n");
+
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore]
 async fn test_cli_test_compare() -> Result<()> {
