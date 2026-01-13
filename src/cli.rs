@@ -8,7 +8,7 @@ use crate::{config::Config, store::pinner::Pinner};
 use futures::TryStreamExt;
 use opendal::Operator;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono;
 use clap::{Parser, Subcommand};
 use toml;
@@ -215,10 +215,17 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                                         ));
                                     }
                                     Err(MigrationError::Database(e)) => {
-                                        return Err(e.context(format!(
-                                            "Failed to apply migration '{}'",
+                                        return Err(anyhow!(
+                                            "Failed applying migration {}",
                                             &migration
-                                        )));
+                                        )
+                                        .context(e));
+                                    }
+                                    Err(MigrationError::AdvisoryLock(e)) => {
+                                        return Err(anyhow!(
+                                            "Unble to obtain advisory lock for migration"
+                                        )
+                                        .context(e));
                                     }
                                     Err(
                                         e @ MigrationError::MigrationAppliedButNotRecorded {

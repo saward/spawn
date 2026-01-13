@@ -19,6 +19,7 @@ use std::io::{self, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::Instant;
 use twox_hash::xxhash3_128;
+use twox_hash::XxHash64;
 
 #[derive(Debug)]
 pub struct PSQL {
@@ -188,6 +189,21 @@ impl PSQL {
 
     fn execute_sql(&self, query: &EscapedQuery, format: Option<&str>) -> Result<String> {
         let mut writer = self.new_writer()?;
+
+        self.execute_sql_part(query, format, &mut writer)?;
+        let mut outputter = writer.finalise()?;
+        let output = outputter.output()?;
+        // Error if we can't read:
+        let output = String::from_utf8(output)?;
+        Ok(output)
+    }
+
+    fn execute_sql_part(
+        &self,
+        query: &EscapedQuery,
+        format: Option<&str>,
+        writer: &mut Box<dyn EngineWriter>,
+    ) -> Result<()> {
         // Make psql exit with non-zero status on SQL errors
         writer.write_all(b"\\set ON_ERROR_STOP on\n")?;
         // Assumes psql_command already connects to the correct database
@@ -197,12 +213,7 @@ impl PSQL {
             writer.write_all(b"\\pset tuples_only on\n")?;
             writer.write_all(format!("\\pset format {}\n", format).as_bytes())?;
         }
-        writer.write_all(query.as_str().as_bytes())?;
-        let mut outputter = writer.finalise()?;
-        let output = outputter.output()?;
-        // Error if we can't read:
-        let output = String::from_utf8(output)?;
-        Ok(output)
+        Ok(writer.write_all(query.as_str().as_bytes())?)
     }
 
     fn migration_table_exists(&self) -> Result<bool> {
@@ -355,7 +366,21 @@ impl PSQL {
         // We need to trust that the migration_sql is already safely escaped
         // for now:
         let migration_sql = sql_query!("{}", InsecureRawSql::new(migration_sql));
-        self.execute_sql(&migration_sql, None)
+
+        let mut writer = self.new_writer()?;
+        let checksum = XxHash64::oneshot(1234, "SPAWN_MIGRATION_LOCK".as_bytes()) as i64;
+        writer
+            .write_all(b"\\set ON_ERROR_STOP on\n")
+            .map_err(|e| MigrationError::Database(e.into()))?;
+        writer
+            .write_all(
+                format!(r#"DO $$ BEGIN IF NOT pg_try_advisory_lock({}) THEN RAISE EXCEPTION 'Could not acquire advisory lock'; END IF; END $$;"#, checksum)
+                    .as_str()
+                    .as_bytes(),
+            )
+            .map_err(|e| MigrationError::AdvisoryLock(e))?;
+
+        self.execute_sql_part(&migration_sql, None, &mut writer)
             .map_err(MigrationError::Database)?;
         let duration = start_time.elapsed().as_secs_f32();
 
@@ -373,6 +398,7 @@ impl PSQL {
         let record_query = sql_query!(
             r#"
 BEGIN;
+SELECT 'begin_insertion_record';
 WITH inserted_migration AS (
     INSERT INTO {}.migration (name, namespace) VALUES ({}, {})
     RETURNING migration_id
@@ -418,18 +444,35 @@ COMMIT;
 
         // Use CSV format for parseable output
         // CRITICAL: If this fails, the migration was applied but not recorded!
-        let output = self.execute_sql(&record_query, Some("csv")).map_err(|e| {
-            MigrationError::MigrationAppliedButNotRecorded {
-                name: migration_name.to_string(),
-                namespace: namespace.raw_value().to_string(),
-                schema: self.spawn_schema_ident.raw_value().to_string(),
-                recording_error: e.to_string(),
-            }
-        })?;
+        let output = {
+            self.execute_sql_part(&record_query, Some("csv"), &mut writer)
+                .map_err(|e| MigrationError::MigrationAppliedButNotRecorded {
+                    name: migration_name.to_string(),
+                    namespace: namespace.raw_value().to_string(),
+                    schema: self.spawn_schema_ident.raw_value().to_string(),
+                    recording_error: e.to_string(),
+                })?;
+
+            let mut outputter = writer.finalise()?;
+            let output =
+                outputter
+                    .output()
+                    .map_err(|e| MigrationError::MigrationAppliedButNotRecorded {
+                        name: migration_name.to_string(),
+                        namespace: namespace.raw_value().to_string(),
+                        schema: self.spawn_schema_ident.raw_value().to_string(),
+                        recording_error: e.to_string(),
+                    })?;
+
+            // Error if we can't read:
+            let output =
+                String::from_utf8(output).map_err(|e| MigrationError::Database(e.into()))?;
+            output
+        };
 
         // With QUIET mode and tuples_only, CSV output is just "1,1" for successful inserts
         // CRITICAL: If this check fails, the migration was applied but recording may be incomplete!
-        if output.trim() != "1,1" {
+        if !output.contains("begin_insertion_record\n1,1") {
             return Err(MigrationError::MigrationAppliedButNotRecorded {
                 name: migration_name.to_string(),
                 namespace: namespace.raw_value().to_string(),

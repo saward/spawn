@@ -486,7 +486,7 @@ COMMIT;"#;
     // Verify the error message contains the critical indicators
     assert!(
         error_message.contains("CRITICAL") || error_message.contains("MANUAL INTERVENTION"),
-        "Error should indicate critical/manual intervention needed, got: {}",
+        "Error should indicate critical/manual intervention needed, got: '''{}'''",
         error_message
     );
 

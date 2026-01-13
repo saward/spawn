@@ -57,6 +57,10 @@ pub enum MigrationError {
     #[error("database error: {0}")]
     Database(#[from] anyhow::Error),
 
+    // Could not get advisory lock
+    #[error("could not get advisory lock: {0}")]
+    AdvisoryLock(std::io::Error),
+
     /// CRITICAL: Migration executed successfully but recording to migration tables failed.
     /// The database is now in an inconsistent state - the migration has been applied
     /// but spawn has no record of it. Manual intervention is required.
