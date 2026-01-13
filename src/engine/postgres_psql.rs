@@ -199,14 +199,12 @@ impl PSQL {
         let output = outputter.output()?;
         // Error if we can't read:
         let output = String::from_utf8(output)?;
-        println!("output: {}", &output);
         Ok(output)
     }
 
     fn migration_table_exists(&self) -> Result<bool> {
         let query = sql_query!(
             r#"
-            \x
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
                 WHERE table_schema = {}
@@ -221,20 +219,14 @@ impl PSQL {
         Ok(output.trim() == "t")
     }
 
-    fn get_applied_migrations(&self, namespace: &EscapedLiteral) -> Result<String> {
-        // TODO: rewrite this to return a proper HashMap of names, rather than
-        // relying on crude pattern matching.
+    fn get_applied_migrations_set(&self, namespace: &EscapedLiteral) -> Result<HashSet<String>> {
         let query = sql_query!(
             "SELECT name FROM {}.migration WHERE namespace = {};",
             self.spawn_schema_ident,
             namespace,
         );
 
-        self.execute_sql(&query, Some("csv"))
-    }
-
-    fn get_applied_migrations_set(&self, namespace: &EscapedLiteral) -> Result<HashSet<String>> {
-        let output = self.get_applied_migrations(namespace)?;
+        let output = self.execute_sql(&query, Some("csv"))?;
         let mut migrations = HashSet::new();
 
         // With tuples_only mode, we get just the data rows (no headers)
@@ -330,7 +322,7 @@ impl PSQL {
                 }
                 MigrationHistoryStatus::Attempted | MigrationHistoryStatus::Failure => {
                     return Err(MigrationError::PreviousAttemptFailed {
-                        name: name,
+                        name,
                         namespace: ns,
                         status: info.last_status.clone(),
                         info,
