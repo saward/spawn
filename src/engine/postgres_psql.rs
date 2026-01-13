@@ -189,6 +189,9 @@ impl PSQL {
         let mut writer = self.new_writer()?;
         // Assumes psql_command already connects to the correct database
         if let Some(format) = format {
+            // tuples_only suppresses headers and extra psql messages
+            writer.write_all(b"\\set QUIET on\n")?;
+            writer.write_all(b"\\pset tuples_only on\n")?;
             writer.write_all(format!("\\pset format {}\n", format).as_bytes())?;
         }
         writer.write_all(query.as_str().as_bytes())?;
@@ -214,7 +217,8 @@ impl PSQL {
         );
 
         let output = self.execute_sql(&query, Some("csv"))?;
-        Ok(output.contains("exists,t"))
+        // With tuples_only mode, output is just "t" or "f"
+        Ok(output.trim() == "t")
     }
 
     fn get_applied_migrations(&self, namespace: &EscapedLiteral) -> Result<String> {
@@ -233,8 +237,8 @@ impl PSQL {
         let output = self.get_applied_migrations(namespace)?;
         let mut migrations = HashSet::new();
 
-        // Parse CSV output - skip header line and extract migration names
-        for line in output.lines().skip(1) {
+        // With tuples_only mode, we get just the data rows (no headers)
+        for line in output.lines() {
             let name = line.trim();
             if !name.is_empty() {
                 migrations.insert(name.to_string());
@@ -269,23 +273,13 @@ impl PSQL {
 
         let output = self.execute_sql(&query, Some("csv"))?;
 
-        // Parse CSV output - find header line and use the line after it.
-        // Output includes psql messages like "Output format is csv." before the actual data.
-        let lines: Vec<&str> = output.lines().collect();
-        let header_idx = lines.iter().position(|l| l.starts_with("name,namespace,"));
-        let Some(header_idx) = header_idx else {
-            return Ok(None);
-        };
-        if lines.len() <= header_idx + 1 {
-            return Ok(None);
-        }
-
-        let data_line = lines[header_idx + 1].trim();
+        // With tuples_only mode, we get just the data row (no headers).
+        // Parse CSV: name,namespace,status_id_status,activity_id_activity,checksum
+        let data_line = output.trim();
         if data_line.is_empty() {
             return Ok(None);
         }
 
-        // Parse CSV: name,namespace,status_id_status,activity_id_activity,checksum
         let parts: Vec<&str> = data_line.split(',').collect();
         if parts.len() < 5 {
             return Ok(None);
@@ -416,9 +410,8 @@ COMMIT;
             .execute_sql(&record_query, Some("csv"))
             .map_err(MigrationError::Database)?;
 
-        // CSV output should contain "migration_count,history_count" header
-        // followed by "1,1" for successful inserts
-        if !output.contains("migration_count,history_count\n1,1") {
+        // With QUIET mode and tuples_only, CSV output is just "1,1" for successful inserts
+        if output.trim() != "1,1" {
             return Err(MigrationError::Database(anyhow!(
                 "expected 1 row inserted for both migration and history, got output: {}",
                 output
