@@ -12,19 +12,13 @@ toml = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9.34"
-tokio = { version = "1.44", features = ["full"] }
-sqlx = { version = "0.8", features = [
-    "runtime-tokio",
-    "tls-rustls",
-    "postgres",
-] }
+tokio = { version = "1.49", features = ["full"] }
 chrono = "0.4.40"
 config = { version = "0.15", features = ["toml"] }
 
 twox-hash = { version = "2", features = ["xxhash3_64", "xxhash3_128"] }
 
 anyhow = "1.0"
-walkdir = "2"
 
 uuid = { version = "1.17", features = ["v4", "v5"] }
 
