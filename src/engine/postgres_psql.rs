@@ -4,7 +4,7 @@
 
 use crate::config::FolderPather;
 use crate::engine::{
-    DatabaseConfig, Engine, EngineOutputter, EngineWriter, ExistingMigrationInfo, MigrationError,
+    DatabaseConfig, Engine, EngineWriter, ExistingMigrationInfo, MigrationError,
     MigrationHistoryStatus, MigrationResult,
 };
 use crate::escape::{EscapedIdentifier, EscapedLiteral, EscapedQuery, InsecureRawSql};
@@ -13,11 +13,16 @@ use crate::store::pinner::latest::Latest;
 use crate::store::{operator_from_includedir, Store};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use futures::TryFutureExt;
 use include_dir::{include_dir, Dir};
+use pin_project::pin_project;
 use std::collections::HashSet;
-use std::io::{self, Read, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::pin::Pin;
+use std::process::Stdio;
+use std::str::FromStr;
 use std::time::Instant;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::process::{ChildStderr, ChildStdin, Command};
 use twox_hash::xxhash3_128;
 use twox_hash::XxHash64;
 
@@ -33,17 +38,16 @@ pub struct PSQL {
 static PROJECT_DIR: Dir<'_> = include_dir!("./static/engine-migrations/postgres-psql");
 static SPAWN_NAMESPACE: &'static str = "spawn";
 
+#[pin_project]
 pub struct PSQLWriter {
-    child: Child,
+    #[pin]
     stdin: ChildStdin,
-}
-
-pub struct PSQLOutput {
-    child: Child,
+    #[pin]
+    stderr: ChildStderr,
 }
 
 impl PSQL {
-    pub fn new(config: &DatabaseConfig) -> Result<Box<dyn Engine>> {
+    pub async fn new(config: &DatabaseConfig) -> Result<Box<dyn Engine>> {
         let psql_command = config
             .command
             .clone()
@@ -76,8 +80,8 @@ impl Engine for PSQL {
         }
         let mut child = child
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit()) // Let stderr go to terminal so users see errors
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .expect("failed to execute command");
 
@@ -86,7 +90,12 @@ impl Engine for PSQL {
             .take()
             .ok_or(anyhow::anyhow!("no stdin found"))?;
 
-        Ok(Box::new(PSQLWriter { child, stdin }) as Box<dyn EngineWriter>)
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or(anyhow::anyhow!("no stderr found"))?;
+
+        Ok(Box::new(PSQLWriter { stdin, stderr }) as Box<dyn EngineWriter>)
     }
 
     async fn migration_apply(
@@ -187,25 +196,26 @@ impl PSQL {
         Ok(())
     }
 
-    fn execute_sql(&self, query: &EscapedQuery, format: Option<&str>) -> Result<String> {
+    async fn execute_sql(&self, query: &EscapedQuery, format: Option<&str>) -> Result<String> {
         let mut writer = self.new_writer()?;
 
-        self.execute_sql_part(query, format, &mut writer)?;
-        let mut outputter = writer.finalise()?;
-        let output = outputter.output()?;
-        // Error if we can't read:
-        let output = String::from_utf8(output)?;
+        self.execute_sql_part(query, format, &mut writer).await?;
+        // let mut outputter = writer.finalise()?;
+        // let output = outputter.output()?;
+        // // Error if we can't read:
+        // let output = String::from_utf8(output)?;
+        let output = String::from_str("output not implemented!")?;
         Ok(output)
     }
 
-    fn execute_sql_part(
+    async fn execute_sql_part(
         &self,
         query: &EscapedQuery,
         format: Option<&str>,
         writer: &mut Box<dyn EngineWriter>,
     ) -> Result<()> {
         // Make psql exit with non-zero status on SQL errors
-        writer.write_all(b"\\set ON_ERROR_STOP on\n")?;
+        Self::prepare_psql_writer(writer)?;
         // Assumes psql_command already connects to the correct database
         if let Some(format) = format {
             // tuples_only suppresses headers and extra psql messages
@@ -317,6 +327,13 @@ impl PSQL {
         }))
     }
 
+    fn prepare_psql_writer(writer: &mut Box<dyn EngineWriter>) -> Result<()> {
+        writer.write_all(b"\\pset pager off\n")?;
+        writer.write_all(b"\\set ON_ERROR_STOP on\n")?;
+
+        Ok(())
+    }
+
     // This is versioned because if we change the schema significantly enough
     // later, we'll have to still write earlier migrations to the table using
     // the format of the migration table as it is at that point.
@@ -369,9 +386,7 @@ impl PSQL {
 
         let mut writer = self.new_writer()?;
         let checksum = XxHash64::oneshot(1234, "SPAWN_MIGRATION_LOCK".as_bytes()) as i64;
-        writer
-            .write_all(b"\\set ON_ERROR_STOP on\n")
-            .map_err(|e| MigrationError::Database(e.into()))?;
+        Self::prepare_psql_writer(&mut writer).map_err(|e| MigrationError::Database(e.into()))?;
         writer
             .write_all(
                 format!(r#"DO $$ BEGIN IF NOT pg_try_advisory_lock({}) THEN RAISE EXCEPTION 'Could not acquire advisory lock'; END IF; END $$;"#, checksum)
@@ -453,20 +468,21 @@ COMMIT;
                     recording_error: e.to_string(),
                 })?;
 
-            let mut outputter = writer.finalise()?;
-            let output =
-                outputter
-                    .output()
-                    .map_err(|e| MigrationError::MigrationAppliedButNotRecorded {
-                        name: migration_name.to_string(),
-                        namespace: namespace.raw_value().to_string(),
-                        schema: self.spawn_schema_ident.raw_value().to_string(),
-                        recording_error: e.to_string(),
-                    })?;
+            // let mut outputter = writer.finalise()?;
+            // let output =
+            //     outputter
+            //         .output()
+            //         .map_err(|e| MigrationError::MigrationAppliedButNotRecorded {
+            //             name: migration_name.to_string(),
+            //             namespace: namespace.raw_value().to_string(),
+            //             schema: self.spawn_schema_ident.raw_value().to_string(),
+            //             recording_error: e.to_string(),
+            //         })?;
 
-            // Error if we can't read:
-            let output =
-                String::from_utf8(output).map_err(|e| MigrationError::Database(e.into()))?;
+            // // Error if we can't read:
+            // let output =
+            //     String::from_utf8(output).map_err(|e| MigrationError::Database(e.into()))?;
+            let output = String::from_str("outputter not implemented!").unwrap();
             output
         };
 
@@ -488,42 +504,47 @@ COMMIT;
     }
 }
 
-impl crate::engine::EngineOutputter for PSQLOutput {
-    fn output(&mut self) -> io::Result<Vec<u8>> {
-        // Collect stdout
-        let mut stdout = Vec::new();
-        if let Some(mut out) = self.child.stdout.take() {
-            out.read_to_end(&mut stdout)?;
-        }
+impl crate::engine::EngineWriter for PSQLWriter {}
 
-        // Wait for the child and check exit status
-        // (stderr goes directly to terminal via Stdio::inherit)
-        let status = self.child.wait()?;
+// impl crate::engine::EngineOutputter for PSQLOutput {
+//     fn output(&mut self) -> io::Result<Vec<u8>> {
+//         // Collect stdout
+//         let mut stdout = Vec::new();
+//         if let Some(mut out) = self.child.stdout.take() {
+//             out.read_to_end(&mut stdout)?;
+//         }
 
-        if !status.success() {
-            let stdout_str = String::from_utf8_lossy(&stdout);
-            let error_msg = format!("psql exited with status {}: {}", status, stdout_str.trim());
-            return Err(io::Error::new(io::ErrorKind::Other, error_msg));
-        }
+//         // Wait for the child and check exit status
+//         // (stderr goes directly to terminal via Stdio::inherit)
+//         let status = self.child.wait()?;
 
-        Ok(stdout)
-    }
-}
+//         if !status.success() {
+//             let stdout_str = String::from_utf8_lossy(&stdout);
+//             let error_msg = format!("psql exited with status {}: {}", status, stdout_str.trim());
+//             return Err(io::Error::new(io::ErrorKind::Other, error_msg));
+//         }
 
-impl crate::engine::EngineWriter for PSQLWriter {
-    fn finalise(mut self: Box<Self>) -> Result<Box<dyn EngineOutputter>> {
-        // Ensure writing is finished (not sure if necessary):
-        self.flush()?;
-        Ok(Box::new(PSQLOutput { child: self.child }))
-    }
-}
+//         Ok(stdout)
+//     }
+// }
 
-impl io::Write for PSQLWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.stdin.write(buf)
+impl AsyncWrite for PSQLWriter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        self.project().stdin.poll_write(cx, buf)
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        self.stdin.flush()
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+        self.project().stdin.poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        self.project().stdin.poll_shutdown(cx)
     }
 }

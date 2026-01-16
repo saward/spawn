@@ -1,5 +1,4 @@
 use crate::config;
-use crate::engine::EngineOutputter;
 use crate::template;
 use console::{style, Style};
 
@@ -69,10 +68,11 @@ impl Tester {
             .write_all(&content.into_bytes())
             .context("failed ro write content to test db")?;
 
-        let mut outputter: Box<dyn EngineOutputter> = dbwriter.finalise()?;
-        let output = outputter.output()?;
+        // let mut outputter: Box<dyn EngineOutputter> = dbwriter.finalise()?;
+        // let output = outputter.output()?;
 
-        let generated: String = str::from_utf8(&output)?.to_string();
+        // let generated: String = str::from_utf8(&output)?.to_string();
+        let generated: String = "not implemented!".to_string();
 
         return Ok(generated);
     }

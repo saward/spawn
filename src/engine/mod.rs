@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::{fmt, io};
+use std::fmt;
 use thiserror::Error;
 
 pub mod postgres_psql;
@@ -143,15 +143,7 @@ pub struct EngineStatus {
     _connection_successful: Option<bool>,
 }
 
-pub trait EngineOutputter {
-    fn output(&mut self) -> io::Result<Vec<u8>>;
-}
-
-pub trait EngineWriter: io::Write {
-    // finalise consumes self so that no more writing can be done after trying
-    // to fetch output.
-    fn finalise(self: Box<Self>) -> anyhow::Result<Box<dyn EngineOutputter>>;
-}
+pub trait EngineWriter: tokio::io::AsyncWrite {}
 
 #[async_trait]
 pub trait Engine {

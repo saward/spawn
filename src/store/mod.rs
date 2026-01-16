@@ -18,10 +18,7 @@ pub struct Store {
 
 impl Debug for Store {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Store")
-            .field("pinner", &self.pinner)
-            .field("fs", &self.fs)
-            .finish()
+        f.debug_struct("Store").field("fs", &self.fs).finish()
     }
 }
 
