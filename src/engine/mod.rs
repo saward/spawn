@@ -143,7 +143,7 @@ pub struct EngineStatus {
     _connection_successful: Option<bool>,
 }
 
-pub trait EngineWriter: tokio::io::AsyncWrite {}
+pub trait EngineWriter: tokio::io::AsyncWrite + Unpin + Send {}
 
 #[async_trait]
 pub trait Engine {

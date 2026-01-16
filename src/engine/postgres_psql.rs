@@ -13,13 +13,13 @@ use crate::store::pinner::latest::Latest;
 use crate::store::{operator_from_includedir, Store};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use futures::TryFutureExt;
 use include_dir::{include_dir, Dir};
 use pin_project::pin_project;
 use std::collections::HashSet;
 use std::pin::Pin;
 use std::process::Stdio;
 use std::str::FromStr;
+use std::task::{Context as TaskContext, Poll};
 use std::time::Instant;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::process::{ChildStderr, ChildStdin, Command};
@@ -115,6 +115,7 @@ impl Engine for PSQL {
             pin_hash,
             EscapedLiteral::new(namespace),
         )
+        .await
     }
 }
 
@@ -141,11 +142,12 @@ impl PSQL {
             .context("Failed to list migrations")?;
 
         // Check if migration table exists to determine if this is bootstrap
-        let migration_table_exists = self.migration_table_exists()?;
+        let migration_table_exists = self.migration_table_exists().await?;
 
         // Get set of already applied migrations (empty if table doesn't exist)
         let applied_migrations: HashSet<String> = if migration_table_exists {
-            self.get_applied_migrations_set(&self.safe_spawn_namespace())?
+            self.get_applied_migrations_set(&self.safe_spawn_namespace())
+                .await?
         } else {
             HashSet::new()
         };
@@ -179,12 +181,15 @@ impl PSQL {
             // Apply the migration and record it
             // Note: even for bootstrap, the first migration creates the tables,
             // so they exist by the time we record the migration.
-            match self.apply_and_record_migration_v1(
-                migration_name,
-                &rendered_sql,
-                None, // pin_hash not used for engine migrations
-                self.safe_spawn_namespace(),
-            ) {
+            match self
+                .apply_and_record_migration_v1(
+                    migration_name,
+                    &rendered_sql,
+                    None, // pin_hash not used for engine migrations
+                    self.safe_spawn_namespace(),
+                )
+                .await
+            {
                 Ok(_) => {}
                 // For internal schema migrations, already applied is fine
                 Err(MigrationError::AlreadyApplied { .. }) => {}
@@ -215,26 +220,29 @@ impl PSQL {
         writer: &mut Box<dyn EngineWriter>,
     ) -> Result<()> {
         // Make psql exit with non-zero status on SQL errors
-        Self::prepare_psql_writer(writer)?;
+        Self::prepare_psql_writer(writer).await?;
         // Assumes psql_command already connects to the correct database
         if let Some(format) = format {
             // tuples_only suppresses headers and extra psql messages
-            writer.write_all(b"\\set QUIET on\n")?;
-            writer.write_all(b"\\pset tuples_only on\n")?;
-            writer.write_all(format!("\\pset format {}\n", format).as_bytes())?;
+            writer.write_all(b"\\set QUIET on\n").await?;
+            writer.write_all(b"\\pset tuples_only on\n").await?;
+            writer
+                .write_all(format!("\\pset format {}\n", format).as_bytes())
+                .await?;
         }
-        Ok(writer.write_all(query.as_str().as_bytes())?)
+        writer.write_all(query.as_str().as_bytes()).await?;
+        Ok(())
     }
 
-    fn migration_table_exists(&self) -> Result<bool> {
-        self.table_exists("migration")
+    async fn migration_table_exists(&self) -> Result<bool> {
+        self.table_exists("migration").await
     }
 
-    fn migration_history_table_exists(&self) -> Result<bool> {
-        self.table_exists("migration_history")
+    async fn migration_history_table_exists(&self) -> Result<bool> {
+        self.table_exists("migration_history").await
     }
 
-    fn table_exists(&self, table_name: &str) -> Result<bool> {
+    async fn table_exists(&self, table_name: &str) -> Result<bool> {
         let safe_table_name = EscapedLiteral::new(table_name);
         let query = sql_query!(
             r#"
@@ -248,19 +256,22 @@ impl PSQL {
             safe_table_name
         );
 
-        let output = self.execute_sql(&query, Some("csv"))?;
+        let output = self.execute_sql(&query, Some("csv")).await?;
         // With tuples_only mode, output is just "t" or "f"
         Ok(output.trim() == "t")
     }
 
-    fn get_applied_migrations_set(&self, namespace: &EscapedLiteral) -> Result<HashSet<String>> {
+    async fn get_applied_migrations_set(
+        &self,
+        namespace: &EscapedLiteral,
+    ) -> Result<HashSet<String>> {
         let query = sql_query!(
             "SELECT name FROM {}.migration WHERE namespace = {};",
             self.spawn_schema_ident,
             namespace,
         );
 
-        let output = self.execute_sql(&query, Some("csv"))?;
+        let output = self.execute_sql(&query, Some("csv")).await?;
         let mut migrations = HashSet::new();
 
         // With tuples_only mode, we get just the data rows (no headers)
@@ -276,7 +287,7 @@ impl PSQL {
 
     /// Get the latest migration history entry for a given migration name and namespace.
     /// Returns None if no history entry exists.
-    fn get_migration_status(
+    async fn get_migration_status(
         &self,
         migration_name: &str,
         namespace: &EscapedLiteral,
@@ -297,7 +308,7 @@ impl PSQL {
             namespace
         );
 
-        let output = self.execute_sql(&query, Some("csv"))?;
+        let output = self.execute_sql(&query, Some("csv")).await?;
 
         // With tuples_only mode, we get just the data row (no headers).
         // Parse CSV: name,namespace,status_id_status,activity_id_activity,checksum
@@ -327,9 +338,9 @@ impl PSQL {
         }))
     }
 
-    fn prepare_psql_writer(writer: &mut Box<dyn EngineWriter>) -> Result<()> {
-        writer.write_all(b"\\pset pager off\n")?;
-        writer.write_all(b"\\set ON_ERROR_STOP on\n")?;
+    async fn prepare_psql_writer(writer: &mut Box<dyn EngineWriter>) -> Result<()> {
+        writer.write_all(b"\\pset pager off\n").await?;
+        writer.write_all(b"\\set ON_ERROR_STOP on\n").await?;
 
         Ok(())
     }
@@ -337,7 +348,7 @@ impl PSQL {
     // This is versioned because if we change the schema significantly enough
     // later, we'll have to still write earlier migrations to the table using
     // the format of the migration table as it is at that point.
-    fn apply_and_record_migration_v1(
+    async fn apply_and_record_migration_v1(
         &self,
         migration_name: &str,
         migration_sql: &str,
@@ -347,9 +358,11 @@ impl PSQL {
         // Check if migration already exists in history (skip if table doesn't exist yet)
         let existing_status = if self
             .migration_history_table_exists()
+            .await
             .map_err(MigrationError::Database)?
         {
             self.get_migration_status(migration_name, &namespace)
+                .await
                 .map_err(MigrationError::Database)?
         } else {
             None
@@ -386,16 +399,20 @@ impl PSQL {
 
         let mut writer = self.new_writer()?;
         let checksum = XxHash64::oneshot(1234, "SPAWN_MIGRATION_LOCK".as_bytes()) as i64;
-        Self::prepare_psql_writer(&mut writer).map_err(|e| MigrationError::Database(e.into()))?;
+        Self::prepare_psql_writer(&mut writer)
+            .await
+            .map_err(|e| MigrationError::Database(e.into()))?;
         writer
             .write_all(
                 format!(r#"DO $$ BEGIN IF NOT pg_try_advisory_lock({}) THEN RAISE EXCEPTION 'Could not acquire advisory lock'; END IF; END $$;"#, checksum)
                     .as_str()
                     .as_bytes(),
             )
+            .await
             .map_err(|e| MigrationError::AdvisoryLock(e))?;
 
         self.execute_sql_part(&migration_sql, None, &mut writer)
+            .await
             .map_err(MigrationError::Database)?;
         let duration = start_time.elapsed().as_secs_f32();
 
@@ -461,6 +478,7 @@ COMMIT;
         // CRITICAL: If this fails, the migration was applied but not recorded!
         let output = {
             self.execute_sql_part(&record_query, Some("csv"), &mut writer)
+                .await
                 .map_err(|e| MigrationError::MigrationAppliedButNotRecorded {
                     name: migration_name.to_string(),
                     namespace: namespace.raw_value().to_string(),
@@ -531,19 +549,22 @@ impl crate::engine::EngineWriter for PSQLWriter {}
 impl AsyncWrite for PSQLWriter {
     fn poll_write(
         self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        cx: &mut TaskContext<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
         self.project().stdin.poll_write(cx, buf)
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
         self.project().stdin.poll_flush(cx)
     }
 
     fn poll_shutdown(
         self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        cx: &mut TaskContext<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
         self.project().stdin.poll_shutdown(cx)
     }

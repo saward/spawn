@@ -169,11 +169,11 @@ impl Config {
         }
     }
 
-    pub fn new_engine(&self) -> Result<Box<dyn Engine>> {
+    pub async fn new_engine(&self) -> Result<Box<dyn Engine>> {
         let db_config = self.db_config()?;
 
         match db_config.engine {
-            EngineType::PostgresPSQL => Ok(PSQL::new(&db_config)?),
+            EngineType::PostgresPSQL => Ok(PSQL::new(&db_config).await?),
         }
     }
 

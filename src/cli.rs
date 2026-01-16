@@ -187,7 +187,7 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                         let mgrtr = Migrator::new(&main_config, &migration, *pinned);
                         match mgrtr.generate(variables.clone()).await {
                             Ok(result) => {
-                                let engine = main_config.new_engine()?;
+                                let engine = main_config.new_engine().await?;
                                 match engine
                                     .migration_apply(&migration, &result.content, None, "default")
                                     .await

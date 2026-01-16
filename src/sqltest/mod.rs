@@ -4,9 +4,9 @@ use console::{style, Style};
 
 use similar::{ChangeTag, TextDiff};
 use std::fmt;
-use std::io::Write;
 
 use std::str;
+use tokio::io::AsyncWriteExt;
 
 use anyhow::{Context, Result};
 
@@ -61,11 +61,12 @@ impl Tester {
     pub async fn run(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
         let content = self.generate(variables.clone()).await?;
 
-        let engine = self.config.new_engine()?;
+        let engine = self.config.new_engine().await?;
 
         let mut dbwriter = engine.new_writer()?;
         dbwriter
             .write_all(&content.into_bytes())
+            .await
             .context("failed ro write content to test db")?;
 
         // let mut outputter: Box<dyn EngineOutputter> = dbwriter.finalise()?;
