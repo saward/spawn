@@ -98,6 +98,16 @@ pub enum MigrationError {
 /// Result type for migration operations
 pub type MigrationResult<T> = Result<T, MigrationError>;
 
+/// Errors for streaming SQL execution
+#[derive(Debug, Error)]
+pub enum EngineError {
+    #[error("execution failed (exit {exit_code}): {stderr}")]
+    ExecutionFailed { exit_code: i32, stderr: String },
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum EngineType {
     #[serde(rename = "postgres-psql")]
@@ -143,13 +153,24 @@ pub struct EngineStatus {
     _connection_successful: Option<bool>,
 }
 
-pub trait EngineWriter: tokio::io::AsyncWrite + Unpin + Send {}
+/// Type alias for the writer closure used in execute_with_writer
+pub type WriterFn = Box<dyn FnOnce(&mut dyn std::io::Write) -> std::io::Result<()> + Send>;
+
+/// Type alias for an optional stdout writer to capture output
+pub type StdoutWriter = Option<Box<dyn std::io::Write + Send>>;
 
 #[async_trait]
-pub trait Engine {
-    /// Provides a writer that a given migration can be sent to, so that we can
-    /// stream data to this as we go.  May not be implemented for all engines.
-    fn new_writer(&self) -> anyhow::Result<Box<dyn EngineWriter>>;
+pub trait Engine: Send + Sync {
+    /// Execute SQL by running the provided writer function.
+    /// - `write_fn`: Closure that writes SQL to the provided Write handle
+    /// - `stdout_writer`: Optional writer to capture stdout. If None, stdout is discarded.
+    /// Engine-specific setup (like psql flags) is handled internally.
+    /// Returns stderr content on failure.
+    async fn execute_with_writer(
+        &self,
+        write_fn: WriterFn,
+        stdout_writer: StdoutWriter,
+    ) -> Result<(), EngineError>;
 
     async fn migration_apply(
         &self,
@@ -158,11 +179,4 @@ pub trait Engine {
         pin_hash: Option<String>,
         namespace: &str,
     ) -> MigrationResult<String>;
-
-    // /// Return information about this migration, such as whether it has been
-    // /// applied.
-    // fn migration_status(&self, checksum: &[u8]) -> anyhow::Result<Status>;
-
-    // /// Performs a check on the connection to see
-    // fn check(&self) -> Result<EngineStatus>;
 }

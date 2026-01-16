@@ -4,9 +4,7 @@ use console::{style, Style};
 
 use similar::{ChangeTag, TextDiff};
 use std::fmt;
-
 use std::str;
-use tokio::io::AsyncWriteExt;
 
 use anyhow::{Context, Result};
 
@@ -63,19 +61,21 @@ impl Tester {
 
         let engine = self.config.new_engine().await?;
 
-        let mut dbwriter = engine.new_writer()?;
-        dbwriter
-            .write_all(&content.into_bytes())
+        engine
+            .execute_with_writer(
+                Box::new(move |writer| {
+                    writer.write_all(content.as_bytes())?;
+                    Ok(())
+                }),
+                None, // No stdout capture for now
+            )
             .await
-            .context("failed ro write content to test db")?;
+            .context("failed to write content to test db")?;
 
-        // let mut outputter: Box<dyn EngineOutputter> = dbwriter.finalise()?;
-        // let output = outputter.output()?;
-
-        // let generated: String = str::from_utf8(&output)?.to_string();
+        // TODO: Capture and return stdout when implemented
         let generated: String = "not implemented!".to_string();
 
-        return Ok(generated);
+        Ok(generated)
     }
 
     pub async fn run_compare(
@@ -100,7 +100,7 @@ impl Tester {
             },
         };
 
-        return Ok(outcome);
+        Ok(outcome)
     }
 
     pub async fn save_expected(
@@ -156,7 +156,7 @@ impl Tester {
             }
         }
 
-        if diff_display.len() > 0 {
+        if !diff_display.is_empty() {
             return Err(diff_display);
         }
 
