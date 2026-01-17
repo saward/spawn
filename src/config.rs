@@ -36,14 +36,6 @@ impl ConfigLoaderSaver {
         op: &Operator,
         database: Option<String>,
     ) -> Result<ConfigLoaderSaver> {
-        let mut lister = op.lister_with(".").recursive(true).await?;
-
-        println!("listing files for '{}'", "whatever");
-        while let Some(entry) = lister.try_next().await? {
-            let file_data = op.read(&entry.path()).await?.to_bytes();
-            println!("(len {}). found {}", file_data.len(), entry.path());
-        }
-
         let bytes = op
             .read(path)
             .await

@@ -295,11 +295,6 @@ impl PSQL {
                 continue;
             }
 
-            println!(
-                "Attempting to create migrator for name/path: {}",
-                &migration_path
-            );
-
             let migrator = crate::migrator::Migrator::new(&cfg, &migration_name, false);
 
             // Load and render the migration

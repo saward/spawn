@@ -172,11 +172,6 @@ pub async fn operator_from_includedir(
     // Then write all files to the operator
     for (dest_path, contents) in &files_to_write {
         let final_path = format!("{}{}", prefix, dest_path);
-        println!(
-            "DEBUG includedir: writing {} ({} bytes)",
-            final_path,
-            contents.len()
-        );
         operator
             .write(&final_path, contents.clone())
             .await
