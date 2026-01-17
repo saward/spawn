@@ -1,20 +1,17 @@
 use crate::config;
-use crate::engine::EngineOutputter;
 use crate::template;
 use console::{style, Style};
+
 use similar::{ChangeTag, TextDiff};
-use std::ffi::OsString;
 use std::fmt;
-use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
 use std::str;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 
 pub struct Tester {
     config: config::Config,
-    script_path: OsString,
+    script_path: String,
 }
 
 #[derive(Debug)]
@@ -23,47 +20,47 @@ pub struct TestOutcome {
 }
 
 impl Tester {
-    pub fn new(config: &config::Config, script_path: OsString) -> Self {
+    pub fn new(config: &config::Config, script_path: &str) -> Self {
         Tester {
             config: config.clone(),
-            script_path,
+            script_path: script_path.to_string(),
         }
     }
 
-    pub fn components_folder(&self) -> PathBuf {
-        self.config.spawn_folder.join("components")
+    pub fn test_folder(&self) -> String {
+        let mut s = self.config.pather().tests_folder();
+        s.push('/');
+        s.push_str(&self.script_path);
+        s
     }
 
-    pub fn tests_folder(&self) -> PathBuf {
-        self.config.spawn_folder.join("tests")
+    pub fn test_file_path(&self) -> String {
+        let mut s = self.test_folder();
+        s.push_str("/test.sql");
+        s
     }
 
-    pub fn test_folder(&self) -> PathBuf {
-        self.tests_folder().join(self.script_path.clone())
+    pub fn expected_file_path(&self) -> String {
+        format!("{}/expected", self.test_folder())
     }
 
-    pub fn script_file_path(&self) -> PathBuf {
-        self.test_folder().join("test.sql")
-    }
-
-    pub fn expected_file_path(&self) -> PathBuf {
-        self.test_folder().join("expected")
-    }
-
-    /// Opens the specified script file and generates a migration script, compiled
+    /// Opens the specified script file and generates a test script, compiled
     /// using minijinja.
     pub async fn generate(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
         let lock_file = None;
 
-        // Add our migration script to environment:
-        let full_script_path = self.script_file_path();
-        let contents = std::fs::read_to_string(&full_script_path).context(format!(
-            "Failed to read test script '{}'",
-            full_script_path.display()
-        ))?;
+        let gen = template::generate_streaming(
+            &self.config,
+            lock_file,
+            &self.test_file_path(),
+            variables,
+        )
+        .await?;
 
-        let gen = template::generate(&self.config, lock_file, &contents, variables).await?;
-        let content = gen.content;
+        let mut buffer = Vec::new();
+        gen.render_to_writer(&mut buffer)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let content = String::from_utf8(buffer)?;
 
         Ok(content)
     }
@@ -72,19 +69,27 @@ impl Tester {
     pub async fn run(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
         let content = self.generate(variables.clone()).await?;
 
-        let engine = self.config.new_engine()?;
+        let engine = self.config.new_engine().await?;
 
-        let mut dbwriter = engine.new_writer()?;
-        dbwriter
-            .write_all(&content.into_bytes())
-            .context("failed ro write content to test db")?;
+        // Create a shared buffer to capture stdout
+        let stdout_buf = Arc::new(Mutex::new(Vec::new()));
+        let stdout_buf_clone = stdout_buf.clone();
 
-        let mut outputter: Box<dyn EngineOutputter> = dbwriter.finalise()?;
-        let output = outputter.output()?;
+        engine
+            .execute_with_writer(
+                Box::new(move |writer| {
+                    writer.write_all(content.as_bytes())?;
+                    Ok(())
+                }),
+                Some(Box::new(SharedBufWriter(stdout_buf_clone))),
+            )
+            .await
+            .context("failed to write content to test db")?;
 
-        let generated: String = str::from_utf8(&output)?.to_string();
+        let buf = stdout_buf.lock().unwrap();
+        let generated = String::from_utf8_lossy(&buf).to_string();
 
-        return Ok(generated);
+        Ok(generated)
     }
 
     pub async fn run_compare(
@@ -92,8 +97,15 @@ impl Tester {
         variables: Option<crate::variables::Variables>,
     ) -> Result<TestOutcome> {
         let generated = self.run(variables).await?;
-        let expected = fs::read_to_string(self.expected_file_path())
-            .context("unable to read expectations file")?;
+        let expected_bytes = self
+            .config
+            .operator()
+            .read(&self.expected_file_path())
+            .await
+            .context("unable to read expectations file")?
+            .to_bytes();
+        let expected = String::from_utf8(expected_bytes.to_vec())
+            .context("expected file is not valid UTF-8")?;
 
         let outcome = match self.compare(&generated, &expected) {
             Ok(()) => TestOutcome { diff: None },
@@ -102,7 +114,7 @@ impl Tester {
             },
         };
 
-        return Ok(outcome);
+        Ok(outcome)
     }
 
     pub async fn save_expected(
@@ -110,7 +122,10 @@ impl Tester {
         variables: Option<crate::variables::Variables>,
     ) -> Result<()> {
         let content = self.run(variables).await?;
-        fs::write(self.expected_file_path(), content)
+        self.config
+            .operator()
+            .write(&self.expected_file_path(), content)
+            .await
             .context("unable to write expectation file")?;
 
         Ok(())
@@ -155,7 +170,7 @@ impl Tester {
             }
         }
 
-        if diff_display.len() > 0 {
+        if !diff_display.is_empty() {
             return Err(diff_display);
         }
 
@@ -171,5 +186,33 @@ impl fmt::Display for Line {
             None => write!(f, "    "),
             Some(idx) => write!(f, "{:<4}", idx + 1),
         }
+    }
+}
+
+/// A simple AsyncWrite implementation that appends to a shared Vec<u8>
+struct SharedBufWriter(Arc<Mutex<Vec<u8>>>);
+
+impl tokio::io::AsyncWrite for SharedBufWriter {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        std::task::Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
     }
 }

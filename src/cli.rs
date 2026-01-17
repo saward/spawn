@@ -1,15 +1,13 @@
+use crate::engine::MigrationError;
 use crate::migrator::Migrator;
 use crate::pinfile::LockData;
 use crate::sqltest::Tester;
 use crate::store::pinner::spawn::Spawn;
-use crate::variables::Variables;
 use crate::{config::Config, store::pinner::Pinner};
-use object_store::local::LocalFileSystem;
-use object_store::ObjectStore;
-use std::ffi::OsString;
-use std::fs;
+use futures::TryStreamExt;
+use opendal::Operator;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono;
 use clap::{Parser, Subcommand};
 use toml;
@@ -62,7 +60,7 @@ pub enum MigrationCommands {
     /// Pin a migration with current components
     Pin {
         /// Migration to pin
-        migration: OsString,
+        migration: String,
     },
     /// Build a migration into SQL
     Build {
@@ -71,8 +69,7 @@ pub enum MigrationCommands {
         pinned: bool,
         /// Migration to build.  Looks for up.sql inside this specified
         /// migration folder.
-        migration: OsString,
-        variables: Option<Variables>,
+        migration: String,
     },
     /// Apply will apply this migration to the database if not already applied,
     /// or all migrations if called without argument.
@@ -81,38 +78,41 @@ pub enum MigrationCommands {
         #[arg(long)]
         pinned: bool,
 
-        migration: Option<OsString>,
-        variables: Option<Variables>,
+        migration: Option<String>,
     },
 }
 
 #[derive(Subcommand)]
 pub enum TestCommands {
     Build {
-        name: OsString,
+        name: String,
     },
     /// Run a particular test
     Run {
-        name: OsString,
+        name: String,
     },
     /// Run tests and compare to expected.  Runs all tests if no name provided.
     Compare {
-        name: Option<OsString>,
+        name: Option<String>,
     },
     Expect {
-        name: OsString,
+        name: String,
     },
 }
 
 pub enum Outcome {
     NewMigration(String),
+    BuiltMigration { content: String },
     AppliedMigrations,
     Unimplemented,
+    PinnedMigration { hash: String },
+    Success,
 }
 
-pub async fn run_cli(cli: Cli) -> Result<Outcome> {
+pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
     // Load config from file:
-    let mut main_config = Config::load(&cli.config_file, cli.database)
+    let mut main_config = Config::load(&cli.config_file, &base_op, cli.database)
+        .await
         .context(format!("could not load config from {}", &cli.config_file,))?;
 
     match &cli.command {
@@ -129,46 +129,45 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     let migration_name: String =
                         format!("{}-{}", chrono::Utc::now().format("%Y%m%d%H%M%S"), name);
                     println!("creating migration with name {}", &migration_name);
-                    let mg = Migrator::new(&main_config, migration_name.into(), false);
+                    let mg = Migrator::new(&main_config, &migration_name, false);
 
-                    Ok(Outcome::NewMigration(mg.create_migration()?))
+                    Ok(Outcome::NewMigration(mg.create_migration().await?))
                 }
                 Some(MigrationCommands::Pin { migration }) => {
                     let mut pinner = Spawn::new(
-                        &main_config.pinned_folder().to_string_lossy(),
-                        &main_config.components_folder().to_string_lossy(),
-                    )?;
+                        main_config.pather().pinned_folder(),
+                        main_config.pather().components_folder(),
+                    )
+                    .context("could not get pinned_folder")?;
 
-                    let fs: Box<dyn ObjectStore> =
-                        Box::new(LocalFileSystem::new_with_prefix(&main_config.spawn_folder)?);
+                    let root = pinner
+                        .snapshot(&main_config.operator())
+                        .await
+                        .context("error calling pinner snapshot")?;
+                    let lock_file_path = main_config.pather().migration_lock_file_path(&migration);
+                    let toml_str = toml::to_string_pretty(&LockData { pin: root.clone() })
+                        .context("could not not convert pin data to toml")?;
+                    base_op
+                        .write(&lock_file_path, toml_str)
+                        .await
+                        .context("failed writing migration lockfile")?;
 
-                    let root = pinner.snapshot(&fs).await?;
-                    let lock_file = main_config.migration_lock_file_path(&migration);
-                    let toml_str = toml::to_string_pretty(&LockData { pin: root })?;
-                    fs::write(lock_file, toml_str)?;
-
-                    Ok(Outcome::Unimplemented)
+                    Ok(Outcome::PinnedMigration { hash: root })
                 }
-                Some(MigrationCommands::Build {
-                    migration,
-                    pinned,
-                    variables,
-                }) => {
-                    let mgrtr = Migrator::new(&main_config, migration.clone(), *pinned);
-                    match mgrtr.generate(variables.clone()).await {
-                        Ok(result) => {
-                            println!("{}", result.content);
-                            ()
+                Some(MigrationCommands::Build { migration, pinned }) => {
+                    let mgrtr = Migrator::new(&main_config, &migration, *pinned);
+                    match mgrtr.generate_streaming(None).await {
+                        Ok(gen) => {
+                            let mut buffer = Vec::new();
+                            gen.render_to_writer(&mut buffer)
+                                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                            let content = String::from_utf8(buffer)?;
+                            Ok(Outcome::BuiltMigration { content })
                         }
                         Err(e) => return Err(e),
-                    };
-                    Ok(Outcome::Unimplemented)
+                    }
                 }
-                Some(MigrationCommands::Apply {
-                    migration,
-                    pinned,
-                    variables,
-                }) => {
+                Some(MigrationCommands::Apply { migration, pinned }) => {
                     let mut migrations = Vec::new();
                     match migration {
                         Some(migration) => migrations.push(migration.clone()),
@@ -178,22 +177,65 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     }
 
                     for migration in migrations {
-                        let migration_str = migration.to_str().unwrap_or_default();
-                        let mgrtr = Migrator::new(&main_config, migration.clone(), *pinned);
-                        match mgrtr.generate(variables.clone()).await {
-                            Ok(result) => {
-                                let engine = main_config.new_engine()?;
-                                engine.migration_apply(&result.content).context(format!(
-                                    "Failed to apply migration '{}'",
-                                    &migration_str,
-                                ))?;
-                                println!("Migration '{}' applied successfully", &migration_str);
-                                ()
+                        let mgrtr = Migrator::new(&main_config, &migration, *pinned);
+                        match mgrtr.generate_streaming(None).await {
+                            Ok(streaming) => {
+                                let engine = main_config.new_engine().await?;
+                                let write_fn = streaming.into_writer_fn();
+                                match engine
+                                    .migration_apply(&migration, write_fn, None, "default")
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        println!("Migration '{}' applied successfully", &migration);
+                                    }
+                                    Err(MigrationError::AlreadyApplied { info, .. }) => {
+                                        println!(
+                                            "Migration '{}' already applied (status: {}, checksum: {})",
+                                            &migration, info.last_status, info.checksum
+                                        );
+                                    }
+                                    Err(MigrationError::PreviousAttemptFailed {
+                                        status,
+                                        info,
+                                        ..
+                                    }) => {
+                                        return Err(anyhow::anyhow!(
+                                            "Migration '{}' has a previous {} attempt (checksum: {}). \
+                                             Manual intervention may be required.",
+                                            &migration,
+                                            status,
+                                            info.checksum
+                                        ));
+                                    }
+                                    Err(MigrationError::Database(e)) => {
+                                        return Err(anyhow!(
+                                            "Failed applying migration {}",
+                                            &migration
+                                        )
+                                        .context(e));
+                                    }
+                                    Err(MigrationError::AdvisoryLock(e)) => {
+                                        return Err(anyhow!(
+                                            "Unable to obtain advisory lock for migration"
+                                        )
+                                        .context(e));
+                                    }
+                                    Err(
+                                        e @ MigrationError::MigrationAppliedButNotRecorded {
+                                            ..
+                                        },
+                                    ) => {
+                                        // This is a critical error - the migration ran but wasn't recorded.
+                                        // Return it directly so the full error message is displayed.
+                                        return Err(anyhow::anyhow!("{}", e));
+                                    }
+                                }
                             }
                             Err(e) => {
                                 return Err(e.context(anyhow::anyhow!(format!(
                                     "failed to generate migration '{}'",
-                                    &migration_str
+                                    &migration,
                                 ))))
                             }
                         };
@@ -209,7 +251,7 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
         }
         Some(Commands::Test { command }) => match command {
             Some(TestCommands::Build { name }) => {
-                let config = Tester::new(&main_config, name.clone());
+                let config = Tester::new(&main_config, &name);
                 match config.generate(None).await {
                     Ok(result) => {
                         println!("{}", result);
@@ -217,10 +259,10 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     }
                     Err(e) => return Err(e),
                 };
-                Ok(Outcome::Unimplemented)
+                Ok(Outcome::Success)
             }
             Some(TestCommands::Run { name }) => {
-                let config = Tester::new(&main_config, name.clone());
+                let config = Tester::new(&main_config, &name);
                 match config.run(None).await {
                     Ok(result) => {
                         println!("{}", result);
@@ -228,25 +270,24 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     }
                     Err(e) => return Err(e),
                 };
-                Ok(Outcome::Unimplemented)
+                Ok(Outcome::Success)
             }
             Some(TestCommands::Compare { name }) => {
-                let test_files: Vec<OsString> = match name {
+                let test_files: Vec<String> = match name {
                     Some(name) => vec![name.clone()],
                     None => {
-                        let mut tests = Vec::new();
-                        // Grab all test files in the folder:
-                        for entry in fs::read_dir(main_config.tests_folder())? {
-                            let entry = entry?;
-                            let path = entry.path();
-                            if path.is_dir() {
-                                tests.push(
-                                    path.file_name()
-                                        .ok_or(anyhow::anyhow!("no test found!"))?
-                                        .to_os_string(),
-                                );
+                        let mut tests: Vec<String> = Vec::new();
+                        let mut fs_lister = main_config
+                            .operator()
+                            .lister(&main_config.pather().tests_folder())
+                            .await?;
+                        while let Some(entry) = fs_lister.try_next().await? {
+                            let path = entry.path().to_string();
+                            if path.ends_with("/") {
+                                tests.push(path)
                             }
                         }
+
                         tests
                     }
                 };
@@ -254,19 +295,16 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                 let mut failed = false;
 
                 for test_file in test_files {
-                    let config = Tester::new(&main_config, test_file.clone());
-                    let name = test_file
-                        .into_string()
-                        .unwrap_or_else(|_| "<invalid utf8>".to_string());
+                    let config = Tester::new(&main_config, &test_file);
 
                     match config.run_compare(None).await {
                         Ok(result) => match result.diff {
                             None => {
-                                println!("{}[PASS]{} {}", GREEN, RESET, name);
+                                println!("{}[PASS]{} {}", GREEN, RESET, test_file);
                             }
                             Some(diff) => {
                                 failed = true;
-                                println!("\n{}[FAIL]{} {}{}{}", RED, RESET, BOLD, name, RESET);
+                                println!("\n{}[FAIL]{} {}{}{}", RED, RESET, BOLD, test_file, RESET);
                                 println!("{}--- Diff ---{}", BOLD, RESET);
                                 println!("{}", diff);
                                 println!("{}-------------{}\n", BOLD, RESET);
@@ -284,15 +322,15 @@ pub async fn run_cli(cli: Cli) -> Result<Outcome> {
                     ));
                 }
 
-                Ok(Outcome::Unimplemented)
+                Ok(Outcome::Success)
             }
             Some(TestCommands::Expect { name }) => {
-                let tester = Tester::new(&main_config, name.clone());
+                let tester = Tester::new(&main_config, &name);
                 match tester.save_expected(None).await {
                     Ok(_) => (),
                     Err(e) => return Err(e),
                 };
-                Ok(Outcome::Unimplemented)
+                Ok(Outcome::Success)
             }
             None => {
                 eprintln!("No test subcommand specified");

@@ -1,7 +1,3 @@
-use std::fs;
-use std::path::Path;
-use std::str::FromStr;
-
 use anyhow::Result;
 use serde::Serialize;
 
@@ -31,31 +27,27 @@ impl Default for Variables {
     }
 }
 
-impl FromStr for Variables {
-    type Err = String;
-
-    fn from_str(path_str: &str) -> Result<Self, Self::Err> {
-        let path = Path::new(path_str);
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read file {}: {}", path_str, e))?;
-
-        match path.extension().and_then(|s| s.to_str()) {
-            Some("json") => {
+impl Variables {
+    pub fn from_str(s_type: &str, s: &str) -> Result<Self> {
+        match s_type {
+            "json" => {
                 let value: serde_json::Value =
-                    serde_json::from_str(&content).map_err(|e| format!("Invalid JSON: {}", e))?;
+                    serde_json::from_str(s).map_err(|e| anyhow::anyhow!("Invalid JSON: {}", e))?;
                 Ok(Variables::Json(value))
             }
-            Some("toml") => {
+            "toml" => {
                 let value: toml::Value =
-                    toml::from_str(&content).map_err(|e| format!("Invalid TOML: {}", e))?;
+                    toml::from_str(s).map_err(|e| anyhow::anyhow!("Invalid TOML: {}", e))?;
                 Ok(Variables::Toml(value))
             }
-            Some("yaml") | Some("yml") => {
+            "yaml" | "yml" => {
                 let value: serde_yaml::Value =
-                    serde_yaml::from_str(&content).map_err(|e| format!("Invalid YAML: {}", e))?;
+                    serde_yaml::from_str(s).map_err(|e| anyhow::anyhow!("Invalid YAML: {}", e))?;
                 Ok(Variables::Yaml(value))
             }
-            _ => Err("Unsupported file format (expected .json, .toml, or .yaml)".into()),
+            _ => Err(anyhow::anyhow!(
+                "Unsupported file format (expected .json, .toml, or .yaml)"
+            )),
         }
     }
 }

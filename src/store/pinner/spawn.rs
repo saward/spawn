@@ -2,47 +2,47 @@ use super::Pinner;
 use anyhow::Result;
 use anyhow::{anyhow, Context};
 use async_trait::async_trait;
-use object_store::ObjectStore;
+use opendal::Operator;
 use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct Spawn {
     files: Option<HashMap<String, String>>,
-    store_path: String,
+    pin_path: String,
     source_path: String,
 }
 
 impl Spawn {
-    pub fn new(store_path: &str, source_path: &str) -> Result<Self> {
+    pub fn new(pin_path: String, source_path: String) -> Result<Self> {
         let store = Self {
             files: None,
-            store_path: store_path.to_string(),
-            source_path: source_path.to_string(),
+            pin_path,
+            source_path,
         };
 
         Ok(store)
     }
 
     pub async fn new_with_root_hash(
-        store_path: &str,
-        source_path: &str,
+        pin_path: String,
+        source_path: String,
         root_hash: &str,
-        object_store: &Box<dyn ObjectStore>,
+        object_store: &Operator,
     ) -> Result<Self> {
         let mut files = HashMap::new();
-        Self::read_root_hash(object_store, store_path, &mut files, "", root_hash).await?;
+        Self::read_root_hash(object_store, &pin_path, &mut files, "", root_hash).await?;
 
         let store = Self {
             files: Some(files),
-            store_path: store_path.to_string(),
-            source_path: source_path.to_string(),
+            pin_path: pin_path.clone(),
+            source_path,
         };
 
         Ok(store)
     }
 
     async fn read_root_hash(
-        object_store: &Box<dyn ObjectStore>,
+        object_store: &Operator,
         store_path: &str,
         files: &mut HashMap<String, String>,
         base_path: &str,
@@ -53,7 +53,7 @@ impl Spawn {
             .context("cannot read root file")?;
         let tree: super::Tree = toml::from_str(&contents).context("failed to parse tree TOML")?;
 
-        for entry in tree.entries {
+        for (_, entry) in tree.entries.iter().enumerate() {
             match entry.kind {
                 super::EntryKind::Blob => {
                     let full_name = if base_path.is_empty() {
@@ -89,11 +89,7 @@ impl Spawn {
 #[async_trait]
 impl Pinner for Spawn {
     /// Returns the file from the store if it exists.
-    async fn load(
-        &self,
-        name: &str,
-        object_store: &Box<dyn ObjectStore>,
-    ) -> Result<Option<String>> {
+    async fn load(&self, name: &str, object_store: &Operator) -> Result<Option<String>> {
         // Borrow files from inside self.files, if not none:
         let files = self
             .files
@@ -101,9 +97,9 @@ impl Pinner for Spawn {
             .ok_or(anyhow!("files not initialized, was a root hash specified?"))?;
 
         if let Some(path) = files.get(name) {
-            match object_store.get(&path.clone().into()).await {
+            match object_store.read(path).await {
                 Ok(get_result) => {
-                    let bytes = get_result.bytes().await?;
+                    let bytes = get_result.to_bytes();
                     let contents = String::from_utf8(bytes.to_vec())?;
                     Ok(Some(contents))
                 }
@@ -114,7 +110,7 @@ impl Pinner for Spawn {
         }
     }
 
-    async fn snapshot(&mut self, object_store: &Box<dyn ObjectStore>) -> Result<String> {
-        super::snapshot(object_store, &self.store_path, &self.source_path).await
+    async fn snapshot(&mut self, object_store: &Operator) -> Result<String> {
+        super::snapshot(object_store, &self.pin_path, &self.source_path).await
     }
 }

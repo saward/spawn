@@ -12,21 +12,15 @@ toml = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9.34"
-tokio = { version = "1.44", features = ["full"] }
-sqlx = { version = "0.8", features = [
-    "runtime-tokio",
-    "tls-rustls",
-    "postgres",
-] }
+tokio = { version = "1.49", features = ["full"] }
 chrono = "0.4.40"
 config = { version = "0.15", features = ["toml"] }
 
-twox-hash = { version = "2", features = ["xxhash3_128"] }
+twox-hash = { version = "2", features = ["xxhash3_64", "xxhash3_128"] }
 
 anyhow = "1.0"
-walkdir = "2"
 
-uuid = { version = "1.17", features = ["v4"] }
+uuid = { version = "1.17", features = ["v4", "v5"] }
 
 similar = { version = "2.7.0", features = ["inline"] }
 console = "0.15"
@@ -34,6 +28,12 @@ object_store = { version = "0.12.3", features = ["fs"] }
 
 async-trait = "0.1.88"
 futures = "0.3"
+opendal = { version = ">=0.53, <1", features = ["services-fs", "services-memory"] }
+postgres-protocol = "0.6"
+
+include_dir = "0.7.4"
+thiserror = "2.0.17"
+pin-project = "1.1.10"
 
 [dev-dependencies]
 tempfile = "3.8"
