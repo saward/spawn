@@ -168,6 +168,105 @@ pub struct Generation {
     pub content: String,
 }
 
+/// Holds all the data needed to render a template to a writer.
+/// This struct is Send and can be moved into a WriterFn closure.
+pub struct StreamingGeneration {
+    store: Store,
+    template_contents: String,
+    environment: String,
+    variables: Variables,
+    engine: EngineType,
+}
+
+impl StreamingGeneration {
+    /// Render the template to the provided writer.
+    /// This creates the minijinja environment and renders in one step.
+    pub fn render_to_writer<W: std::io::Write + ?Sized>(self, writer: &mut W) -> Result<()> {
+        let mut env = template_env(self.store, &self.engine)?;
+        env.add_template("migration.sql", &self.template_contents)?;
+        let tmpl = env.get_template("migration.sql")?;
+        tmpl.render_to_write(
+            context!(env => self.environment, variables => self.variables),
+            writer,
+        )?;
+        Ok(())
+    }
+
+    /// Convert this streaming generation into a WriterFn that can be passed to migration_apply.
+    pub fn into_writer_fn(self) -> crate::engine::WriterFn {
+        Box::new(move |writer: &mut dyn std::io::Write| {
+            self.render_to_writer(writer)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        })
+    }
+}
+
+/// Generate a streaming migration that can be rendered directly to a writer.
+/// This avoids materializing the entire SQL in memory.
+pub async fn generate_streaming(
+    cfg: &config::Config,
+    lock_file: Option<String>,
+    name: &str,
+    variables: Option<Variables>,
+) -> Result<StreamingGeneration> {
+    let pinner: Box<dyn Pinner> = if let Some(lock_file) = lock_file {
+        let lock = cfg
+            .load_lock_file(&lock_file)
+            .await
+            .context("could not load pinned files lock file")?;
+        let pinner = Spawn::new_with_root_hash(
+            cfg.pather().pinned_folder(),
+            cfg.pather().components_folder(),
+            &lock.pin,
+            &cfg.operator(),
+        )
+        .await
+        .context("could not get new root with hash")?;
+        Box::new(pinner)
+    } else {
+        let pinner = Latest::new(cfg.pather().spawn_folder_path())?;
+        Box::new(pinner)
+    };
+
+    let store = Store::new(pinner, cfg.operator().clone(), cfg.pather())
+        .context("could not create new store for generate")?;
+    let db_config = cfg
+        .db_config()
+        .context("could not get db config for generate")?;
+
+    generate_streaming_with_store(
+        name,
+        variables,
+        &db_config.environment,
+        &db_config.engine,
+        store,
+    )
+    .await
+}
+
+/// Generate a streaming migration with an existing store.
+pub async fn generate_streaming_with_store(
+    name: &str,
+    variables: Option<Variables>,
+    environment: &str,
+    engine: &EngineType,
+    store: Store,
+) -> Result<StreamingGeneration> {
+    // Read contents from our object store first:
+    let contents = store
+        .load_migration(name)
+        .await
+        .context("generate_streaming_with_store could not read migration")?;
+
+    Ok(StreamingGeneration {
+        store,
+        template_contents: contents,
+        environment: environment.to_string(),
+        variables: variables.unwrap_or_default(),
+        engine: engine.clone(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

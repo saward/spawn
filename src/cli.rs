@@ -185,14 +185,10 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
 
                     for migration in migrations {
                         let mgrtr = Migrator::new(&main_config, &migration, *pinned);
-                        match mgrtr.generate(variables.clone()).await {
-                            Ok(result) => {
+                        match mgrtr.generate_streaming(variables.clone()).await {
+                            Ok(streaming) => {
                                 let engine = main_config.new_engine().await?;
-                                let content = result.content;
-                                let write_fn: crate::engine::WriterFn =
-                                    Box::new(move |writer: &mut dyn std::io::Write| {
-                                        writer.write_all(content.as_bytes())
-                                    });
+                                let write_fn = streaming.into_writer_fn();
                                 match engine
                                     .migration_apply(&migration, write_fn, None, "default")
                                     .await
