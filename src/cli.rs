@@ -163,10 +163,14 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                     variables,
                 }) => {
                     let mgrtr = Migrator::new(&main_config, &migration, *pinned);
-                    match mgrtr.generate(variables.clone()).await {
-                        Ok(result) => Ok(Outcome::BuiltMigration {
-                            content: result.content,
-                        }),
+                    match mgrtr.generate_streaming(variables.clone()).await {
+                        Ok(gen) => {
+                            let mut buffer = Vec::new();
+                            gen.render_to_writer(&mut buffer)
+                                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                            let content = String::from_utf8(buffer)?;
+                            Ok(Outcome::BuiltMigration { content })
+                        }
                         Err(e) => return Err(e),
                     }
                 }

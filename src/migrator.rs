@@ -42,23 +42,6 @@ impl Migrator {
         Ok(self.name.to_string())
     }
 
-    /// Opens the specified script file and generates a migration script, compiled
-    /// using minijinja.
-    pub async fn generate(
-        &self,
-        variables: Option<crate::variables::Variables>,
-    ) -> Result<template::Generation> {
-        let lock_file = if self.use_pinned {
-            let path = self.config.pather().migration_lock_file_path(&self.name);
-            Some(path)
-        } else {
-            None
-        };
-        let script_path = &self.config.pather().migration_script_file_path(&self.name);
-        println!("generate script path: {}", script_path);
-        template::generate(&self.config, lock_file, script_path, variables).await
-    }
-
     /// Opens the specified script file and returns a streaming generation that can
     /// render directly to a writer without materializing the entire SQL in memory.
     pub async fn generate_streaming(

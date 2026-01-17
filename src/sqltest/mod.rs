@@ -49,9 +49,18 @@ impl Tester {
     pub async fn generate(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
         let lock_file = None;
 
-        let gen =
-            template::generate(&self.config, lock_file, &self.test_file_path(), variables).await?;
-        let content = gen.content;
+        let gen = template::generate_streaming(
+            &self.config,
+            lock_file,
+            &self.test_file_path(),
+            variables,
+        )
+        .await?;
+
+        let mut buffer = Vec::new();
+        gen.render_to_writer(&mut buffer)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let content = String::from_utf8(buffer)?;
 
         Ok(content)
     }
