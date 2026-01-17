@@ -217,7 +217,7 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                                     }
                                     Err(MigrationError::AdvisoryLock(e)) => {
                                         return Err(anyhow!(
-                                            "Unble to obtain advisory lock for migration"
+                                            "Unable to obtain advisory lock for migration"
                                         )
                                         .context(e));
                                     }
