@@ -300,7 +300,7 @@ impl PSQL {
             // Load and render the migration
             let variables = crate::variables::Variables::from_str(
                 "json",
-                &format!(r#"{{"schema": "{}"}}"#, self.spawn_schema),
+                &serde_json::json!({"schema": &self.spawn_schema}).to_string(),
             )?;
             let gen = migrator.generate_streaming(Some(variables)).await?;
             let mut buffer = Vec::new();
