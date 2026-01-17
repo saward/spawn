@@ -1,5 +1,6 @@
 use crate::engine::{postgres_psql::PSQL, DatabaseConfig, Engine, EngineType};
 use crate::pinfile::LockData;
+use crate::variables::Variables;
 use anyhow::{anyhow, Context, Result};
 use opendal::Operator;
 use std::collections::HashMap;
@@ -217,5 +218,22 @@ impl Config {
         let lock_data: LockData = toml::from_str(&contents)?;
 
         Ok(lock_data)
+    }
+
+    /// Load variables from a file path.
+    /// The file type is determined by the file extension.
+    pub async fn load_variables_from_path(&self, path: &str) -> Result<Variables> {
+        let content = self
+            .operator()
+            .read(path)
+            .await
+            .context(format!("Failed to read variables file '{}'", path))?
+            .to_bytes();
+        let content_str =
+            String::from_utf8(content.to_vec()).context("Variables file is not valid UTF-8")?;
+
+        let extension = path.split('.').last().unwrap_or("");
+        Variables::from_str(extension, &content_str)
+            .context(format!("Failed to parse variables file '{}'", path))
     }
 }

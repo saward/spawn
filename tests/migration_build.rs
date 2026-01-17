@@ -155,6 +155,17 @@ impl MigrationTestHelper {
         migration_name: &str,
         pinned: bool,
     ) -> Result<String, anyhow::Error> {
+        self.build_migration_with_variables(migration_name, pinned, None)
+            .await
+    }
+
+    /// Builds a migration with optional variables file
+    pub async fn build_migration_with_variables(
+        &self,
+        migration_name: &str,
+        pinned: bool,
+        variables: Option<String>,
+    ) -> Result<String, anyhow::Error> {
         let cli = Cli {
             debug: false,
             config_file: self.config_path().to_string(),
@@ -163,6 +174,7 @@ impl MigrationTestHelper {
                 command: Some(MigrationCommands::Build {
                     migration: migration_name.to_string(),
                     pinned,
+                    variables,
                 }),
                 environment: None,
             }),
@@ -340,6 +352,48 @@ COMMIT;"#
 
     let built = helper.build_migration(&migration_name, false).await?;
     assert_eq!(expected_new, built);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_migration_build_with_variables() -> Result<(), Box<dyn std::error::Error>> {
+    let helper =
+        MigrationTestHelper::new_from_local_folder("./static/tests/build_with_variables").await?;
+
+    let migration_name = "20240907212659-initial";
+
+    // Build without variables - should have empty/default values
+    let built_without_vars = helper.build_migration(&migration_name, false).await?;
+
+    // The template uses variables.X which will be empty without a variables file
+    // This verifies the migration builds but variables are not substituted
+    assert!(built_without_vars.contains("BEGIN;"));
+    assert!(built_without_vars.contains("COMMIT;"));
+
+    // Build with variables file
+    let built_with_vars = helper
+        .build_migration_with_variables(
+            migration_name,
+            false,
+            Some("/db/variables.json".to_string()),
+        )
+        .await?;
+
+    let expected = "BEGIN;
+-- Migration: create-users-table
+-- Author: Test Author
+-- Environment: dev
+
+CREATE TABLE 'users' (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    active BOOLEAN DEFAULT TRUE
+);
+
+COMMIT;";
+
+    assert_eq!(expected, built_with_vars);
 
     Ok(())
 }
