@@ -5,7 +5,6 @@ use crate::store::pinner::latest::Latest;
 use crate::store::pinner::spawn::Spawn;
 use crate::store::pinner::Pinner;
 use crate::store::Store;
-use crate::template;
 use crate::variables::Variables;
 use minijinja::{Environment, Value};
 
