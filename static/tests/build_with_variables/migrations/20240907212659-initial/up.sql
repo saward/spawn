@@ -3,7 +3,7 @@ BEGIN;
 -- Author: {{ variables.author | safe }}
 -- Environment: {{ env | safe }}
 
-CREATE TABLE {{ variables.table_name }} (
+CREATE TABLE {{ variables.table_name | escape_identifier }} (
     id SERIAL PRIMARY KEY,
     name VARCHAR({{ variables.name_length }}) NOT NULL,
     active BOOLEAN DEFAULT {{ variables.default_active }}

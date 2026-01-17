@@ -380,18 +380,18 @@ async fn test_migration_build_with_variables() -> Result<(), Box<dyn std::error:
         )
         .await?;
 
-    let expected = "BEGIN;
+    let expected = r#"BEGIN;
 -- Migration: create-users-table
 -- Author: Test Author
 -- Environment: dev
 
-CREATE TABLE 'users' (
+CREATE TABLE "users" (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     active BOOLEAN DEFAULT TRUE
 );
 
-COMMIT;";
+COMMIT;"#;
 
     assert_eq!(expected, built_with_vars);
 
