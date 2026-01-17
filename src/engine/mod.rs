@@ -157,7 +157,7 @@ pub struct EngineStatus {
 pub type WriterFn = Box<dyn FnOnce(&mut dyn std::io::Write) -> std::io::Result<()> + Send>;
 
 /// Type alias for an optional stdout writer to capture output
-pub type StdoutWriter = Option<Box<dyn std::io::Write + Send>>;
+pub type StdoutWriter = Option<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>;
 
 #[async_trait]
 pub trait Engine: Send + Sync {

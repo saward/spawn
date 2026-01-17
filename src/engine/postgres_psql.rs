@@ -86,18 +86,13 @@ impl Engine for PSQL {
             .map_err(EngineError::Io)?;
 
         // 4. If we have a stdout writer, spawn task to copy stdout to it
-        let stdout_handle = if let Some(stdout_dest) = stdout_writer {
+        let stdout_handle = if let Some(mut stdout_dest) = stdout_writer {
             let mut stdout = child.stdout.take().expect("stdout should be piped");
             Some(tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
                 let mut buf = Vec::new();
                 let _ = stdout.read_to_end(&mut buf).await;
-                // Write to the provided writer (in blocking context since Write is sync)
-                let result = tokio::task::spawn_blocking(move || {
-                    let mut dest = stdout_dest;
-                    dest.write_all(&buf)
-                })
-                .await;
-                result
+                let _ = stdout_dest.write_all(&buf).await;
             }))
         } else {
             None
@@ -171,17 +166,31 @@ impl Engine for PSQL {
     }
 }
 
-/// A simple Write implementation that appends to a shared Vec<u8>
+/// A simple AsyncWrite implementation that appends to a shared Vec<u8>
 struct SharedBufWriter(Arc<Mutex<Vec<u8>>>);
 
-impl Write for SharedBufWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+impl tokio::io::AsyncWrite for SharedBufWriter {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
         self.0.lock().unwrap().extend_from_slice(buf);
-        Ok(buf.len())
+        std::task::Poll::Ready(Ok(buf.len()))
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
     }
 }
 
