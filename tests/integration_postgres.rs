@@ -334,7 +334,7 @@ impl IntegrationTestHelper {
             schema, table
         );
         let output = self.execute_sql(&sql)?;
-        Ok(output.contains('t'))
+        Ok(output.contains(" exists \n--------\n t"))
     }
 
     /// Runs test compare using the CLI 'test compare' command
@@ -974,6 +974,93 @@ async fn test_cli_test_compare() -> Result<()> {
         .run_test_compare(Some(test_name.clone()))
         .await
         .context("failed to compare after updating expectation")?;
+
+    Ok(())
+}
+
+/// Tests that migrations fail when another session holds the advisory lock.
+/// This verifies the concurrent migration protection works correctly.
+#[tokio::test]
+#[ignore]
+async fn test_advisory_lock_blocks_migration() -> Result<()> {
+    require_postgres()?;
+
+    let helper = std::sync::Arc::new(
+        IntegrationTestHelper::new("test_advisory_lock_blocks_migration", None).await?,
+    );
+
+    // First, apply a simple migration to ensure the _spawn schema is set up
+    let setup_migration = r#"BEGIN;
+SELECT 1;
+COMMIT;"#;
+
+    let setup_name = helper
+        .migration_helper
+        .create_migration_manual("setup-for-lock-test", setup_migration.to_string())
+        .await?;
+
+    helper.apply_migration(&setup_name).await?;
+
+    // Create a migration that holds the advisory lock for a while via pg_sleep.
+    // When apply_migration runs this, it will acquire the lock, then sleep.
+    let slow_migration = r#"BEGIN;
+SELECT pg_sleep(2);
+COMMIT;"#;
+
+    let slow_name = helper
+        .migration_helper
+        .create_migration_manual("slow-lock-holder", slow_migration.to_string())
+        .await?;
+
+    // Create the second migration that should fail to acquire the lock
+    let test_table = format!("advisory_lock_test");
+    let fast_migration = format!(
+        r#"BEGIN;
+CREATE TABLE {} (id SERIAL PRIMARY KEY);
+COMMIT;"#,
+        test_table
+    );
+
+    let fast_name = helper
+        .migration_helper
+        .create_migration_manual("should-fail-lock", fast_migration)
+        .await?;
+
+    // Spawn the slow migration in a background task
+    let helper_clone = helper.clone();
+    let slow_name_clone = slow_name.clone();
+    let slow_task =
+        tokio::spawn(async move { helper_clone.apply_migration(&slow_name_clone).await });
+
+    // Give the slow migration time to start and acquire the lock
+    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+    // Try to apply the fast migration - it should fail because the lock is held
+    let result = helper.apply_migration(&fast_name).await;
+
+    // Wait for the slow migration to complete
+    let _ = slow_task.await;
+
+    assert!(
+        result.is_err(),
+        "Expected migration to fail due to advisory lock being held"
+    );
+
+    let error_message = result.unwrap_err().to_string();
+
+    // Verify the error is specifically about the advisory lock
+    assert!(
+        error_message.contains("advisory lock")
+            || error_message.contains("Could not acquire advisory lock"),
+        "Error should mention advisory lock, got: '''{}'''",
+        error_message
+    );
+
+    // Verify the table was NOT created (migration should not have executed)
+    assert!(
+        !helper.table_exists("public", &test_table)?,
+        "Table should NOT exist because migration should have been blocked by lock"
+    );
 
     Ok(())
 }

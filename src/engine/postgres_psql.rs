@@ -24,6 +24,12 @@ use tokio::process::Command;
 use twox_hash::xxhash3_128;
 use twox_hash::XxHash64;
 
+/// Returns the advisory lock key used to prevent concurrent migrations.
+/// This is computed as XxHash64 of "SPAWN_MIGRATION_LOCK" with seed 1234, cast to i64.
+pub fn migration_lock_key() -> i64 {
+    XxHash64::oneshot(1234, "SPAWN_MIGRATION_LOCK".as_bytes()) as i64
+}
+
 #[derive(Debug)]
 pub struct PSQL {
     psql_command: Vec<String>,
@@ -460,7 +466,7 @@ impl PSQL {
 
         // We need to trust that the migration_sql is already safely escaped for now
         let migration_sql_query = sql_query!("{}", InsecureRawSql::new(migration_sql));
-        let lock_checksum = XxHash64::oneshot(1234, "SPAWN_MIGRATION_LOCK".as_bytes()) as i64;
+        let lock_checksum = migration_lock_key();
 
         // Calculate content checksum before execution
         let content_checksum = xxhash3_128::Hasher::oneshot(migration_sql.as_bytes());
