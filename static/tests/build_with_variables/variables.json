@@ -1,0 +1,7 @@
+{
+    "migration_name": "create-users-table",
+    "author": "Test Author",
+    "table_name": "users",
+    "name_length": 255,
+    "default_active": true
+}

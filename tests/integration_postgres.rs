@@ -301,6 +301,7 @@ impl IntegrationTestHelper {
                 command: Some(MigrationCommands::Apply {
                     pinned: false,
                     migration: Some(migration_name.to_string()),
+                    variables: None,
                 }),
                 environment: None,
             }),
