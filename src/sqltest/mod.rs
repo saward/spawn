@@ -5,6 +5,7 @@ use console::{style, Style};
 use similar::{ChangeTag, TextDiff};
 use std::fmt;
 use std::str;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 
@@ -61,19 +62,23 @@ impl Tester {
 
         let engine = self.config.new_engine().await?;
 
+        // Create a shared buffer to capture stdout
+        let stdout_buf = Arc::new(Mutex::new(Vec::new()));
+        let stdout_buf_clone = stdout_buf.clone();
+
         engine
             .execute_with_writer(
                 Box::new(move |writer| {
                     writer.write_all(content.as_bytes())?;
                     Ok(())
                 }),
-                None, // No stdout capture for now
+                Some(Box::new(SharedBufWriter(stdout_buf_clone))),
             )
             .await
             .context("failed to write content to test db")?;
 
-        // TODO: Capture and return stdout when implemented
-        let generated: String = "not implemented!".to_string();
+        let buf = stdout_buf.lock().unwrap();
+        let generated = String::from_utf8_lossy(&buf).to_string();
 
         Ok(generated)
     }
@@ -172,5 +177,33 @@ impl fmt::Display for Line {
             None => write!(f, "    "),
             Some(idx) => write!(f, "{:<4}", idx + 1),
         }
+    }
+}
+
+/// A simple AsyncWrite implementation that appends to a shared Vec<u8>
+struct SharedBufWriter(Arc<Mutex<Vec<u8>>>);
+
+impl tokio::io::AsyncWrite for SharedBufWriter {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        std::task::Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
     }
 }

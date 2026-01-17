@@ -1,3 +1,4 @@
+\set QUIET off
 {% set dbname = "testclitest" %}
 create database {{dbname|escape_identifier}} with template spawn;
 \c {{dbname|escape_identifier}}
