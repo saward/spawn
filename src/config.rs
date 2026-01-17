@@ -1,6 +1,7 @@
 use crate::engine::{postgres_psql::PSQL, DatabaseConfig, Engine, EngineType};
 use crate::pinfile::LockData;
 use anyhow::{anyhow, Context, Result};
+use futures::TryStreamExt;
 use opendal::Operator;
 use std::collections::HashMap;
 
@@ -12,9 +13,9 @@ static PINFILE_LOCK_NAME: &str = "lock.toml";
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ConfigLoaderSaver {
     pub spawn_folder: String,
-    pub database: String,
+    pub database: Option<String>,
     pub environment: Option<String>,
-    pub databases: HashMap<String, DatabaseConfig>,
+    pub databases: Option<HashMap<String, DatabaseConfig>>,
 }
 
 impl ConfigLoaderSaver {
@@ -24,7 +25,7 @@ impl ConfigLoaderSaver {
             spawn_folder: self.spawn_folder,
             database: self.database,
             environment: self.environment,
-            databases: self.databases,
+            databases: self.databases.unwrap_or_default(),
             base_fs,
             spawn_fs,
         }
@@ -35,7 +36,19 @@ impl ConfigLoaderSaver {
         op: &Operator,
         database: Option<String>,
     ) -> Result<ConfigLoaderSaver> {
-        let bytes = op.read(path).await?.to_bytes();
+        let mut lister = op.lister_with(".").recursive(true).await?;
+
+        println!("listing files for '{}'", "whatever");
+        while let Some(entry) = lister.try_next().await? {
+            let file_data = op.read(&entry.path()).await?.to_bytes();
+            println!("(len {}). found {}", file_data.len(), entry.path());
+        }
+
+        let bytes = op
+            .read(path)
+            .await
+            .context(format!("No config found at path '{}'", &path))?
+            .to_bytes();
         let main_config = String::from_utf8(bytes.to_vec())?;
         let source = config::File::from_str(&main_config, config::FileFormat::Toml);
 
@@ -64,8 +77,7 @@ impl ConfigLoaderSaver {
             .set_default("environment", "prod")
             .context("could not set default environment")?
             .build()?
-            .try_deserialize()
-            .context("could not deserialise config struct")?;
+            .try_deserialize()?;
 
         Ok(settings)
     }
@@ -149,7 +161,7 @@ impl FolderPather {
 #[derive(Debug, Clone)]
 pub struct Config {
     spawn_folder: String,
-    pub database: String,
+    pub database: Option<String>,
     pub environment: Option<String>, // Override the environment for the db config
     pub databases: HashMap<String, DatabaseConfig>,
 
@@ -178,13 +190,14 @@ impl Config {
     }
 
     pub fn db_config(&self) -> Result<DatabaseConfig> {
+        let db_name = self
+            .database
+            .as_ref()
+            .ok_or(anyhow!("no database selected"))?;
         let mut conf = self
             .databases
-            .get(&self.database)
-            .ok_or(anyhow!(
-                "no database defined with name '{}'",
-                &self.database
-            ))?
+            .get(db_name)
+            .ok_or(anyhow!("no database defined with name '{}'", db_name,))?
             .clone();
 
         if let Some(env) = &self.environment {

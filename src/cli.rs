@@ -3,7 +3,6 @@ use crate::migrator::Migrator;
 use crate::pinfile::LockData;
 use crate::sqltest::Tester;
 use crate::store::pinner::spawn::Spawn;
-use crate::variables::Variables;
 use crate::{config::Config, store::pinner::Pinner};
 use futures::TryStreamExt;
 use opendal::Operator;
@@ -71,7 +70,6 @@ pub enum MigrationCommands {
         /// Migration to build.  Looks for up.sql inside this specified
         /// migration folder.
         migration: String,
-        variables: Option<Variables>,
     },
     /// Apply will apply this migration to the database if not already applied,
     /// or all migrations if called without argument.
@@ -81,7 +79,6 @@ pub enum MigrationCommands {
         pinned: bool,
 
         migration: Option<String>,
-        variables: Option<Variables>,
     },
 }
 
@@ -157,13 +154,9 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
 
                     Ok(Outcome::PinnedMigration { hash: root })
                 }
-                Some(MigrationCommands::Build {
-                    migration,
-                    pinned,
-                    variables,
-                }) => {
+                Some(MigrationCommands::Build { migration, pinned }) => {
                     let mgrtr = Migrator::new(&main_config, &migration, *pinned);
-                    match mgrtr.generate_streaming(variables.clone()).await {
+                    match mgrtr.generate_streaming(None).await {
                         Ok(gen) => {
                             let mut buffer = Vec::new();
                             gen.render_to_writer(&mut buffer)
@@ -174,11 +167,7 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                         Err(e) => return Err(e),
                     }
                 }
-                Some(MigrationCommands::Apply {
-                    migration,
-                    pinned,
-                    variables,
-                }) => {
+                Some(MigrationCommands::Apply { migration, pinned }) => {
                     let mut migrations = Vec::new();
                     match migration {
                         Some(migration) => migrations.push(migration.clone()),
@@ -189,7 +178,7 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
 
                     for migration in migrations {
                         let mgrtr = Migrator::new(&main_config, &migration, *pinned);
-                        match mgrtr.generate_streaming(variables.clone()).await {
+                        match mgrtr.generate_streaming(None).await {
                             Ok(streaming) => {
                                 let engine = main_config.new_engine().await?;
                                 let write_fn = streaming.into_writer_fn();

@@ -98,9 +98,9 @@ impl MigrationTestHelper {
 
         ConfigLoaderSaver {
             spawn_folder: "/db".to_string(),
-            database: "postgres_psql".to_string(),
+            database: Some("postgres_psql".to_string()),
             environment: None,
-            databases,
+            databases: Some(databases),
         }
     }
 
@@ -163,7 +163,6 @@ impl MigrationTestHelper {
                 command: Some(MigrationCommands::Build {
                     migration: migration_name.to_string(),
                     pinned,
-                    variables: None,
                 }),
                 environment: None,
             }),

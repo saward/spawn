@@ -170,10 +170,15 @@ pub async fn operator_from_includedir(
     collect_files_from_dir(dir, "", &mut files_to_write);
 
     // Then write all files to the operator
-    for (dest_path, contents) in files_to_write {
+    for (dest_path, contents) in &files_to_write {
         let final_path = format!("{}{}", prefix, dest_path);
+        println!(
+            "DEBUG includedir: writing {} ({} bytes)",
+            final_path,
+            contents.len()
+        );
         operator
-            .write(&final_path, contents)
+            .write(&final_path, contents.clone())
             .await
             .context(format!("Failed to write file {}", final_path))?;
     }

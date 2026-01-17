@@ -14,6 +14,7 @@ use crate::store::{operator_from_includedir, Store};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use include_dir::{include_dir, Dir};
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::Write;
 use std::process::Stdio;
@@ -34,9 +35,8 @@ pub fn migration_lock_key() -> i64 {
 pub struct PSQL {
     psql_command: Vec<String>,
     /// Schema name as an escaped identifier (for use as schema.table)
-    spawn_schema_ident: EscapedIdentifier,
-    /// Schema name as an escaped literal (for use in WHERE clauses)
-    spawn_schema_literal: EscapedLiteral,
+    spawn_schema: String,
+    db_config: DatabaseConfig,
 }
 
 static PROJECT_DIR: Dir<'_> = include_dir!("./static/engine-migrations/postgres-psql");
@@ -49,15 +49,19 @@ impl PSQL {
             .clone()
             .ok_or(anyhow!("Command for database config must be defined"))?;
 
-        // Use type-safe escaped types - escaping happens at construction time
-        let spawn_schema_ident = EscapedIdentifier::new(&config.spawn_schema);
-        let spawn_schema_literal = EscapedLiteral::new(&config.spawn_schema);
-
         Ok(Box::new(Self {
             psql_command,
-            spawn_schema_ident,
-            spawn_schema_literal,
+            spawn_schema: config.spawn_schema.clone(),
+            db_config: config.clone(),
         }))
+    }
+
+    fn spawn_schema_literal(&self) -> EscapedLiteral {
+        EscapedLiteral::new(&self.spawn_schema)
+    }
+
+    fn spawn_schema_ident(&self) -> EscapedIdentifier {
+        EscapedIdentifier::new(&self.spawn_schema)
     }
 
     fn safe_spawn_namespace(&self) -> EscapedLiteral {
@@ -244,7 +248,7 @@ impl PSQL {
         let pather = FolderPather {
             spawn_folder: "".to_string(),
         };
-        let store = Store::new(Box::new(pinner), op, pather)
+        let store = Store::new(Box::new(pinner), op.clone(), pather)
             .context("Failed to create store for update_schema")?;
 
         // Get list of all available migrations (sorted oldest to newest)
@@ -254,15 +258,28 @@ impl PSQL {
             .context("Failed to list migrations")?;
 
         // Check if migration table exists to determine if this is bootstrap
-        let migration_table_exists = self.migration_table_exists().await?;
+        let migration_table_exists = self
+            .migration_table_exists()
+            .await
+            .context("Failed checking if migration table exists")?;
 
         // Get set of already applied migrations (empty if table doesn't exist)
         let applied_migrations: HashSet<String> = if migration_table_exists {
             self.get_applied_migrations_set(&self.safe_spawn_namespace())
-                .await?
+                .await
+                .context("Failed to get applied migrations set")?
         } else {
             HashSet::new()
         };
+
+        // Create a config to use for generating using spawn templating
+        // engine.
+        let mut cfg = crate::config::Config::load("spawn.toml", &op, None)
+            .await
+            .context("Failed to load config for postgres psql")?;
+        let dbengtype = "psql".to_string();
+        cfg.database = Some(dbengtype.clone());
+        cfg.databases = HashMap::from([(dbengtype, self.db_config.clone())]);
 
         // Apply each migration that hasn't been applied yet
         for migration_path in available_migrations {
@@ -278,23 +295,29 @@ impl PSQL {
                 continue;
             }
 
-            // Load and render the migration
-            let up_sql_path = format!("{}up.sql", migration_path);
-            // Load the raw migration SQL
-            let migration_sql = store
-                .load_migration(&up_sql_path)
-                .await
-                .context(format!("Failed to load migration {}", migration_name))?;
+            println!(
+                "Attempting to create migrator for name/path: {}",
+                &migration_path
+            );
 
-            // Render the template with variables (type-safe escaped identifier)
-            let rendered_sql =
-                migration_sql.replace("{{schema}}", self.spawn_schema_ident.as_str());
+            let migrator = crate::migrator::Migrator::new(&cfg, &migration_name, false);
+
+            // Load and render the migration
+            let variables = crate::variables::Variables::from_str(
+                "json",
+                &format!(r#"{{"schema": "{}"}}"#, self.spawn_schema),
+            )?;
+            let gen = migrator.generate_streaming(Some(variables)).await?;
+            let mut buffer = Vec::new();
+            gen.render_to_writer(&mut buffer)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            let content = String::from_utf8(buffer)?;
 
             // Apply the migration and record it
             // Note: even for bootstrap, the first migration creates the tables,
             // so they exist by the time we record the migration.
             let write_fn: WriterFn =
-                Box::new(move |writer: &mut dyn Write| writer.write_all(rendered_sql.as_bytes()));
+                Box::new(move |writer: &mut dyn Write| writer.write_all(content.as_bytes()));
             match self
                 .apply_and_record_migration_v1(
                     migration_name,
@@ -354,6 +377,7 @@ impl PSQL {
 
     async fn table_exists(&self, table_name: &str) -> Result<bool> {
         let safe_table_name = EscapedLiteral::new(table_name);
+        // Use type-safe escaped types - escaping happens at construction time
         let query = sql_query!(
             r#"
             SELECT EXISTS (
@@ -362,7 +386,7 @@ impl PSQL {
                 AND table_name = {}
             );
             "#,
-            self.spawn_schema_literal,
+            self.spawn_schema_literal(),
             safe_table_name
         );
 
@@ -377,7 +401,7 @@ impl PSQL {
     ) -> Result<HashSet<String>> {
         let query = sql_query!(
             "SELECT name FROM {}.migration WHERE namespace = {};",
-            self.spawn_schema_ident,
+            self.spawn_schema_ident(),
             namespace,
         );
 
@@ -412,8 +436,8 @@ impl PSQL {
             ORDER BY mh.migration_history_id DESC
             LIMIT 1;
             "#,
-            self.spawn_schema_ident,
-            self.spawn_schema_ident,
+            self.spawn_schema_ident(),
+            self.spawn_schema_ident(),
             safe_migration_name,
             namespace
         );
@@ -500,12 +524,12 @@ impl PSQL {
         let lock_checksum = migration_lock_key();
 
         // Prepare values for the closure
-        let schema_ident = self.spawn_schema_ident.clone();
+        let schema_ident = self.spawn_schema_ident();
         let safe_migration_name = EscapedLiteral::new(migration_name);
         let safe_pin_hash = pin_hash.map(|h| EscapedLiteral::new(&h));
         let namespace_clone = namespace.clone();
         let migration_name_owned = migration_name.to_string();
-        let schema_ident_raw = self.spawn_schema_ident.raw_value().to_string();
+        let schema_ident_raw = self.spawn_schema_ident().raw_value().to_string();
         let namespace_raw = namespace.raw_value().to_string();
 
         // Execute migration and record it in a single psql session
