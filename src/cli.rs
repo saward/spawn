@@ -188,8 +188,13 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> Result<Outcome> {
                         match mgrtr.generate(variables.clone()).await {
                             Ok(result) => {
                                 let engine = main_config.new_engine().await?;
+                                let content = result.content;
+                                let write_fn: crate::engine::WriterFn =
+                                    Box::new(move |writer: &mut dyn std::io::Write| {
+                                        writer.write_all(content.as_bytes())
+                                    });
                                 match engine
-                                    .migration_apply(&migration, &result.content, None, "default")
+                                    .migration_apply(&migration, write_fn, None, "default")
                                     .await
                                 {
                                     Ok(_) => {

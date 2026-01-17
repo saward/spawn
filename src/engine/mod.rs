@@ -175,7 +175,7 @@ pub trait Engine: Send + Sync {
     async fn migration_apply(
         &self,
         migration_name: &str,
-        migration: &str,
+        write_fn: WriterFn,
         pin_hash: Option<String>,
         namespace: &str,
     ) -> MigrationResult<String>;

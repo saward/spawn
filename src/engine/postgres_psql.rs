@@ -154,7 +154,7 @@ impl Engine for PSQL {
     async fn migration_apply(
         &self,
         migration_name: &str,
-        migration: &str,
+        write_fn: WriterFn,
         pin_hash: Option<String>,
         namespace: &str,
     ) -> MigrationResult<String> {
@@ -164,7 +164,7 @@ impl Engine for PSQL {
             .map_err(MigrationError::Database)?;
         self.apply_and_record_migration_v1(
             migration_name,
-            migration,
+            write_fn,
             pin_hash,
             EscapedLiteral::new(namespace),
         )
@@ -197,6 +197,37 @@ impl tokio::io::AsyncWrite for SharedBufWriter {
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         std::task::Poll::Ready(Ok(()))
+    }
+}
+
+/// A writer that tees output to both an inner writer and a hasher for checksum calculation.
+/// This allows streaming the migration SQL while computing the checksum on-the-fly.
+struct TeeWriter<W: Write> {
+    inner: W,
+    hasher: xxhash3_128::Hasher,
+}
+
+impl<W: Write> TeeWriter<W> {
+    fn new(inner: W) -> Self {
+        Self {
+            inner,
+            hasher: xxhash3_128::Hasher::new(),
+        }
+    }
+
+    fn finish(self) -> (W, u128) {
+        (self.inner, self.hasher.finish_128())
+    }
+}
+
+impl<W: Write> Write for TeeWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.hasher.write(buf);
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
     }
 }
 
@@ -262,10 +293,12 @@ impl PSQL {
             // Apply the migration and record it
             // Note: even for bootstrap, the first migration creates the tables,
             // so they exist by the time we record the migration.
+            let write_fn: WriterFn =
+                Box::new(move |writer: &mut dyn Write| writer.write_all(rendered_sql.as_bytes()));
             match self
                 .apply_and_record_migration_v1(
                     migration_name,
-                    &rendered_sql,
+                    write_fn,
                     None, // pin_hash not used for engine migrations
                     self.safe_spawn_namespace(),
                 )
@@ -421,7 +454,7 @@ impl PSQL {
     async fn apply_and_record_migration_v1(
         &self,
         migration_name: &str,
-        migration_sql: &str,
+        write_fn: WriterFn,
         pin_hash: Option<String>,
         namespace: EscapedLiteral,
     ) -> MigrationResult<String> {
@@ -464,18 +497,11 @@ impl PSQL {
         // Record duration of execute_sql:
         let start_time = Instant::now();
 
-        // We need to trust that the migration_sql is already safely escaped for now
-        let migration_sql_query = sql_query!("{}", InsecureRawSql::new(migration_sql));
         let lock_checksum = migration_lock_key();
 
-        // Calculate content checksum before execution
-        let content_checksum = xxhash3_128::Hasher::oneshot(migration_sql.as_bytes());
-
         // Prepare values for the closure
-        let migration_sql_str = migration_sql_query.as_str().to_string();
         let schema_ident = self.spawn_schema_ident.clone();
         let safe_migration_name = EscapedLiteral::new(migration_name);
-        let safe_checksum = EscapedLiteral::new(&format!("{:032x}", content_checksum));
         let safe_pin_hash = pin_hash.map(|h| EscapedLiteral::new(&h));
         let namespace_clone = namespace.clone();
         let migration_name_owned = migration_name.to_string();
@@ -496,8 +522,15 @@ impl PSQL {
                         .as_bytes(),
                     )?;
 
-                    // Execute the migration SQL
-                    writer.write_all(migration_sql_str.as_bytes())?;
+                    // Wrap the writer in a TeeWriter to compute checksum while streaming
+                    let mut tee_writer = TeeWriter::new(writer);
+
+                    // Execute the user's write function (streams migration SQL)
+                    write_fn(&mut tee_writer)?;
+
+                    // Extract the checksum and get the inner writer back
+                    let (writer, content_checksum) = tee_writer.finish();
+                    let safe_checksum = EscapedLiteral::new(&format!("{:032x}", content_checksum));
 
                     // Calculate duration (approximate, since we're in the closure)
                     let duration = start_time.elapsed().as_secs_f32();
