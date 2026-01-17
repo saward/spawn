@@ -1,0 +1,50 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start database
+        run: docker compose up -d
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Wait for database to be ready
+        run: |
+          for i in {1..30}; do
+            if docker compose exec -T postgres pg_isready -U spawn; then
+              echo "Database is ready"
+              exit 0
+            fi
+            echo "Waiting for database... ($i/30)"
+            sleep 1
+          done
+          echo "Database failed to become ready"
+          exit 1
+
+      - name: Run tests (regular)
+        run: cargo test
+
+      - name: Run tests (ignored)
+        run: cargo test -- --ignored
+
+      - name: Stop database
+        if: always()
+        run: docker compose down
