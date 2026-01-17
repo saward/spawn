@@ -1029,17 +1029,13 @@ COMMIT;"#,
     // Spawn the slow migration in a background task
     let helper_clone = helper.clone();
     let slow_name_clone = slow_name.clone();
-    let slow_task =
-        tokio::spawn(async move { helper_clone.apply_migration(&slow_name_clone).await });
+    let _ = tokio::spawn(async move { helper_clone.apply_migration(&slow_name_clone).await });
 
     // Give the slow migration time to start and acquire the lock
     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
     // Try to apply the fast migration - it should fail because the lock is held
     let result = helper.apply_migration(&fast_name).await;
-
-    // Wait for the slow migration to complete
-    let _ = slow_task.await;
 
     assert!(
         result.is_err(),
