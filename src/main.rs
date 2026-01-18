@@ -2,7 +2,8 @@ use anyhow::Result;
 use clap::Parser;
 use opendal::services::Fs;
 use opendal::Operator;
-use spawn::cli::{run_cli, Cli, Outcome};
+use spawn::cli::{run_cli, Cli, Outcome, TelemetryDescribe};
+use spawn::telemetry::{self, CommandStatus, TelemetryRecorder};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -11,9 +12,37 @@ async fn main() -> Result<()> {
     let service = Fs::default().root(".");
     let config_fs = Operator::new(service)?.finish();
 
-    let outcome = run_cli(cli, &config_fs).await?;
+    // Get telemetry info from CLI before running (command name and properties)
+    let telemetry_command = cli.telemetry_command();
+    let telemetry_properties = cli.telemetry_properties();
 
-    match outcome {
+    // Run the CLI - this returns telemetry config along with outcome
+    let result = run_cli(cli, &config_fs).await;
+
+    // Create telemetry recorder with config from CLI result
+    let recorder = TelemetryRecorder::new(
+        result.project_id.as_deref(),
+        result.telemetry_enabled,
+        telemetry_command,
+        telemetry_properties,
+    );
+
+    // Finish telemetry based on outcome
+    let (status, error_kind) = match &result.outcome {
+        Ok(_) => (CommandStatus::Success, None),
+        Err(e) => {
+            let kind = extract_error_kind(e);
+            (CommandStatus::Error, Some(kind))
+        }
+    };
+
+    recorder.finish(status, error_kind.as_deref());
+
+    // Wait for telemetry to send (with timeout)
+    telemetry::flush().await;
+
+    // Handle the actual outcome
+    match result.outcome? {
         Outcome::BuiltMigration { content } => {
             println!("{}", content);
         }
@@ -35,4 +64,18 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Extract a sanitized error kind from an anyhow::Error
+fn extract_error_kind(error: &anyhow::Error) -> String {
+    // Try to get the root cause type name
+    let root = error.root_cause();
+    let type_name = std::any::type_name_of_val(root);
+
+    // Extract just the type name without the full path
+    type_name
+        .rsplit("::")
+        .next()
+        .unwrap_or("Unknown")
+        .to_string()
 }

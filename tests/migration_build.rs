@@ -101,6 +101,8 @@ impl MigrationTestHelper {
             database: Some("postgres_psql".to_string()),
             environment: None,
             databases: Some(databases),
+            project_id: None,
+            telemetry: false,
         }
     }
 
@@ -119,7 +121,7 @@ impl MigrationTestHelper {
         };
 
         // Run the CLI command to create migration
-        let outcome: Outcome = run_cli(cli, &self.fs).await?;
+        let outcome: Outcome = run_cli(cli, &self.fs).await.outcome?;
 
         // Find the created migration directory
         let name = match outcome {
@@ -180,7 +182,7 @@ impl MigrationTestHelper {
             }),
         };
 
-        let outcome: Outcome = run_cli(cli, &self.fs).await?;
+        let outcome: Outcome = run_cli(cli, &self.fs).await.outcome?;
 
         match outcome {
             Outcome::BuiltMigration { content } => Ok(content),
@@ -204,6 +206,7 @@ impl MigrationTestHelper {
 
         let outcome: Outcome = run_cli(cli, &self.fs)
             .await
+            .outcome
             .context("error calling pin_migration")?;
 
         match outcome {

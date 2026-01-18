@@ -7,5 +7,6 @@ pub mod pinfile;
 pub mod sql_formatter;
 pub mod sqltest;
 pub mod store;
+pub mod telemetry;
 pub mod template;
 pub mod variables;

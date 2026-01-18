@@ -237,6 +237,8 @@ impl IntegrationTestHelper {
             database: Some("postgres_psql".to_string()),
             environment: None,
             databases: Some(databases),
+            project_id: None,
+            telemetry: false,
         }
     }
 
@@ -307,7 +309,7 @@ impl IntegrationTestHelper {
             }),
         };
 
-        let outcome = run_cli(cli, self.migration_helper.fs()).await?;
+        let outcome = run_cli(cli, self.migration_helper.fs()).await.outcome?;
 
         match outcome {
             Outcome::AppliedMigrations => Ok(()),
@@ -350,6 +352,7 @@ impl IntegrationTestHelper {
 
         run_cli(cli, &self.migration_helper.fs)
             .await
+            .outcome
             .context("error calling test compare")?;
 
         Ok(())
@@ -368,6 +371,7 @@ impl IntegrationTestHelper {
 
         run_cli(cli, &self.migration_helper.fs)
             .await
+            .outcome
             .context("error calling test expect")?;
 
         Ok(())
