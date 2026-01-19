@@ -4,7 +4,7 @@ use opendal::services::Memory;
 use opendal::Operator;
 use pretty_assertions::assert_eq;
 use spawn::{
-    cli::{run_cli, Cli, Commands, MigrationCommands, Outcome},
+    commands::{BuildMigration, Command, NewMigration, Outcome, PinMigration},
     config::{Config, ConfigLoaderSaver},
     engine::{DatabaseConfig, EngineType},
     store,
@@ -27,10 +27,6 @@ pub struct MigrationTestHelper {
 impl MigrationTestHelper {
     pub fn config_path(&self) -> &str {
         &self.config_path
-    }
-
-    pub fn fs(&self) -> &Operator {
-        &self.fs
     }
 }
 
@@ -99,39 +95,28 @@ impl MigrationTestHelper {
         ConfigLoaderSaver {
             spawn_folder: "/db".to_string(),
             database: Some("postgres_psql".to_string()),
-            environment: None,
+            environment: Some("dev".to_string()),
             databases: Some(databases),
             project_id: None,
             telemetry: false,
         }
     }
 
-    /// Creates a new migration using the CLI 'migration new' command
+    /// Creates a new migration using the NewMigration command
     pub async fn create_migration(&self, name: &str) -> Result<String, anyhow::Error> {
-        let cli = Cli {
-            debug: false,
-            config_file: self.config_path().to_string(),
-            database: None,
-            command: Some(Commands::Migration {
-                command: Some(MigrationCommands::New {
-                    name: name.to_string(),
-                }),
-                environment: None,
-            }),
+        let config = self.load_config().await?;
+        let cmd = NewMigration {
+            name: name.to_string(),
         };
 
-        // Run the CLI command to create migration
-        let outcome: Outcome = run_cli(cli, &self.fs).await.outcome?;
+        let outcome = cmd.execute(&config).await?;
 
-        // Find the created migration directory
-        let name = match outcome {
-            Outcome::NewMigration(name) => name,
+        match outcome {
+            Outcome::NewMigration(name) => Ok(name),
             _ => Err(anyhow::anyhow!(
                 "Migration directory not found after creation"
-            ))?,
-        };
-
-        Ok(name)
+            )),
+        }
     }
 
     /// Creates a migration and then replaces the content of it with provided
@@ -151,7 +136,7 @@ impl MigrationTestHelper {
         Ok(migration_name.clone())
     }
 
-    /// Builds a migration using the CLI 'migration build' command
+    /// Builds a migration using the BuildMigration command
     pub async fn build_migration(
         &self,
         migration_name: &str,
@@ -166,23 +151,22 @@ impl MigrationTestHelper {
         &self,
         migration_name: &str,
         pinned: bool,
-        variables: Option<String>,
+        variables_path: Option<String>,
     ) -> Result<String, anyhow::Error> {
-        let cli = Cli {
-            debug: false,
-            config_file: self.config_path().to_string(),
-            database: None,
-            command: Some(Commands::Migration {
-                command: Some(MigrationCommands::Build {
-                    migration: migration_name.to_string(),
-                    pinned,
-                    variables,
-                }),
-                environment: None,
-            }),
+        let config = self.load_config().await?;
+
+        let variables = match variables_path {
+            Some(path) => Some(config.load_variables_from_path(&path).await?),
+            None => None,
         };
 
-        let outcome: Outcome = run_cli(cli, &self.fs).await.outcome?;
+        let cmd = BuildMigration {
+            migration: migration_name.to_string(),
+            pinned,
+            variables,
+        };
+
+        let outcome = cmd.execute(&config).await?;
 
         match outcome {
             Outcome::BuiltMigration { content } => Ok(content),
@@ -190,23 +174,16 @@ impl MigrationTestHelper {
         }
     }
 
-    /// Pins a migration
+    /// Pins a migration using the PinMigration command
     pub async fn pin_migration(&self, migration_name: &str) -> Result<String, anyhow::Error> {
-        let cli = Cli {
-            debug: false,
-            config_file: self.config_path().to_string(),
-            database: None,
-            command: Some(Commands::Migration {
-                command: Some(MigrationCommands::Pin {
-                    migration: migration_name.to_string(),
-                }),
-                environment: None,
-            }),
+        let config = self.load_config().await?;
+        let cmd = PinMigration {
+            migration: migration_name.to_string(),
         };
 
-        let outcome: Outcome = run_cli(cli, &self.fs)
+        let outcome = cmd
+            .execute(&config)
             .await
-            .outcome
             .context("error calling pin_migration")?;
 
         match outcome {

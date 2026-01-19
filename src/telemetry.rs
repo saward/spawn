@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 
 /// PostHog API key for spawn telemetry
-const POSTHOG_API_KEY: &str = "phc_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+const POSTHOG_API_KEY: &str = "phc_yD13QBdCJSnbIjmkTcSf03dRhpLJdCMfTVRzD7XTFqd";
 
 /// Application version from Cargo.toml
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -160,7 +160,6 @@ async fn send_event(
     event.insert_prop("os_platform", std::env::consts::OS)?;
     event.insert_prop("os_arch", std::env::consts::ARCH)?;
     event.insert_prop("is_ci", is_ci())?;
-    event.insert_prop("is_container", is_container())?;
 
     // Usage properties
     event.insert_prop("command", command)?;
@@ -192,18 +191,6 @@ fn is_ci() -> bool {
         || env::var("JENKINS_URL").is_ok()
         || env::var("BUILDKITE").is_ok()
         || env::var("TEAMCITY_VERSION").is_ok()
-}
-
-/// Check if running in a container
-fn is_container() -> bool {
-    // Check for Docker
-    std::path::Path::new("/.dockerenv").exists()
-        // Check for container runtime via cgroup
-        || std::fs::read_to_string("/proc/1/cgroup")
-            .map(|s| s.contains("docker") || s.contains("kubepods") || s.contains("containerd"))
-            .unwrap_or(false)
-        // Check for Kubernetes
-        || env::var("KUBERNETES_SERVICE_HOST").is_ok()
 }
 
 /// Flush pending telemetry with a timeout.

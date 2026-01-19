@@ -2,7 +2,8 @@ use anyhow::Result;
 use clap::Parser;
 use opendal::services::Fs;
 use opendal::Operator;
-use spawn::cli::{run_cli, Cli, Outcome, TelemetryDescribe};
+use spawn::cli::{run_cli, Cli};
+use spawn::commands::{Outcome, TelemetryDescribe};
 use spawn::telemetry::{self, CommandStatus, TelemetryRecorder};
 
 #[tokio::main]
