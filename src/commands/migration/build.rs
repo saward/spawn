@@ -1,4 +1,4 @@
-use crate::commands::{Command, Outcome, TelemetryDescribe};
+use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::migrator::Migrator;
 use crate::variables::Variables;
@@ -11,15 +11,11 @@ pub struct BuildMigration {
 }
 
 impl TelemetryDescribe for BuildMigration {
-    fn telemetry_command(&self) -> String {
-        "migration build".to_string()
-    }
-
-    fn telemetry_properties(&self) -> Vec<(&'static str, String)> {
-        vec![
+    fn telemetry(&self) -> TelemetryInfo {
+        TelemetryInfo::new("migration build").with_properties(vec![
             ("opt_pinned", self.pinned.to_string()),
             ("has_variables", self.variables.is_some().to_string()),
-        ]
+        ])
     }
 }
 

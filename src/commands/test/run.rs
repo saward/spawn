@@ -1,4 +1,4 @@
-use crate::commands::{Command, Outcome, TelemetryDescribe};
+use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::sqltest::Tester;
 use anyhow::Result;
@@ -8,8 +8,8 @@ pub struct RunTest {
 }
 
 impl TelemetryDescribe for RunTest {
-    fn telemetry_command(&self) -> String {
-        "test run".to_string()
+    fn telemetry(&self) -> TelemetryInfo {
+        TelemetryInfo::new("test run")
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::commands::{Command, Outcome, TelemetryDescribe};
+use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::engine::MigrationError;
 use crate::migrator::Migrator;
@@ -12,16 +12,12 @@ pub struct ApplyMigration {
 }
 
 impl TelemetryDescribe for ApplyMigration {
-    fn telemetry_command(&self) -> String {
-        "migration apply".to_string()
-    }
-
-    fn telemetry_properties(&self) -> Vec<(&'static str, String)> {
-        vec![
+    fn telemetry(&self) -> TelemetryInfo {
+        TelemetryInfo::new("migration apply").with_properties(vec![
             ("opt_pinned", self.pinned.to_string()),
             ("has_variables", self.variables.is_some().to_string()),
             ("apply_all", self.migration.is_none().to_string()),
-        ]
+        ])
     }
 }
 

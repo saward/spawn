@@ -13,9 +13,8 @@ async fn main() -> Result<()> {
     let service = Fs::default().root(".");
     let config_fs = Operator::new(service)?.finish();
 
-    // Get telemetry info from CLI before running (command name and properties)
-    let telemetry_command = cli.telemetry_command();
-    let telemetry_properties = cli.telemetry_properties();
+    // Get telemetry info from CLI before running
+    let telemetry_info = cli.telemetry();
 
     // Run the CLI - this returns telemetry config along with outcome
     let result = run_cli(cli, &config_fs).await;
@@ -24,8 +23,7 @@ async fn main() -> Result<()> {
     let recorder = TelemetryRecorder::new(
         result.project_id.as_deref(),
         result.telemetry_enabled,
-        telemetry_command,
-        telemetry_properties,
+        telemetry_info,
     );
 
     // Finish telemetry based on outcome

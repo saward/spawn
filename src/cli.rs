@@ -1,6 +1,6 @@
 use crate::commands::{
     ApplyMigration, BuildMigration, BuildTest, Command, CompareTests, ExpectTest, Init,
-    NewMigration, Outcome, PinMigration, RunTest, TelemetryDescribe,
+    NewMigration, Outcome, PinMigration, RunTest, TelemetryDescribe, TelemetryInfo,
 };
 use crate::config::Config;
 use opendal::Operator;
@@ -26,17 +26,10 @@ pub struct Cli {
 }
 
 impl TelemetryDescribe for Cli {
-    fn telemetry_command(&self) -> String {
+    fn telemetry(&self) -> TelemetryInfo {
         match &self.command {
-            Some(cmd) => cmd.telemetry_command(),
-            None => String::new(),
-        }
-    }
-
-    fn telemetry_properties(&self) -> Vec<(&'static str, String)> {
-        match &self.command {
-            Some(cmd) => cmd.telemetry_properties(),
-            None => vec![],
+            Some(cmd) => cmd.telemetry(),
+            None => TelemetryInfo::default(),
         }
     }
 }
@@ -58,31 +51,25 @@ pub enum Commands {
 }
 
 impl TelemetryDescribe for Commands {
-    fn telemetry_command(&self) -> String {
+    fn telemetry(&self) -> TelemetryInfo {
         match self {
-            Commands::Init => "init".to_string(),
+            Commands::Init => TelemetryInfo::new("init"),
             Commands::Migration { command, .. } => match command {
-                Some(cmd) => format!("migration {}", cmd.telemetry_command()),
-                None => "migration".to_string(),
+                Some(cmd) => {
+                    let mut info = cmd.telemetry();
+                    info.label = format!("migration {}", info.label);
+                    info
+                }
+                None => TelemetryInfo::new("migration"),
             },
             Commands::Test { command } => match command {
-                Some(cmd) => format!("test {}", cmd.telemetry_command()),
-                None => "test".to_string(),
+                Some(cmd) => {
+                    let mut info = cmd.telemetry();
+                    info.label = format!("test {}", info.label);
+                    info
+                }
+                None => TelemetryInfo::new("test"),
             },
-        }
-    }
-
-    fn telemetry_properties(&self) -> Vec<(&'static str, String)> {
-        match self {
-            Commands::Init => vec![],
-            Commands::Migration { command, .. } => command
-                .as_ref()
-                .map(|c| c.telemetry_properties())
-                .unwrap_or_default(),
-            Commands::Test { command } => command
-                .as_ref()
-                .map(|c| c.telemetry_properties())
-                .unwrap_or_default(),
         }
     }
 }
@@ -129,38 +116,25 @@ pub enum MigrationCommands {
 }
 
 impl TelemetryDescribe for MigrationCommands {
-    fn telemetry_command(&self) -> String {
+    fn telemetry(&self) -> TelemetryInfo {
         match self {
-            MigrationCommands::New { .. } => "new".to_string(),
-            MigrationCommands::Pin { .. } => "pin".to_string(),
-            MigrationCommands::Build { .. } => "build".to_string(),
-            MigrationCommands::Apply { .. } => "apply".to_string(),
-        }
-    }
-
-    fn telemetry_properties(&self) -> Vec<(&'static str, String)> {
-        match self {
-            MigrationCommands::New { .. } => vec![],
-            MigrationCommands::Pin { .. } => vec![],
+            MigrationCommands::New { .. } => TelemetryInfo::new("new"),
+            MigrationCommands::Pin { .. } => TelemetryInfo::new("pin"),
             MigrationCommands::Build {
                 pinned, variables, ..
-            } => {
-                vec![
-                    ("opt_pinned", pinned.to_string()),
-                    ("has_variables", variables.is_some().to_string()),
-                ]
-            }
+            } => TelemetryInfo::new("build").with_properties(vec![
+                ("opt_pinned", pinned.to_string()),
+                ("has_variables", variables.is_some().to_string()),
+            ]),
             MigrationCommands::Apply {
                 pinned,
                 variables,
                 migration,
-            } => {
-                vec![
-                    ("opt_pinned", pinned.to_string()),
-                    ("has_variables", variables.is_some().to_string()),
-                    ("apply_all", migration.is_none().to_string()),
-                ]
-            }
+            } => TelemetryInfo::new("apply").with_properties(vec![
+                ("opt_pinned", pinned.to_string()),
+                ("has_variables", variables.is_some().to_string()),
+                ("apply_all", migration.is_none().to_string()),
+            ]),
         }
     }
 }
@@ -184,21 +158,13 @@ pub enum TestCommands {
 }
 
 impl TelemetryDescribe for TestCommands {
-    fn telemetry_command(&self) -> String {
+    fn telemetry(&self) -> TelemetryInfo {
         match self {
-            TestCommands::Build { .. } => "build".to_string(),
-            TestCommands::Run { .. } => "run".to_string(),
-            TestCommands::Compare { .. } => "compare".to_string(),
-            TestCommands::Expect { .. } => "expect".to_string(),
-        }
-    }
-
-    fn telemetry_properties(&self) -> Vec<(&'static str, String)> {
-        match self {
-            TestCommands::Compare { name } => {
-                vec![("compare_all", name.is_none().to_string())]
-            }
-            _ => vec![],
+            TestCommands::Build { .. } => TelemetryInfo::new("build"),
+            TestCommands::Run { .. } => TelemetryInfo::new("run"),
+            TestCommands::Compare { name } => TelemetryInfo::new("compare")
+                .with_properties(vec![("compare_all", name.is_none().to_string())]),
+            TestCommands::Expect { .. } => TelemetryInfo::new("expect"),
         }
     }
 }

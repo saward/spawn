@@ -1,4 +1,4 @@
-use crate::commands::{Command, Outcome, TelemetryDescribe};
+use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::migrator::Migrator;
 use anyhow::Result;
@@ -8,8 +8,8 @@ pub struct NewMigration {
 }
 
 impl TelemetryDescribe for NewMigration {
-    fn telemetry_command(&self) -> String {
-        "migration new".to_string()
+    fn telemetry(&self) -> TelemetryInfo {
+        TelemetryInfo::new("migration new")
     }
 }
 

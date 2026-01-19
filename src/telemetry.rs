@@ -12,6 +12,7 @@
 //! 1. Setting the `DO_NOT_TRACK` environment variable (any value)
 //! 2. Setting `telemetry = false` in `spawn.toml`
 
+use crate::commands::TelemetryInfo;
 use posthog_rs::{ClientOptions, Event};
 use std::env;
 use std::sync::OnceLock;
@@ -64,12 +65,7 @@ impl TelemetryRecorder {
     /// 3. Otherwise -> Enable
     ///
     /// If no `project_id` is provided, generates an ephemeral UUID for this session.
-    pub fn new(
-        project_id: Option<&str>,
-        telemetry_enabled: bool,
-        command: String,
-        properties: Vec<(&str, String)>,
-    ) -> Self {
+    pub fn new(project_id: Option<&str>, telemetry_enabled: bool, info: TelemetryInfo) -> Self {
         // Check DO_NOT_TRACK env var first (highest priority)
         let do_not_track = env::var("DO_NOT_TRACK").is_ok();
 
@@ -86,7 +82,8 @@ impl TelemetryRecorder {
         };
 
         // Convert properties to owned strings
-        let properties = properties
+        let properties = info
+            .properties
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))
             .collect();
@@ -94,7 +91,7 @@ impl TelemetryRecorder {
         Self {
             enabled,
             distinct_id,
-            command,
+            command: info.label,
             properties,
             start_time: Instant::now(),
         }
@@ -201,9 +198,11 @@ fn is_ci() -> bool {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// # async fn example() {
 /// // At the end of main():
 /// spawn::telemetry::flush().await;
+/// # }
 /// ```
 pub async fn flush() {
     let mutex = match PENDING_TASK.get() {
@@ -247,7 +246,7 @@ mod tests {
     fn test_do_not_track_disables_telemetry() {
         let _guard = ENV_MUTEX.lock().unwrap();
         env::set_var("DO_NOT_TRACK", "1");
-        let recorder = TelemetryRecorder::new(Some("test-id"), true, "test".to_string(), vec![]);
+        let recorder = TelemetryRecorder::new(Some("test-id"), true, TelemetryInfo::new("test"));
         assert!(!recorder.enabled);
         env::remove_var("DO_NOT_TRACK");
     }
@@ -256,7 +255,7 @@ mod tests {
     fn test_telemetry_enabled_false_disables() {
         let _guard = ENV_MUTEX.lock().unwrap();
         env::remove_var("DO_NOT_TRACK"); // Ensure clean state
-        let recorder = TelemetryRecorder::new(Some("test-id"), false, "test".to_string(), vec![]);
+        let recorder = TelemetryRecorder::new(Some("test-id"), false, TelemetryInfo::new("test"));
         assert!(!recorder.enabled);
     }
 
@@ -265,7 +264,7 @@ mod tests {
         let _guard = ENV_MUTEX.lock().unwrap();
         env::remove_var("DO_NOT_TRACK"); // Ensure clean state
         let recorder =
-            TelemetryRecorder::new(Some("my-project-123"), true, "test".to_string(), vec![]);
+            TelemetryRecorder::new(Some("my-project-123"), true, TelemetryInfo::new("test"));
         assert!(recorder.enabled);
         assert_eq!(recorder.distinct_id, "my-project-123");
     }
@@ -274,7 +273,7 @@ mod tests {
     fn test_generates_ephemeral_id_without_project_id() {
         let _guard = ENV_MUTEX.lock().unwrap();
         env::remove_var("DO_NOT_TRACK"); // Ensure clean state
-        let recorder = TelemetryRecorder::new(None, true, "test".to_string(), vec![]);
+        let recorder = TelemetryRecorder::new(None, true, TelemetryInfo::new("test"));
         assert!(recorder.enabled);
         // Should be a valid UUID
         assert!(uuid::Uuid::parse_str(&recorder.distinct_id).is_ok());
@@ -287,8 +286,8 @@ mod tests {
         let recorder = TelemetryRecorder::new(
             Some("test-id"),
             true,
-            "migration build".to_string(),
-            vec![("opt_pinned", "true".to_string())],
+            TelemetryInfo::new("migration build")
+                .with_properties(vec![("opt_pinned", "true".to_string())]),
         );
         assert_eq!(recorder.command, "migration build");
         assert_eq!(recorder.properties.len(), 1);

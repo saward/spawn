@@ -1,4 +1,4 @@
-use crate::commands::{Command, Outcome, TelemetryDescribe};
+use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::sqltest::Tester;
 use anyhow::Result;
@@ -14,12 +14,9 @@ pub struct CompareTests {
 }
 
 impl TelemetryDescribe for CompareTests {
-    fn telemetry_command(&self) -> String {
-        "test compare".to_string()
-    }
-
-    fn telemetry_properties(&self) -> Vec<(&'static str, String)> {
-        vec![("compare_all", self.name.is_none().to_string())]
+    fn telemetry(&self) -> TelemetryInfo {
+        TelemetryInfo::new("test compare")
+            .with_properties(vec![("compare_all", self.name.is_none().to_string())])
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::commands::{Command, Outcome, TelemetryDescribe};
+use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::pinfile::LockData;
 use crate::store::pinner::spawn::Spawn;
@@ -10,8 +10,8 @@ pub struct PinMigration {
 }
 
 impl TelemetryDescribe for PinMigration {
-    fn telemetry_command(&self) -> String {
-        "migration pin".to_string()
+    fn telemetry(&self) -> TelemetryInfo {
+        TelemetryInfo::new("migration pin")
     }
 }
 

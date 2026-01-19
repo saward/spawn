@@ -1,4 +1,4 @@
-use crate::commands::{Outcome, TelemetryDescribe};
+use crate::commands::{Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::ConfigLoaderSaver;
 use anyhow::{anyhow, Result};
 use opendal::Operator;
@@ -11,8 +11,8 @@ pub struct Init {
 }
 
 impl TelemetryDescribe for Init {
-    fn telemetry_command(&self) -> String {
-        "init".to_string()
+    fn telemetry(&self) -> TelemetryInfo {
+        TelemetryInfo::new("init")
     }
 }
 
