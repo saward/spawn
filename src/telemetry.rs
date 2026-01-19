@@ -17,6 +17,7 @@ use posthog_rs::{ClientOptions, Event};
 use std::env;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 /// PostHog API key for spawn telemetry
@@ -25,8 +26,63 @@ const POSTHOG_API_KEY: &str = "phc_yD13QBdCJSnbIjmkTcSf03dRhpLJdCMfTVRzD7XTFqd";
 /// Application version from Cargo.toml
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Global handle for the pending telemetry task
-static PENDING_TASK: OnceLock<tokio::sync::Mutex<Option<JoinHandle<()>>>> = OnceLock::new();
+/// Channel capacity for telemetry events
+const CHANNEL_CAPACITY: usize = 32;
+
+/// A telemetry event to be sent
+struct TelemetryEvent {
+    distinct_id: String,
+    command: String,
+    duration_ms: u64,
+    status: CommandStatus,
+    error_kind: Option<String>,
+    properties: Vec<(String, String)>,
+}
+
+/// Global channel sender and worker handle
+static TELEMETRY_WORKER: OnceLock<TelemetryWorker> = OnceLock::new();
+
+struct TelemetryWorker {
+    sender: tokio::sync::Mutex<Option<mpsc::Sender<TelemetryEvent>>>,
+    handle: tokio::sync::Mutex<Option<JoinHandle<()>>>,
+}
+
+impl TelemetryWorker {
+    fn init() -> &'static Self {
+        TELEMETRY_WORKER.get_or_init(|| {
+            let (sender, receiver) = mpsc::channel(CHANNEL_CAPACITY);
+            let handle = tokio::spawn(Self::worker_loop(receiver));
+            Self {
+                sender: tokio::sync::Mutex::new(Some(sender)),
+                handle: tokio::sync::Mutex::new(Some(handle)),
+            }
+        })
+    }
+
+    async fn worker_loop(mut receiver: mpsc::Receiver<TelemetryEvent>) {
+        while let Some(event) = receiver.recv().await {
+            // Send each event, ignoring errors (fail-silent)
+            let _ = send_event(
+                &event.distinct_id,
+                &event.command,
+                event.duration_ms,
+                event.status,
+                event.error_kind.as_deref(),
+                event.properties,
+            )
+            .await;
+        }
+    }
+
+    fn send(&self, event: TelemetryEvent) {
+        // Use try_lock to avoid blocking; if locked or closed, drop the event
+        if let Ok(guard) = self.sender.try_lock() {
+            if let Some(sender) = guard.as_ref() {
+                let _ = sender.try_send(event);
+            }
+        }
+    }
+}
 
 /// Telemetry recorder for tracking command execution.
 ///
@@ -97,42 +153,27 @@ impl TelemetryRecorder {
         }
     }
 
-    /// Finish recording and spawn a background task to send telemetry.
+    /// Finish recording and send the telemetry event to the background worker.
     ///
-    /// This method consumes the recorder and spawns a detached task.
-    /// The task will be awaited (with timeout) when `flush()` is called.
+    /// This method consumes the recorder and sends the event to a channel.
+    /// The worker task will send it to PostHog asynchronously.
+    /// Call `flush()` before exit to ensure events are sent.
     pub fn finish(self, status: CommandStatus, error_kind: Option<&str>) {
         if !self.enabled {
             return;
         }
 
-        let duration_ms = self.start_time.elapsed().as_millis() as u64;
-        let command = self.command;
-        let distinct_id = self.distinct_id;
-        let properties = self.properties;
-        let error_kind = error_kind.map(|s| s.to_string());
+        let event = TelemetryEvent {
+            distinct_id: self.distinct_id,
+            command: self.command,
+            duration_ms: self.start_time.elapsed().as_millis() as u64,
+            status,
+            error_kind: error_kind.map(|s| s.to_string()),
+            properties: self.properties,
+        };
 
-        // Spawn background task
-        let handle = tokio::spawn(async move {
-            if let Err(_) = send_event(
-                &distinct_id,
-                &command,
-                duration_ms,
-                status,
-                error_kind.as_deref(),
-                properties,
-            )
-            .await
-            {
-                // Silently ignore errors - fail-silent design
-            }
-        });
-
-        // Store handle for later flushing
-        let mutex = PENDING_TASK.get_or_init(|| tokio::sync::Mutex::new(None));
-        if let Ok(mut guard) = mutex.try_lock() {
-            *guard = Some(handle);
-        }
+        // Initialize worker on first use and send event
+        TelemetryWorker::init().send(event);
     }
 }
 
@@ -193,8 +234,8 @@ fn is_ci() -> bool {
 /// Flush pending telemetry with a timeout.
 ///
 /// This function should be called before the application exits.
-/// It waits for the pending telemetry task to complete, but will
-/// timeout after 500ms to avoid delaying shutdown.
+/// It closes the channel and waits for the worker to finish processing
+/// all queued events, with a timeout of 500ms to avoid delaying shutdown.
 ///
 /// # Example
 ///
@@ -205,30 +246,36 @@ fn is_ci() -> bool {
 /// # }
 /// ```
 pub async fn flush() {
-    let mutex = match PENDING_TASK.get() {
-        Some(m) => m,
+    let worker = match TELEMETRY_WORKER.get() {
+        Some(w) => w,
         None => return, // No telemetry was ever recorded
     };
 
+    // Drop sender to close the channel, signaling the worker to exit
+    {
+        let mut sender_guard = worker.sender.lock().await;
+        *sender_guard = None;
+    }
+
+    // Take and await the worker handle
     let handle = {
-        let mut guard = mutex.lock().await;
+        let mut guard = worker.handle.lock().await;
         guard.take()
     };
 
     if let Some(handle) = handle {
-        // Create a timeout future
+        // Wait for worker with timeout
         let timeout = tokio::time::timeout(Duration::from_millis(500), handle);
 
         match timeout.await {
             Ok(Ok(())) => {
-                // Task completed successfully within timeout
+                // Worker completed successfully
             }
             Ok(Err(_)) => {
-                // Task panicked - silently ignore
+                // Worker panicked - silently ignore
             }
             Err(_) => {
-                // Timeout - task is still running, but we exit anyway
-                // The task will be cancelled when the runtime shuts down
+                // Timeout - worker still processing, but we exit anyway
             }
         }
     }
