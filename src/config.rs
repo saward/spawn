@@ -16,6 +16,15 @@ pub struct ConfigLoaderSaver {
     pub database: Option<String>,
     pub environment: Option<String>,
     pub databases: Option<HashMap<String, DatabaseConfig>>,
+    /// Unique project identifier for telemetry (UUID string)
+    pub project_id: Option<String>,
+    /// Set to false to disable telemetry
+    #[serde(default = "default_telemetry")]
+    pub telemetry: bool,
+}
+
+fn default_telemetry() -> bool {
+    true
 }
 
 impl ConfigLoaderSaver {
@@ -26,6 +35,8 @@ impl ConfigLoaderSaver {
             database: self.database,
             environment: self.environment,
             databases: self.databases.unwrap_or_default(),
+            project_id: self.project_id,
+            telemetry: self.telemetry,
             base_fs,
             spawn_fs,
         }
@@ -156,6 +167,10 @@ pub struct Config {
     pub database: Option<String>,
     pub environment: Option<String>, // Override the environment for the db config
     pub databases: HashMap<String, DatabaseConfig>,
+    /// Unique project identifier for telemetry (UUID string)
+    pub project_id: Option<String>,
+    /// Whether telemetry is enabled in config
+    pub telemetry: bool,
 
     // base_fs is the operator we used to load config, and may be the one we use
     // for all other interactions too.

@@ -41,13 +41,13 @@ use migration_build::MigrationTestHelper;
 use opendal::services::Memory;
 use opendal::Operator;
 use spawn::{
-    cli::{run_cli, Cli, Commands, MigrationCommands, Outcome, TestCommands},
+    commands::{ApplyMigration, Command, CompareTests, ExpectTest, Outcome},
     config::ConfigLoaderSaver,
     engine::{DatabaseConfig, EngineType},
 };
 use std::collections::HashMap;
 use std::env;
-use std::process::Command;
+use std::process::Command as ProcessCommand;
 use uuid::Uuid;
 
 /// Configuration for connecting to the test PostgreSQL instance (Docker mode)
@@ -123,13 +123,13 @@ impl ConnectionMode {
     /// its own execute function. This is used for test verification.
     fn execute_sql(&self, database: &str, sql: &str) -> Result<std::process::Output> {
         match self {
-            ConnectionMode::Docker { container, user } => Command::new("docker")
+            ConnectionMode::Docker { container, user } => ProcessCommand::new("docker")
                 .args([
                     "exec", "-i", container, "psql", "-U", user, database, "-c", sql,
                 ])
                 .output()
                 .context("Failed to execute docker psql command"),
-            ConnectionMode::Direct { host, port, user } => Command::new("psql")
+            ConnectionMode::Direct { host, port, user } => ProcessCommand::new("psql")
                 .args(["-h", host, "-p", port, "-U", user, database, "-c", sql])
                 .output()
                 .context("Failed to execute psql command"),
@@ -139,12 +139,12 @@ impl ConnectionMode {
     /// Check if PostgreSQL is ready
     fn is_ready(&self) -> bool {
         match self {
-            ConnectionMode::Docker { container, user } => Command::new("docker")
+            ConnectionMode::Docker { container, user } => ProcessCommand::new("docker")
                 .args(["exec", container, "pg_isready", "-U", user])
                 .output()
                 .map(|o| o.status.success())
                 .unwrap_or(false),
-            ConnectionMode::Direct { host, port, user } => Command::new("pg_isready")
+            ConnectionMode::Direct { host, port, user } => ProcessCommand::new("pg_isready")
                 .args(["-h", host, "-p", port, "-U", user])
                 .output()
                 .map(|o| o.status.success())
@@ -237,6 +237,8 @@ impl IntegrationTestHelper {
             database: Some("postgres_psql".to_string()),
             environment: None,
             databases: Some(databases),
+            project_id: None,
+            telemetry: false,
         }
     }
 
@@ -291,23 +293,16 @@ impl IntegrationTestHelper {
         Ok(())
     }
 
-    /// Applies a migration to the test database
+    /// Applies a migration to the test database using the ApplyMigration command
     pub async fn apply_migration(&self, migration_name: &str) -> Result<()> {
-        let cli = Cli {
-            debug: false,
-            config_file: self.migration_helper.config_path().to_string(),
-            database: None,
-            command: Some(Commands::Migration {
-                command: Some(MigrationCommands::Apply {
-                    pinned: false,
-                    migration: Some(migration_name.to_string()),
-                    variables: None,
-                }),
-                environment: None,
-            }),
+        let config = self.migration_helper.load_config().await?;
+        let cmd = ApplyMigration {
+            migration: Some(migration_name.to_string()),
+            pinned: false,
+            variables: None,
         };
 
-        let outcome = run_cli(cli, self.migration_helper.fs()).await?;
+        let outcome = cmd.execute(&config).await?;
 
         match outcome {
             Outcome::AppliedMigrations => Ok(()),
@@ -337,36 +332,24 @@ impl IntegrationTestHelper {
         Ok(output.contains(" exists \n--------\n t"))
     }
 
-    /// Runs test compare using the CLI 'test compare' command
+    /// Runs test compare using the CompareTests command
     pub async fn run_test_compare(&self, test_name: Option<String>) -> Result<(), anyhow::Error> {
-        let cli = Cli {
-            debug: false,
-            config_file: self.migration_helper.config_path().to_string(),
-            database: None,
-            command: Some(Commands::Test {
-                command: Some(TestCommands::Compare { name: test_name }),
-            }),
-        };
+        let config = self.migration_helper.load_config().await?;
+        let cmd = CompareTests { name: test_name };
 
-        run_cli(cli, &self.migration_helper.fs)
+        cmd.execute(&config)
             .await
             .context("error calling test compare")?;
 
         Ok(())
     }
 
-    /// Saves test expected output using the CLI 'test expect' command
+    /// Saves test expected output using the ExpectTest command
     pub async fn run_test_expect(&self, test_name: String) -> Result<(), anyhow::Error> {
-        let cli = Cli {
-            debug: false,
-            config_file: self.migration_helper.config_path().to_string(),
-            database: None,
-            command: Some(Commands::Test {
-                command: Some(TestCommands::Expect { name: test_name }),
-            }),
-        };
+        let config = self.migration_helper.load_config().await?;
+        let cmd = ExpectTest { name: test_name };
 
-        run_cli(cli, &self.migration_helper.fs)
+        cmd.execute(&config)
             .await
             .context("error calling test expect")?;
 

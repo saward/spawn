@@ -1,4 +1,5 @@
 pub mod cli;
+pub mod commands;
 pub mod config;
 pub mod engine;
 pub mod escape;
@@ -7,5 +8,6 @@ pub mod pinfile;
 pub mod sql_formatter;
 pub mod sqltest;
 pub mod store;
+pub mod telemetry;
 pub mod template;
 pub mod variables;
