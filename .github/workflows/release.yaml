@@ -3,13 +3,13 @@ name: Build & Release CLI
 on:
   push:
     tags:
-      - 'v*'          # triggers on tags like v1.2.0
+      - "v*" # triggers on tags like v1.2.0
 
 permissions:
-  contents: write      # softprops/action-gh-release needs this
+  contents: write # softprops/action-gh-release needs this
 
 jobs:
-  build:
+  build-linux:
     name: Build & Release – ${{ matrix.target }}
     runs-on: ubuntu-latest
     strategy:
@@ -24,17 +24,16 @@ jobs:
 
       # Compile with cross (+ built-in rust-cache)
       - name: Build with cross
-        uses: houseabsolute/actions-rust-cross@v1  # :contentReference[oaicite:0]{index=0}
+        uses: houseabsolute/actions-rust-cross@v1
         with:
           command: build
           target: ${{ matrix.target }}
           args: "--release --locked"
-          strip: true            # strip symbols where possible
-          toolchain: stable      # installs via dtolnay/rust-toolchain
+          strip: true # strip symbols where possible
+          toolchain: stable # installs via dtolnay/rust-toolchain
 
       # Package the binary
       - name: Package
-        shell: bash
         run: |
           BIN=target/${{ matrix.target }}/release/spawn
           TAR=spawn-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
@@ -42,6 +41,42 @@ jobs:
 
       # Upload to (or create) the GitHub Release
       - name: Upload asset to release
-        uses: softprops/action-gh-release@v2   # latest v2.x is Node-20 ready 
+        uses: softprops/action-gh-release@v2
+        with:
+          files: spawn-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+
+  build-macos:
+    name: Build & Release – ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            runner: macos-13 # Intel Mac
+          - target: aarch64-apple-darwin
+            runner: macos-14 # Apple Silicon (M1+)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Strip binary
+        run: strip target/${{ matrix.target }}/release/spawn
+
+      - name: Package
+        run: |
+          BIN=target/${{ matrix.target }}/release/spawn
+          TAR=spawn-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+          tar -czf "$TAR" -C "$(dirname "$BIN")" "$(basename "$BIN")"
+
+      - name: Upload asset to release
+        uses: softprops/action-gh-release@v2
         with:
           files: spawn-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
