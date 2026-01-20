@@ -2,7 +2,7 @@
 //!
 //! This module collects anonymous usage statistics to help improve spawn.
 //! It is designed to be:
-//! - **Non-blocking**: Telemetry runs in a background task
+//! - **Non-blocking**: Telemetry is sent by a detached child process
 //! - **Privacy-respecting**: No personal data is collected
 //! - **Fail-silent**: Errors are silently ignored
 //!
@@ -11,14 +11,32 @@
 //! Telemetry can be disabled by:
 //! 1. Setting the `DO_NOT_TRACK` environment variable (any value)
 //! 2. Setting `telemetry = false` in `spawn.toml`
+//!
+//! ## Debugging
+//!
+//! Set `SPAWN_DEBUG_TELEMETRY=1` to enable debug output for telemetry.
 
 use crate::commands::TelemetryInfo;
-use posthog_rs::{ClientOptions, Event};
+use posthog_rs::{ClientOptions, ClientOptionsBuilder, Event};
+use serde::{Deserialize, Serialize};
 use std::env;
-use std::sync::OnceLock;
-use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use std::io::{Read, Write};
+use std::process::{Command, Stdio};
+use std::time::Instant;
+
+/// Check if telemetry debug mode is enabled
+fn debug_enabled() -> bool {
+    env::var("SPAWN_DEBUG_TELEMETRY").is_ok()
+}
+
+/// Print debug message if SPAWN_DEBUG_TELEMETRY is set
+macro_rules! debug_telemetry {
+    ($($arg:tt)*) => {
+        if debug_enabled() {
+            eprintln!("[telemetry] {}", format!($($arg)*));
+        }
+    };
+}
 
 /// PostHog API key for spawn telemetry
 const POSTHOG_API_KEY: &str = "phc_yD13QBdCJSnbIjmkTcSf03dRhpLJdCMfTVRzD7XTFqd";
@@ -26,62 +44,78 @@ const POSTHOG_API_KEY: &str = "phc_yD13QBdCJSnbIjmkTcSf03dRhpLJdCMfTVRzD7XTFqd";
 /// Application version from Cargo.toml
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Channel capacity for telemetry events
-const CHANNEL_CAPACITY: usize = 32;
-
-/// A telemetry event to be sent
-struct TelemetryEvent {
-    distinct_id: String,
-    command: String,
-    duration_ms: u64,
-    status: CommandStatus,
-    error_kind: Option<String>,
-    properties: Vec<(String, String)>,
+/// A telemetry event to be sent (serializable for IPC)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryEvent {
+    pub distinct_id: String,
+    pub command: String,
+    pub duration_ms: u64,
+    pub status: CommandStatus,
+    pub error_kind: Option<String>,
+    pub properties: Vec<(String, String)>,
 }
 
-/// Global channel sender and worker handle
-static TELEMETRY_WORKER: OnceLock<TelemetryWorker> = OnceLock::new();
-
-struct TelemetryWorker {
-    sender: tokio::sync::Mutex<Option<mpsc::Sender<TelemetryEvent>>>,
-    handle: tokio::sync::Mutex<Option<JoinHandle<()>>>,
-}
-
-impl TelemetryWorker {
-    fn init() -> &'static Self {
-        TELEMETRY_WORKER.get_or_init(|| {
-            let (sender, receiver) = mpsc::channel(CHANNEL_CAPACITY);
-            let handle = tokio::spawn(Self::worker_loop(receiver));
-            Self {
-                sender: tokio::sync::Mutex::new(Some(sender)),
-                handle: tokio::sync::Mutex::new(Some(handle)),
-            }
-        })
+/// Spawn a detached child process to send telemetry events
+fn spawn_telemetry_child(events: &[TelemetryEvent]) {
+    if events.is_empty() {
+        return;
     }
 
-    async fn worker_loop(mut receiver: mpsc::Receiver<TelemetryEvent>) {
-        while let Some(event) = receiver.recv().await {
-            // Send each event, ignoring errors (fail-silent)
-            let _ = send_event(
-                &event.distinct_id,
-                &event.command,
-                event.duration_ms,
-                event.status,
-                event.error_kind.as_deref(),
-                event.properties,
-            )
-            .await;
+    // Get the current executable path
+    let exe_path = match env::current_exe() {
+        Ok(path) => path,
+        Err(e) => {
+            debug_telemetry!("failed to get current exe: {:?}", e);
+            return;
         }
+    };
+
+    // Serialize the events to JSON
+    let json = match serde_json::to_string(events) {
+        Ok(j) => j,
+        Err(e) => {
+            debug_telemetry!("failed to serialize events: {:?}", e);
+            return;
+        }
+    };
+
+    // Build the command
+    let mut cmd = Command::new(&exe_path);
+    cmd.arg("--internal-telemetry")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    // Platform-specific detachment
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // DETACHED_PROCESS (0x8) | CREATE_NO_WINDOW (0x08000000)
+        cmd.creation_flags(0x08000008);
     }
 
-    fn send(&self, event: TelemetryEvent) {
-        // Use try_lock to avoid blocking; if locked or closed, drop the event
-        if let Ok(guard) = self.sender.try_lock() {
-            if let Some(sender) = guard.as_ref() {
-                let _ = sender.try_send(event);
-            }
+    // Spawn the child
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            debug_telemetry!("failed to spawn telemetry child: {:?}", e);
+            return;
         }
+    };
+
+    // Write JSON to stdin
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(e) = stdin.write_all(json.as_bytes()) {
+            debug_telemetry!("failed to write to child stdin: {:?}", e);
+        }
+        // stdin is dropped here, closing the pipe
     }
+
+    debug_telemetry!(
+        "spawned telemetry child process for {} event(s)",
+        events.len()
+    );
+    // Do NOT call child.wait() - let it run independently
 }
 
 /// Telemetry recorder for tracking command execution.
@@ -97,7 +131,7 @@ pub struct TelemetryRecorder {
 }
 
 /// Status of command execution for telemetry
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum CommandStatus {
     Success,
     Error,
@@ -153,12 +187,12 @@ impl TelemetryRecorder {
         }
     }
 
-    /// Finish recording and send the telemetry event to the background worker.
+    /// Finish recording and spawn a detached child process to send telemetry.
     ///
-    /// This method consumes the recorder and sends the event to a channel.
-    /// The worker task will send it to PostHog asynchronously.
-    /// Call `flush()` before exit to ensure events are sent.
+    /// This method consumes the recorder and spawns a background process.
+    /// The main process can exit immediately without waiting.
     pub fn finish(self, status: CommandStatus, error_kind: Option<&str>) {
+        debug_telemetry!("finish() called, enabled={}", self.enabled);
         if !self.enabled {
             return;
         }
@@ -172,9 +206,27 @@ impl TelemetryRecorder {
             properties: self.properties,
         };
 
-        // Initialize worker on first use and send event
-        TelemetryWorker::init().send(event);
+        debug_telemetry!(
+            "spawning child for event: command={}, distinct_id={}",
+            event.command,
+            event.distinct_id
+        );
+
+        // Spawn detached child process to send the event
+        spawn_telemetry_child(&[event]);
     }
+}
+
+/// Send multiple telemetry events via a detached child process.
+///
+/// This is useful when you have collected multiple events and want to
+/// send them all in a single child process.
+pub fn send_events(events: Vec<TelemetryEvent>) {
+    if events.is_empty() {
+        return;
+    }
+    debug_telemetry!("sending {} event(s)", events.len());
+    spawn_telemetry_child(&events);
 }
 
 /// Send the telemetry event to PostHog
@@ -185,36 +237,68 @@ async fn send_event(
     status: CommandStatus,
     error_kind: Option<&str>,
     properties: Vec<(String, String)>,
-) -> Result<(), posthog_rs::Error> {
-    // Initialize the global PostHog client
-    let options: ClientOptions = POSTHOG_API_KEY.into();
-    // Note: init_global returns AlreadyInitialized if called twice, which is fine
-    let _ = posthog_rs::init_global(options).await;
+) -> anyhow::Result<()> {
+    debug_telemetry!(
+        "send_event called: distinct_id={}, command={}, duration_ms={}",
+        distinct_id,
+        command,
+        duration_ms
+    );
+
+    let options: ClientOptions = ClientOptionsBuilder::default()
+        .api_endpoint("https://eu.i.posthog.com/capture/".to_string())
+        .api_key(POSTHOG_API_KEY.to_string())
+        .build()?;
+
+    match posthog_rs::init_global(options).await {
+        Ok(_) => debug_telemetry!("PostHog client initialized"),
+        Err(posthog_rs::Error::AlreadyInitialized) => {
+            debug_telemetry!("PostHog client already initialized")
+        }
+        Err(e) => debug_telemetry!("PostHog init error: {:?}", e),
+    }
 
     let mut event = Event::new("command_completed", distinct_id);
 
-    // Environment properties
-    event.insert_prop("app_version", APP_VERSION)?;
-    event.insert_prop("os_platform", std::env::consts::OS)?;
-    event.insert_prop("os_arch", std::env::consts::ARCH)?;
-    event.insert_prop("is_ci", is_ci())?;
+    // Helper closure to convert PostHog errors to anyhow errors
+    let to_anyhow = |e| anyhow::anyhow!("PostHog error: {:?}", e);
+
+    event
+        .insert_prop("app_version", APP_VERSION)
+        .map_err(to_anyhow)?;
+    event
+        .insert_prop("os_platform", std::env::consts::OS)
+        .map_err(to_anyhow)?;
+    event
+        .insert_prop("os_arch", std::env::consts::ARCH)
+        .map_err(to_anyhow)?;
+    event.insert_prop("is_ci", is_ci()).map_err(to_anyhow)?;
 
     // Usage properties
-    event.insert_prop("command", command)?;
-    event.insert_prop("duration_ms", duration_ms)?;
+    event.insert_prop("command", command).map_err(to_anyhow)?;
+    event
+        .insert_prop("duration_ms", duration_ms)
+        .map_err(to_anyhow)?;
 
-    // Command-specific properties from TelemetryDescribe trait
+    // Command-specific properties
     for (key, value) in properties {
-        event.insert_prop(key, value)?;
+        event.insert_prop(key, value).map_err(to_anyhow)?;
     }
 
     // Health properties
-    event.insert_prop("status", status.to_string())?;
+    event
+        .insert_prop("status", status.to_string())
+        .map_err(to_anyhow)?;
     if let Some(kind) = error_kind {
-        event.insert_prop("error_kind", kind)?;
+        event.insert_prop("error_kind", kind).map_err(to_anyhow)?;
     }
 
-    posthog_rs::capture(event).await
+    debug_telemetry!("calling posthog_rs::capture...");
+
+    // Capture also returns posthog_rs::Error, so we map it here too
+    posthog_rs::capture(event).await.map_err(to_anyhow)?;
+
+    Ok(())
 }
 
 /// Check if running in a CI environment
@@ -231,54 +315,73 @@ fn is_ci() -> bool {
         || env::var("TEAMCITY_VERSION").is_ok()
 }
 
-/// Flush pending telemetry with a timeout.
+/// Run the internal telemetry handler (called by child process).
 ///
-/// This function should be called before the application exits.
-/// It closes the channel and waits for the worker to finish processing
-/// all queued events, with a timeout of 500ms to avoid delaying shutdown.
-///
-/// # Example
-///
-/// ```no_run
-/// # async fn example() {
-/// // At the end of main():
-/// spawn::telemetry::flush().await;
-/// # }
-/// ```
-pub async fn flush() {
-    let worker = match TELEMETRY_WORKER.get() {
-        Some(w) => w,
-        None => return, // No telemetry was ever recorded
-    };
-
-    // Drop sender to close the channel, signaling the worker to exit
-    {
-        let mut sender_guard = worker.sender.lock().await;
-        *sender_guard = None;
+/// This reads JSON-serialized TelemetryEvents from stdin and sends them to PostHog.
+/// This function is meant to be called when the binary is invoked with `--internal-telemetry`.
+pub fn run_internal_telemetry() {
+    // Read JSON from stdin
+    let mut input = String::new();
+    if let Err(e) = std::io::stdin().read_to_string(&mut input) {
+        debug_telemetry!("failed to read stdin: {:?}", e);
+        return;
     }
 
-    // Take and await the worker handle
-    let handle = {
-        let mut guard = worker.handle.lock().await;
-        guard.take()
+    // Parse the events
+    let events: Vec<TelemetryEvent> = match serde_json::from_str(&input) {
+        Ok(e) => e,
+        Err(e) => {
+            debug_telemetry!("failed to parse events JSON: {:?}", e);
+            return;
+        }
     };
 
-    if let Some(handle) = handle {
-        // Wait for worker with timeout
-        let timeout = tokio::time::timeout(Duration::from_millis(500), handle);
+    if events.is_empty() {
+        debug_telemetry!("no events to send");
+        return;
+    }
 
-        match timeout.await {
-            Ok(Ok(())) => {
-                // Worker completed successfully
-            }
-            Ok(Err(_)) => {
-                // Worker panicked - silently ignore
-            }
-            Err(_) => {
-                // Timeout - worker still processing, but we exit anyway
+    debug_telemetry!("child received {} event(s)", events.len());
+
+    // Create a minimal tokio runtime just for the HTTP calls
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            debug_telemetry!("failed to create runtime: {:?}", e);
+            return;
+        }
+    };
+
+    // Send each event
+    rt.block_on(async {
+        for event in events {
+            debug_telemetry!(
+                "sending event: command={}, distinct_id={}",
+                event.command,
+                event.distinct_id
+            );
+
+            let result = send_event(
+                &event.distinct_id,
+                &event.command,
+                event.duration_ms,
+                event.status,
+                event.error_kind.as_deref(),
+                event.properties,
+            )
+            .await;
+
+            match result {
+                Ok(()) => debug_telemetry!("sent event: {}", event.command),
+                Err(e) => debug_telemetry!("failed to send event {}: {:?}", event.command, e),
             }
         }
-    }
+    });
+
+    debug_telemetry!("child finished sending events");
 }
 
 #[cfg(test)]

@@ -6,10 +6,23 @@ use spawn::cli::{run_cli, Cli};
 use spawn::commands::{Outcome, TelemetryDescribe};
 use spawn::telemetry::{self, CommandStatus, TelemetryRecorder};
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Handle internal telemetry child process (runs synchronously, no tokio runtime)
+    if cli.internal_telemetry {
+        telemetry::run_internal_telemetry();
+        return Ok(());
+    }
+
+    // Run the async main for normal commands
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main(cli))
+}
+
+async fn async_main(cli: Cli) -> Result<()> {
     let service = Fs::default().root(".");
     let config_fs = Operator::new(service)?.finish();
 
@@ -35,10 +48,9 @@ async fn main() -> Result<()> {
         }
     };
 
+    // This spawns a detached child process to send telemetry
+    // The main process can exit immediately
     recorder.finish(status, error_kind.as_deref());
-
-    // Wait for telemetry to send (with timeout)
-    telemetry::flush().await;
 
     // Handle the actual outcome
     match result.outcome? {

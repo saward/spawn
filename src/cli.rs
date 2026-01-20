@@ -21,6 +21,10 @@ pub struct Cli {
     #[arg(global = true, long)]
     pub database: Option<String>,
 
+    /// Internal flag for telemetry child process (hidden)
+    #[arg(long, hide = true)]
+    pub internal_telemetry: bool,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
