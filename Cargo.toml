@@ -35,7 +35,7 @@ include_dir = "0.7.4"
 thiserror = "2.0.17"
 pin-project = "1.1.10"
 
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [dev-dependencies]
 tempfile = "3.8"
