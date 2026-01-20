@@ -52,9 +52,9 @@ jobs:
       matrix:
         include:
           - target: x86_64-apple-darwin
-            runner: macos-13 # Intel Mac
+            runner: macos-15-intel # Intel Mac (last supported Intel image, until Aug 2027)
           - target: aarch64-apple-darwin
-            runner: macos-14 # Apple Silicon (M1+)
+            runner: macos-15 # Apple Silicon (M1+)
 
     steps:
       - uses: actions/checkout@v4
