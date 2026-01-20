@@ -16,7 +16,7 @@ pub struct CompareTests {
 impl TelemetryDescribe for CompareTests {
     fn telemetry(&self) -> TelemetryInfo {
         TelemetryInfo::new("test compare")
-            .with_properties(vec![("compare_all", self.name.is_none().to_string())])
+            .with_properties(vec![("is_comparing_all", self.name.is_none().to_string())])
     }
 }
 
