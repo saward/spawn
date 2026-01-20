@@ -17,7 +17,6 @@
 //! Set `SPAWN_DEBUG_TELEMETRY=1` to enable debug output for telemetry.
 
 use crate::commands::TelemetryInfo;
-use posthog_rs::{ClientOptions, ClientOptionsBuilder, Event};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::io::{Read, Write};
@@ -40,6 +39,9 @@ macro_rules! debug_telemetry {
 
 /// PostHog API key for spawn telemetry
 const POSTHOG_API_KEY: &str = "phc_yD13QBdCJSnbIjmkTcSf03dRhpLJdCMfTVRzD7XTFqd";
+
+/// PostHog API endpoint (EU Cloud)
+const POSTHOG_ENDPOINT: &str = "https://eu.i.posthog.com/batch/";
 
 /// Application version from Cargo.toml
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -229,74 +231,82 @@ pub fn send_events(events: Vec<TelemetryEvent>) {
     spawn_telemetry_child(&events);
 }
 
-/// Send the telemetry event to PostHog
-async fn send_event(
-    distinct_id: &str,
-    command: &str,
-    duration_ms: u64,
-    status: CommandStatus,
-    error_kind: Option<&str>,
-    properties: Vec<(String, String)>,
-) -> anyhow::Result<()> {
+/// Send telemetry events to PostHog using the batch API
+async fn send_events_to_posthog(events: &[TelemetryEvent]) -> Result<(), reqwest::Error> {
+    // Build batch payload
+    let batch: Vec<serde_json::Value> = events
+        .iter()
+        .map(|event| {
+            let mut props = serde_json::Map::new();
+            props.insert(
+                "distinct_id".to_string(),
+                serde_json::json!(event.distinct_id),
+            );
+            props.insert("app_version".to_string(), serde_json::json!(APP_VERSION));
+            props.insert(
+                "os_platform".to_string(),
+                serde_json::json!(std::env::consts::OS),
+            );
+            props.insert(
+                "os_arch".to_string(),
+                serde_json::json!(std::env::consts::ARCH),
+            );
+            props.insert("is_ci".to_string(), serde_json::json!(is_ci()));
+            props.insert("command".to_string(), serde_json::json!(event.command));
+            props.insert(
+                "duration_ms".to_string(),
+                serde_json::json!(event.duration_ms),
+            );
+            props.insert(
+                "status".to_string(),
+                serde_json::json!(event.status.to_string()),
+            );
+            props.insert("$lib".to_string(), serde_json::json!("spawn"));
+            props.insert("$lib_version".to_string(), serde_json::json!(APP_VERSION));
+            // Don't create person profiles for CLI telemetry
+            props.insert(
+                "$process_person_profile".to_string(),
+                serde_json::json!(false),
+            );
+
+            if let Some(ref kind) = event.error_kind {
+                props.insert("error_kind".to_string(), serde_json::json!(kind));
+            }
+
+            for (key, value) in &event.properties {
+                props.insert(key.clone(), serde_json::json!(value));
+            }
+
+            serde_json::json!({
+                "event": "command_completed",
+                "properties": props
+            })
+        })
+        .collect();
+
+    let payload = serde_json::json!({
+        "api_key": POSTHOG_API_KEY,
+        "batch": batch
+    });
+
+    debug_telemetry!("POST to {}", POSTHOG_ENDPOINT);
     debug_telemetry!(
-        "send_event called: distinct_id={}, command={}, duration_ms={}",
-        distinct_id,
-        command,
-        duration_ms
+        "payload: {}",
+        serde_json::to_string_pretty(&payload).unwrap_or_default()
     );
 
-    let options: ClientOptions = ClientOptionsBuilder::default()
-        .api_endpoint("https://eu.i.posthog.com/capture/".to_string())
-        .api_key(POSTHOG_API_KEY.to_string())
-        .build()?;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(POSTHOG_ENDPOINT)
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await?;
 
-    match posthog_rs::init_global(options).await {
-        Ok(_) => debug_telemetry!("PostHog client initialized"),
-        Err(posthog_rs::Error::AlreadyInitialized) => {
-            debug_telemetry!("PostHog client already initialized")
-        }
-        Err(e) => debug_telemetry!("PostHog init error: {:?}", e),
-    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
 
-    let mut event = Event::new("command_completed", distinct_id);
-
-    // Helper closure to convert PostHog errors to anyhow errors
-    let to_anyhow = |e| anyhow::anyhow!("PostHog error: {:?}", e);
-
-    event
-        .insert_prop("app_version", APP_VERSION)
-        .map_err(to_anyhow)?;
-    event
-        .insert_prop("os_platform", std::env::consts::OS)
-        .map_err(to_anyhow)?;
-    event
-        .insert_prop("os_arch", std::env::consts::ARCH)
-        .map_err(to_anyhow)?;
-    event.insert_prop("is_ci", is_ci()).map_err(to_anyhow)?;
-
-    // Usage properties
-    event.insert_prop("command", command).map_err(to_anyhow)?;
-    event
-        .insert_prop("duration_ms", duration_ms)
-        .map_err(to_anyhow)?;
-
-    // Command-specific properties
-    for (key, value) in properties {
-        event.insert_prop(key, value).map_err(to_anyhow)?;
-    }
-
-    // Health properties
-    event
-        .insert_prop("status", status.to_string())
-        .map_err(to_anyhow)?;
-    if let Some(kind) = error_kind {
-        event.insert_prop("error_kind", kind).map_err(to_anyhow)?;
-    }
-
-    debug_telemetry!("calling posthog_rs::capture...");
-
-    // Capture also returns posthog_rs::Error, so we map it here too
-    posthog_rs::capture(event).await.map_err(to_anyhow)?;
+    debug_telemetry!("response status: {}, body: {}", status, body);
 
     Ok(())
 }
@@ -343,7 +353,7 @@ pub fn run_internal_telemetry() {
 
     debug_telemetry!("child received {} event(s)", events.len());
 
-    // Create a minimal tokio runtime just for the HTTP calls
+    // Create a minimal tokio runtime just for the HTTP call
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -355,33 +365,13 @@ pub fn run_internal_telemetry() {
         }
     };
 
-    // Send each event
-    rt.block_on(async {
-        for event in events {
-            debug_telemetry!(
-                "sending event: command={}, distinct_id={}",
-                event.command,
-                event.distinct_id
-            );
+    // Send all events in a single batch request
+    let result = rt.block_on(send_events_to_posthog(&events));
 
-            let result = send_event(
-                &event.distinct_id,
-                &event.command,
-                event.duration_ms,
-                event.status,
-                event.error_kind.as_deref(),
-                event.properties,
-            )
-            .await;
-
-            match result {
-                Ok(()) => debug_telemetry!("sent event: {}", event.command),
-                Err(e) => debug_telemetry!("failed to send event {}: {:?}", event.command, e),
-            }
-        }
-    });
-
-    debug_telemetry!("child finished sending events");
+    match result {
+        Ok(()) => debug_telemetry!("successfully sent {} event(s)", events.len()),
+        Err(e) => debug_telemetry!("failed to send events: {:?}", e),
+    }
 }
 
 #[cfg(test)]

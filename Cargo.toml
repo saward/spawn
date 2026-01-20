@@ -35,7 +35,7 @@ include_dir = "0.7.4"
 thiserror = "2.0.17"
 pin-project = "1.1.10"
 
-posthog-rs = "0.3.7"
+reqwest = { version = "0.12", features = ["json"] }
 
 [dev-dependencies]
 tempfile = "3.8"
