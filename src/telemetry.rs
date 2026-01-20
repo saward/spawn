@@ -149,7 +149,10 @@ impl std::fmt::Display for CommandStatus {
 }
 
 impl TelemetryRecorder {
-    /// Create a new telemetry recorder.
+    /// Create a new telemetry recorder with a pre-recorded start time.
+    ///
+    /// Use this when you need to start timing before you have all the
+    /// telemetry configuration (e.g., before loading config from disk).
     ///
     /// Checks opt-out settings in priority order:
     /// 1. `DO_NOT_TRACK` env var -> Disable
@@ -157,7 +160,12 @@ impl TelemetryRecorder {
     /// 3. Otherwise -> Enable
     ///
     /// If no `project_id` is provided, generates an ephemeral UUID for this session.
-    pub fn new(project_id: Option<&str>, telemetry_enabled: bool, info: TelemetryInfo) -> Self {
+    pub fn with_start_time(
+        project_id: Option<&str>,
+        telemetry_enabled: bool,
+        info: TelemetryInfo,
+        start_time: Instant,
+    ) -> Self {
         // Check DO_NOT_TRACK env var first (highest priority)
         let do_not_track = env::var("DO_NOT_TRACK").is_ok();
 
@@ -185,8 +193,20 @@ impl TelemetryRecorder {
             distinct_id,
             command: info.label,
             properties,
-            start_time: Instant::now(),
+            start_time,
         }
+    }
+
+    /// Create a new telemetry recorder, starting the timer now.
+    ///
+    /// Checks opt-out settings in priority order:
+    /// 1. `DO_NOT_TRACK` env var -> Disable
+    /// 2. `telemetry_enabled = false` -> Disable
+    /// 3. Otherwise -> Enable
+    ///
+    /// If no `project_id` is provided, generates an ephemeral UUID for this session.
+    pub fn new(project_id: Option<&str>, telemetry_enabled: bool, info: TelemetryInfo) -> Self {
+        Self::with_start_time(project_id, telemetry_enabled, info, Instant::now())
     }
 
     /// Finish recording and spawn a detached child process to send telemetry.
@@ -209,9 +229,10 @@ impl TelemetryRecorder {
         };
 
         debug_telemetry!(
-            "spawning child for event: command={}, distinct_id={}",
+            "spawning child for event: command={}, distinct_id={}, duration_ms={}",
             event.command,
-            event.distinct_id
+            event.distinct_id,
+            event.duration_ms
         );
 
         // Spawn detached child process to send the event

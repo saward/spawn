@@ -29,14 +29,19 @@ async fn async_main(cli: Cli) -> Result<()> {
     // Get telemetry info from CLI before running
     let telemetry_info = cli.telemetry();
 
+    // Start timing before command execution
+    let start_time = std::time::Instant::now();
+
     // Run the CLI - this returns telemetry config along with outcome
     let result = run_cli(cli, &config_fs).await;
 
     // Create telemetry recorder with config from CLI result
-    let recorder = TelemetryRecorder::new(
+    // Pass in the start time so duration is measured correctly
+    let recorder = TelemetryRecorder::with_start_time(
         result.project_id.as_deref(),
         result.telemetry_enabled,
         telemetry_info,
+        start_time,
     );
 
     // Finish telemetry based on outcome
