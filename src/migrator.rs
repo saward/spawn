@@ -55,7 +55,7 @@ impl Migrator {
             None
         };
         let script_path = &self.config.pather().migration_script_file_path(&self.name);
-        println!("generate script path: {}", script_path);
+        eprintln!("generate script path: {}", script_path);
         template::generate_streaming(&self.config, lock_file, script_path, variables).await
     }
 }
