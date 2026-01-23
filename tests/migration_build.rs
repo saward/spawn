@@ -98,7 +98,7 @@ impl MigrationTestHelper {
             environment: Some("dev".to_string()),
             databases: Some(databases),
             project_id: None,
-            telemetry: false,
+            telemetry: Some(false),
         }
     }
 

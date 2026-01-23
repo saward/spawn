@@ -38,7 +38,7 @@ impl Init {
             environment: None,
             databases: None,
             project_id: Some(project_id.clone()),
-            telemetry: true,
+            telemetry: None,
         };
 
         // Save the config
@@ -61,8 +61,11 @@ impl Init {
                 .map_err(|e| {
                     anyhow::Error::from(e).context(format!("Failed to create {} folder", subfolder))
                 })?;
-            created_folders.push(format!("  {}{}/", spawn_folder, subfolder));
+            created_folders.push(format!("  {}/{}/", spawn_folder, subfolder));
         }
+
+        // Show telemetry notice
+        crate::show_telemetry_notice();
 
         println!("Initialized spawn project with project_id: {}", project_id);
         println!("Created directories:");

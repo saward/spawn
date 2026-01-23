@@ -238,7 +238,7 @@ impl IntegrationTestHelper {
             environment: None,
             databases: Some(databases),
             project_id: None,
-            telemetry: false,
+            telemetry: Some(false),
         }
     }
 

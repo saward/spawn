@@ -5,7 +5,7 @@ use crate::commands::{
 use crate::config::Config;
 use opendal::Operator;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -206,11 +206,26 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> CliResult {
         }
     }
 
+    // Check if config file exists to show telemetry notice
+    let config_exists = base_op.exists(&cli.config_file).await.unwrap_or(false);
+
     // Load config from file (required for all other commands)
     let mut main_config = match Config::load(&cli.config_file, base_op, cli.database.clone()).await
     {
         Ok(cfg) => cfg,
         Err(e) => {
+            // If config doesn't exist, show helpful message
+            if !config_exists {
+                crate::show_telemetry_notice();
+                eprintln!("No spawn.toml configuration file found.");
+                eprintln!("Run `spawn init` to create a new spawn project.");
+                return CliResult {
+                    outcome: Err(anyhow!("Configuration file not found")),
+                    project_id: None,
+                    telemetry_enabled: false,
+                };
+            }
+
             return CliResult {
                 outcome: Err(e.context(format!("could not load config from {}", &cli.config_file))),
                 project_id: None,
