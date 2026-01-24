@@ -1,6 +1,6 @@
 use crate::commands::{
     ApplyMigration, BuildMigration, BuildTest, Command, CompareTests, ExpectTest, Init,
-    NewMigration, Outcome, PinMigration, RunTest, TelemetryDescribe, TelemetryInfo,
+    NewMigration, NewTest, Outcome, PinMigration, RunTest, TelemetryDescribe, TelemetryInfo,
 };
 use crate::config::Config;
 use opendal::Operator;
@@ -145,6 +145,11 @@ impl TelemetryDescribe for MigrationCommands {
 
 #[derive(Subcommand)]
 pub enum TestCommands {
+    /// Create a new test with the provided name
+    New {
+        /// Name of the test
+        name: String,
+    },
     Build {
         name: String,
     },
@@ -164,6 +169,7 @@ pub enum TestCommands {
 impl TelemetryDescribe for TestCommands {
     fn telemetry(&self) -> TelemetryInfo {
         match self {
+            TestCommands::New { .. } => TelemetryInfo::new("new"),
             TestCommands::Build { .. } => TelemetryInfo::new("build"),
             TestCommands::Run { .. } => TelemetryInfo::new("run"),
             TestCommands::Compare { name } => TelemetryInfo::new("compare")
@@ -304,6 +310,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
             }
         }
         Some(Commands::Test { command }) => match command {
+            Some(TestCommands::New { name }) => NewTest { name }.execute(config).await,
             Some(TestCommands::Build { name }) => BuildTest { name }.execute(config).await,
             Some(TestCommands::Run { name }) => RunTest { name }.execute(config).await,
             Some(TestCommands::Compare { name }) => CompareTests { name }.execute(config).await,

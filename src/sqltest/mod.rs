@@ -2,6 +2,10 @@ use crate::config;
 use crate::template;
 use console::{style, Style};
 
+static BASE_TEST: &str = "-- Test file
+SELECT 1;
+";
+
 use similar::{ChangeTag, TextDiff};
 use std::fmt;
 use std::str;
@@ -129,6 +133,18 @@ impl Tester {
             .context("unable to write expectation file")?;
 
         Ok(())
+    }
+
+    /// Creates a new test folder with a blank test.sql file.
+    pub async fn create_test(&self) -> Result<String> {
+        let script_path = self.test_file_path();
+        println!("creating test at {}", &script_path);
+        self.config
+            .operator()
+            .write(&script_path, BASE_TEST)
+            .await?;
+
+        Ok(self.script_path.clone())
     }
 
     pub fn compare(&self, generated: &str, expected: &str) -> std::result::Result<(), String> {
