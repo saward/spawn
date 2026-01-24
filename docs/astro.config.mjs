@@ -17,6 +17,10 @@ export default defineConfig({
       ],
       sidebar: [
         {
+          label: "Getting Started",
+          items: [{ label: "Installing", slug: "getting-started/install" }],
+        },
+        {
           label: "Guides",
           items: [
             // Each item here is one entry in the navigation menu.
