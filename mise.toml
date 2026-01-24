@@ -1,0 +1,15 @@
+[tools]
+# Node.js for Astro/Starlight docs
+node = "24"  # LTS version
+
+# Package manager for docs
+pnpm = "10"  # Pinned to major version
+
+[env]
+# Ensure pnpm uses local node_modules
+_.path = ["./node_modules/.bin"]
+
+[tasks.docs]
+description = "Run the documentation dev server"
+dir = "docs"
+run = "npm run dev"

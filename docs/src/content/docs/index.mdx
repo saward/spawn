@@ -1,0 +1,42 @@
+---
+title: Spawn
+description: The Database Build System
+hero:
+  tagline: The Database Build System.
+  # If you don't have an image, just delete the 'image' block entirely!
+  # It looks great as centered text.
+  image:
+    file: ../../assets/spawn-hero.png
+  actions:
+    - text: Getting Started
+      link: /getting-started/install/
+      icon: right-arrow
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+<CardGrid stagger>
+  <Card title="Programmable SQL" icon="puzzle">
+    Stop writing repetitive scripts. Use **variables, loops, and logic** (via Minijinja) to generate complex migrations, handle multi-tenancy, and inject external data sources.
+  </Card>
+
+  <Card title="Component-Based" icon="pencil">
+    Treat your database code like app code. Edit Views and Functions **in-place** within a `components/` folder. Spawn handles the history tracking for you.
+  </Card>
+  
+  <Card title="Reproducible Builds" icon="document">
+    Like a `Cargo.lock` for your database. Spawn **pins** your component versions for every migration, guaranteeing that historical scripts never break even as your schema evolves.
+  </Card>
+  
+  <Card title="Integrated Testing" icon="approve-check-circle">
+    Use macros to create reusable **data factories** directly in SQL. Spin up complex test scenarios with simple, readable logic—no external scripts required.
+  </Card>
+  
+  <Card title="Regression Assurance" icon="magnifier">
+    Catch bugs before they merge. Run comprehensive test suites automatically in your CI/CD pipeline to ensure new migrations don't break existing functionality.
+  </Card>
+  
+  <Card title="Zero Dependencies" icon="rocket">
+    Built in **Rust**. A single binary that installs in seconds. No JVM, no Perl, no Python virtual environments required. Just `curl` and go.
+  </Card>
+</CardGrid>

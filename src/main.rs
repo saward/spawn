@@ -68,6 +68,9 @@ async fn async_main(cli: Cli) -> Result<()> {
         Outcome::NewMigration(name) => {
             println!("New migration created: {}", name);
         }
+        Outcome::NewTest(name) => {
+            println!("New test created: {}", name);
+        }
         Outcome::PinnedMigration { hash } => {
             println!("Migration pinned: {}", hash);
         }

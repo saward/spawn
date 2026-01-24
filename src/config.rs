@@ -19,12 +19,12 @@ pub struct ConfigLoaderSaver {
     /// Unique project identifier for telemetry (UUID string)
     pub project_id: Option<String>,
     /// Set to false to disable telemetry
-    #[serde(default = "default_telemetry")]
-    pub telemetry: bool,
+    #[serde(default = "default_telemetry", skip_serializing_if = "Option::is_none")]
+    pub telemetry: Option<bool>,
 }
 
-fn default_telemetry() -> bool {
-    true
+fn default_telemetry() -> Option<bool> {
+    None
 }
 
 impl ConfigLoaderSaver {
@@ -36,7 +36,7 @@ impl ConfigLoaderSaver {
             environment: self.environment,
             databases: self.databases.unwrap_or_default(),
             project_id: self.project_id,
-            telemetry: self.telemetry,
+            telemetry: self.telemetry.unwrap_or(true),
             base_fs,
             spawn_fs,
         }

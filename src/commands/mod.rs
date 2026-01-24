@@ -7,7 +7,7 @@ pub mod test;
 
 pub use init::Init;
 pub use migration::{ApplyMigration, BuildMigration, NewMigration, PinMigration};
-pub use test::{BuildTest, CompareTests, ExpectTest, RunTest};
+pub use test::{BuildTest, CompareTests, ExpectTest, NewTest, RunTest};
 
 /// Telemetry information for a command.
 #[derive(Debug, Clone, Default)]
@@ -50,6 +50,7 @@ pub trait Command: TelemetryDescribe {
 
 pub enum Outcome {
     NewMigration(String),
+    NewTest(String),
     BuiltMigration { content: String },
     AppliedMigrations,
     Unimplemented,

@@ -1,7 +1,9 @@
 use crate::commands::{Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::ConfigLoaderSaver;
+use crate::engine::{DatabaseConfig, EngineType};
 use anyhow::{anyhow, Result};
 use opendal::Operator;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Init command - special case that doesn't implement Command trait
@@ -31,14 +33,36 @@ impl Init {
         // Generate a new project_id
         let project_id = Uuid::new_v4().to_string();
 
+        // Create example database config
+        let mut databases = HashMap::new();
+        databases.insert(
+            "postgres_psql".to_string(),
+            DatabaseConfig {
+                engine: EngineType::PostgresPSQL,
+                spawn_database: "spawn".to_string(),
+                spawn_schema: "_spawn".to_string(),
+                environment: "dev".to_string(),
+                command: Some(vec![
+                    "docker".to_string(),
+                    "exec".to_string(),
+                    "-i".to_string(),
+                    "spawn".to_string(),
+                    "psql".to_string(),
+                    "-U".to_string(),
+                    "spawn".to_string(),
+                    "spawn".to_string(),
+                ]),
+            },
+        );
+
         // Create default config
         let config = ConfigLoaderSaver {
             spawn_folder: "spawn".to_string(),
-            database: None,
+            database: Some("postgres_psql".to_string()),
             environment: None,
-            databases: None,
+            databases: Some(databases),
             project_id: Some(project_id.clone()),
-            telemetry: true,
+            telemetry: None,
         };
 
         // Save the config
@@ -61,8 +85,11 @@ impl Init {
                 .map_err(|e| {
                     anyhow::Error::from(e).context(format!("Failed to create {} folder", subfolder))
                 })?;
-            created_folders.push(format!("  {}{}/", spawn_folder, subfolder));
+            created_folders.push(format!("  {}/{}/", spawn_folder, subfolder));
         }
+
+        // Show telemetry notice
+        crate::show_telemetry_notice();
 
         println!("Initialized spawn project with project_id: {}", project_id);
         println!("Created directories:");

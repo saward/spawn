@@ -1,11 +1,11 @@
 use crate::commands::{
     ApplyMigration, BuildMigration, BuildTest, Command, CompareTests, ExpectTest, Init,
-    NewMigration, Outcome, PinMigration, RunTest, TelemetryDescribe, TelemetryInfo,
+    NewMigration, NewTest, Outcome, PinMigration, RunTest, TelemetryDescribe, TelemetryInfo,
 };
 use crate::config::Config;
 use opendal::Operator;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -145,6 +145,11 @@ impl TelemetryDescribe for MigrationCommands {
 
 #[derive(Subcommand)]
 pub enum TestCommands {
+    /// Create a new test with the provided name
+    New {
+        /// Name of the test
+        name: String,
+    },
     Build {
         name: String,
     },
@@ -164,6 +169,7 @@ pub enum TestCommands {
 impl TelemetryDescribe for TestCommands {
     fn telemetry(&self) -> TelemetryInfo {
         match self {
+            TestCommands::New { .. } => TelemetryInfo::new("new"),
             TestCommands::Build { .. } => TelemetryInfo::new("build"),
             TestCommands::Run { .. } => TelemetryInfo::new("run"),
             TestCommands::Compare { name } => TelemetryInfo::new("compare")
@@ -206,11 +212,26 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> CliResult {
         }
     }
 
+    // Check if config file exists to show telemetry notice
+    let config_exists = base_op.exists(&cli.config_file).await.unwrap_or(false);
+
     // Load config from file (required for all other commands)
     let mut main_config = match Config::load(&cli.config_file, base_op, cli.database.clone()).await
     {
         Ok(cfg) => cfg,
         Err(e) => {
+            // If config doesn't exist, show helpful message
+            if !config_exists {
+                crate::show_telemetry_notice();
+                eprintln!("No spawn.toml configuration file found.");
+                eprintln!("Run `spawn init` to create a new spawn project.");
+                return CliResult {
+                    outcome: Err(anyhow!("Configuration file not found")),
+                    project_id: None,
+                    telemetry_enabled: false,
+                };
+            }
+
             return CliResult {
                 outcome: Err(e.context(format!("could not load config from {}", &cli.config_file))),
                 project_id: None,
@@ -289,6 +310,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
             }
         }
         Some(Commands::Test { command }) => match command {
+            Some(TestCommands::New { name }) => NewTest { name }.execute(config).await,
             Some(TestCommands::Build { name }) => BuildTest { name }.execute(config).await,
             Some(TestCommands::Run { name }) => RunTest { name }.execute(config).await,
             Some(TestCommands::Compare { name }) => CompareTests { name }.execute(config).await,
