@@ -1,9 +1,8 @@
 ---
-title: Welcome to Starlight
+title: Welcome to Spawn
 description: Get started building your docs site with Starlight.
-template: splash # Remove or comment out this line to display the site sidebar on this page.
 hero:
-  tagline: Congrats on setting up a new Starlight project!
+  tagline: The Database Build System
   image:
     file: ../../assets/houston.webp
   actions:
@@ -16,25 +15,257 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+Spawn is a Database Build System. It currently supports PostgreSQL via psql, but with plans to support many other databases in the future. It includes core features such as:
 
-## Next steps
+- Create and apply migrations
+- Testing system
+- Reusable components
+- Easy updating of database functions and views while maintaining history
 
-<CardGrid stagger>
-	<Card title="Update content" icon="pencil">
-		Edit `src/content/docs/index.mdx` to see this page change.
-	</Card>
-	<Card title="Change page layout" icon="document">
-		Delete `template: splash` in `src/content/docs/index.mdx` to display a
-		sidebar on this page.
-	</Card>
-	<Card title="Add new content" icon="add-document">
-		Add Markdown or MDX files to `src/content/docs` to create new pages.
-	</Card>
-	<Card title="Configure your site" icon="setting">
-		Edit your `sidebar` and other config in `astro.config.mjs`.
-	</Card>
-	<Card title="Read the docs" icon="open-book">
-		Learn more in [the Starlight Docs](https://starlight.astro.build/).
-	</Card>
-</CardGrid>
+## The magic
+
+Spawn solves these pain points:
+
+- How do I update a database function, but keep the change history visible via git, while ensuring old migrations work?
+- How do I run complex tests against my database?
+- How can I use external data in my migrations?
+- How do I create per-migration as well as regression tests?
+- How can I apply some changes to local but not prod?
+
+Spawn solves these painpoints through two mechanisms:
+
+1. Separate components (views, functions, triggers, reusable snippets) from the migrations.
+1. Content Addressable Storage (CAS), much like git, for components. Pin migrations to specific versions of components.
+1. Dynamic SQL generation via templating.
+1. Comprehensive testing framework.
+
+### Components
+
+Instead of storing your functions inside the migration script, store them in your `spawn/components` folder. For example, you may create a component with the following contents, stored in `spawn/components/functions/add_fee.sql`:
+
+```sql
+CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
+RETURNS NUMERIC AS $$
+BEGIN
+    RETURN a * 1.1;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+Then you create your new migration:
+
+```bash
+% spawn migration new add_fee
+creating migration with name 20260124064957-add_fee
+creating migration at spawn/migrations/20260124064957-add_fee/up.sql
+New migration created: 20260124064957-add_fee
+```
+
+Now, open up that migration script and reference your migration:
+
+```sql
+BEGIN;
+
+{% include 'functions/add_fee.sql' %}
+
+COMMIT;
+```
+
+Finally, use `build` to see how the final SQL looks:
+
+```bash
+% spawn migration build 20260124064957-add_fee
+generate script path: spawn/migrations/20260124064957-add_fee/up.sql
+BEGIN;
+
+CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
+RETURNS NUMERIC AS $$
+BEGIN
+    RETURN a * 1.1;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMIT;
+mark@Mac play %
+```
+
+Easy!
+
+### Pinning via CAS
+
+You've realised now that you'd rather your add_fee function pull the fee from a table, so that updating the fee is as easy as updating an entry in that table.
+
+However, if you update the component directly, we hit two problems:
+
+1. Any old migration tests (not yet implemented) that depend on that functionality will break.
+2. If we try running old migrations against a new database, `20260124064957-add_fee` will now pick up the new version of the component instead of the old.
+
+We can solve both of these problems via pinning. Pinning pins the migration to a specific version of the components folder. Run like so:
+
+```bash
+% spawn migration pin 20260124064957-add_fee
+Migration pinned: 257372323412c39db23080ade53cb9da
+
+% spawn migration pin 20260124064957-add_fee
+Migration pinned: 257372323412c39db23080ade53cb9da
+% ls spawn/migrations/20260124064957-add_fee
+lock.toml       up.sql
+% cat spawn/migrations/20260124064957-add_fee/lock.toml
+pin = "257372323412c39db23080ade53cb9da"
+```
+
+This stores a snapshot of the components inside `spawn/pinned` in a manner similar to how git works.
+
+Now let's make a new migration that updates the component:
+
+```bash
+% spawn migration new update-add-func
+creating migration with name 20260124073534-update-add-func
+creating migration at spawn/migrations/20260124073534-update-add-func/up.sql
+New migration created: 20260124073534-update-add-func
+```
+
+We can edit the component in place, so that we get proper git history record of changes, and so that PRs are easier to review. We update the migration:
+
+```sql
+BEGIN;
+
+CREATE TABLE fee (
+    name TEXT PRIMARY KEY,
+    amount NUMERIC(3, 2)
+);
+
+INSERT INTO fee (name, amount) VALUES ('base', 0.12);
+
+{% include 'functions/add_fee.sql' %}
+
+COMMIT;
+```
+
+And now update the component in place at `functions/add_fee.sql`, so it uses this new table:
+
+```sql
+CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
+RETURNS NUMERIC AS $$
+BEGIN
+    RETURN a * (SELECT amount FROM fee WHERE name = 'base');
+END;
+$$ LANGUAGE plpgsql;
+
+```
+
+Now if we were to build the old migration, we see the new version, but if we use --pinned then it builds with the component as it was originally at the time:
+
+```bash
+# Pinned version of old migration uses old version of the function:
+% spawn migration pin 20260124073534-update-add-func
+Migration pinned: f12696fd7a68e4102f8c03dd23a774bf
+
+% spawn migration build 20260124064957-add_fee --pinned
+generate script path: spawn/migrations/20260124064957-add_fee/up.sql
+BEGIN;
+
+CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
+RETURNS NUMERIC AS $$
+BEGIN
+    RETURN a * 1.1;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMIT;
+
+# New migration uses the new version of the function:
+% spawn migration build 20260124073534-update-add-func --pinned
+generate script path: spawn/migrations/20260124073534-update-add-func/up.sql
+BEGIN;
+
+CREATE TABLE fee (
+    name TEXT PRIMARY KEY,
+    amount NUMERIC(3, 2)
+);
+
+INSERT INTO fee (name, amount) VALUES ('base', 0.12);
+
+CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
+RETURNS NUMERIC AS $$
+BEGIN
+    RETURN a * (SELECT amount FROM fee WHERE name = 'base');
+END;
+$$ LANGUAGE plpgsql;
+
+COMMIT;
+```
+
+### Dynamic templating
+
+The power of Spawn templating comes not just from being able to organise SQL into components, but also to make use of dynamic data at generation time. This is what makes Spawn a Database Build System.
+
+Spawn includes by default some useful variables. For example, we may have some data we only want to show in dev builds:
+
+```sql
+{%- if env == "dev" %}
+INSERT INTO fee (name, amount) VALUES ('high-test', 0.98);
+{% endif %}
+```
+
+Now if we run it, we see that it doesn't show this insert:
+
+```bash
+% spawn migration build 20260124073534-update-add-func --pinned
+generate script path: spawn/migrations/20260124073534-update-add-func/up.sql
+BEGIN;
+
+CREATE TABLE fee (
+    name TEXT PRIMARY KEY,
+    amount NUMERIC(3, 2)
+);
+
+INSERT INTO fee (name, amount) VALUES ('base', 0.12);
+
+CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
+RETURNS NUMERIC AS $$
+BEGIN
+    RETURN a * (SELECT amount FROM fee WHERE name = 'base');
+END;
+$$ LANGUAGE plpgsql;
+
+COMMIT;
+```
+
+But if we edit the database in `spawn.toml` to specify that it is a dev environment, like so:
+
+```toml
+...
+database = "postgres_psql"
+
+[databases.postgres_psql]
+...
+environment = "dev" # <-- HERE
+command = ["docker", "exec", "-i", "blhcdb", "psql", "-U", "postgres", "postgres"]
+```
+
+Then it includes the extra insert!
+
+```bash
+% spawn migration build 20260124073534-update-add-func --pinned
+generate script path: spawn/migrations/20260124073534-update-add-func/up.sql
+BEGIN;
+
+CREATE TABLE fee (
+    name TEXT PRIMARY KEY,
+    amount NUMERIC(3, 2)
+);
+
+INSERT INTO fee (name, amount) VALUES ('base', 0.12);
+INSERT INTO fee (name, amount) VALUES ('high-test', 0.98); -- HERE
+
+
+CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
+RETURNS NUMERIC AS $$
+BEGIN
+    RETURN a * (SELECT amount FROM fee WHERE name = 'base');
+END;
+$$ LANGUAGE plpgsql;
+
+COMMIT;
+```
