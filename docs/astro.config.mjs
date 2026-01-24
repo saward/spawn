@@ -18,19 +18,15 @@ export default defineConfig({
       sidebar: [
         {
           label: "Getting Started",
-          items: [{ label: "Installing", slug: "getting-started/install" }],
-        },
-        {
-          label: "Guides",
           items: [
-            // Each item here is one entry in the navigation menu.
-            { label: "Example Guide", slug: "guides/example" },
+            { label: "Installing", slug: "getting-started/install" },
+            { label: "The Magic of Spawn", slug: "getting-started/magic" },
           ],
         },
-        {
-          label: "Reference",
-          autogenerate: { directory: "reference" },
-        },
+        // {
+        //   label: "Reference",
+        //   autogenerate: { directory: "reference" },
+        // },
       ],
     }),
   ],

@@ -3,5 +3,20 @@ title: Install Spawn
 description: How to install Spawn.
 ---
 
-Guides lead a user through a specific task they want to accomplish, often with a sequence of steps.
-Writing a good guide requires thinking about what your users are trying to do.
+## Using Cargo (Recommended)
+
+If you have Rust installed, you can install Spawn directly from crates.io:
+
+```bash
+cargo install spawn-db
+```
+
+Or install from the GitHub repository:
+
+```bash
+cargo install --git https://github.com/saward/spawn
+```
+
+## Pre-built Binaries
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/saward/spawn/releases/latest).
