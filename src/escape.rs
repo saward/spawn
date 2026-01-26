@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```
-//! use spawn::{sql_query, escape::{EscapedIdentifier, EscapedLiteral}};
+//! use spawn_db::{sql_query, escape::{EscapedIdentifier, EscapedLiteral}};
 //!
 //! let schema = EscapedIdentifier::new("my_schema");
 //! let value = EscapedLiteral::new("user's input");
@@ -59,7 +59,7 @@ impl<S: SqlSafe> SqlSafe for &S {
 /// # Example
 ///
 /// ```
-/// use spawn::escape::EscapedIdentifier;
+/// use spawn_db::escape::EscapedIdentifier;
 ///
 /// let schema = EscapedIdentifier::new("my_schema");
 /// assert_eq!(schema.as_str(), "\"my_schema\"");
@@ -121,7 +121,7 @@ impl SqlSafe for EscapedIdentifier {
 /// # Example
 ///
 /// ```
-/// use spawn::escape::EscapedLiteral;
+/// use spawn_db::escape::EscapedLiteral;
 ///
 /// let value = EscapedLiteral::new("hello");
 /// assert_eq!(value.as_str(), "'hello'");
@@ -188,7 +188,7 @@ impl SqlSafe for EscapedLiteral {
 /// # Example
 ///
 /// ```
-/// use spawn::{sql_query, escape::{EscapedIdentifier, InsecureRawSql}};
+/// use spawn_db::{sql_query, escape::{EscapedIdentifier, InsecureRawSql}};
 ///
 /// let schema = EscapedIdentifier::new("my_schema");
 /// let order = InsecureRawSql::new("ORDER BY created_at DESC");
@@ -239,7 +239,7 @@ impl SqlSafe for InsecureRawSql {
 /// # Example
 ///
 /// ```
-/// use spawn::{sql_query, escape::{EscapedIdentifier, EscapedLiteral}};
+/// use spawn_db::{sql_query, escape::{EscapedIdentifier, EscapedLiteral}};
 ///
 /// let schema = EscapedIdentifier::new("public");
 /// let name = EscapedLiteral::new("Alice");
@@ -292,7 +292,7 @@ impl fmt::Display for EscapedQuery {
 /// # Example
 ///
 /// ```
-/// use spawn::{sql_query, escape::{EscapedIdentifier, EscapedLiteral}};
+/// use spawn_db::{sql_query, escape::{EscapedIdentifier, EscapedLiteral}};
 ///
 /// let schema = EscapedIdentifier::new("my_schema");
 /// let table = EscapedIdentifier::new("users");
@@ -311,7 +311,7 @@ impl fmt::Display for EscapedQuery {
 /// Passing a raw `String` or `&str` will result in a compile error:
 ///
 /// ```compile_fail
-/// use spawn::sql_query;
+/// use spawn_db::sql_query;
 ///
 /// let unsafe_input = "Robert'; DROP TABLE users; --";
 /// let query = sql_query!("SELECT * FROM users WHERE name = {}", unsafe_input);

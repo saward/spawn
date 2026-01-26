@@ -1,7 +1,26 @@
 [package]
-name = "spawn"
+name = "spawn-db"
 version = "0.1.6"
 edition = "2021"
+repository = "https://github.com/saward/spawn"
+authors = ["Mark Saward <mark@manse.cloud>"]
+description = "Database Build System"
+homepage = "https://spawn.dev"
+license = "AGPL-3.0-only"
+
+[package.metadata.wix]
+upgrade-guid = "EDDD3448-8691-47B5-B21C-BBB6BD3FA1AE"
+path-guid = "3CCE6052-6295-4118-B5C8-79E2834AD8E2"
+license-file = "LICENSE"
+eula = false
+license = false
+
+[package.metadata.dist]
+bins = ["spawn"]
+
+[[bin]]
+name = "spawn"
+path = "src/main.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -40,3 +59,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 [dev-dependencies]
 tempfile = "3.8"
 pretty_assertions = "1"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

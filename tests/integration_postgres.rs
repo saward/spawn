@@ -40,7 +40,7 @@ use anyhow::{anyhow, Context, Result};
 use migration_build::MigrationTestHelper;
 use opendal::services::Memory;
 use opendal::Operator;
-use spawn::{
+use spawn_db::{
     commands::{ApplyMigration, Command, CompareTests, ExpectTest, Outcome},
     config::ConfigLoaderSaver,
     engine::{DatabaseConfig, EngineType},

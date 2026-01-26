@@ -24,12 +24,16 @@ jobs:
       - name: Scan dependency licenses
         env:
           # Forbidden keywords (case-insensitive, regex OR-ed together)
-          COPYLEFT: 'GPL|LGPL|AGPL|MPL|EUPL|CDDL|QPL|OSL|SISSL'
+          COPYLEFT: "GPL|LGPL|AGPL|MPL|EUPL|CDDL|QPL|OSL|SISSL"
           # One exception per line – put the *full* license string exactly as it
           # appears before the package list.  Example keeps "MIT OR GPL" lawful.
           EXCEPTIONS: |
             Apache-2.0 OR LGPL-2.1-or-later OR MIT
             MIT OR GPL
+          # Full line exceptions – if the entire line matches exactly, skip it.
+          LINE_EXCEPTIONS: |
+            AGPL-3.0 (1): spawn-db
+            AGPL-3.0-only (1): spawn-db
         run: |
           set -euo pipefail
 
@@ -41,6 +45,19 @@ jobs:
 
           error=0
           while IFS= read -r line; do
+            # Check full line exceptions first
+            line_match=0
+            while IFS= read -r line_exc; do
+              [[ -z "$line_exc" ]] && continue
+              if [[ "$line" == "$line_exc" ]]; then
+                line_match=1
+                break
+              fi
+            done <<< "$LINE_EXCEPTIONS"
+            if [[ $line_match -eq 1 ]]; then
+              continue
+            fi
+
             # licence substring before the first colon
             raw=$(printf '%s' "$line" | cut -d':' -f1)
 

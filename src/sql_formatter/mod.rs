@@ -10,7 +10,7 @@
 //! # Usage
 //!
 //! ```
-//! use spawn::sql_formatter::{SqlDialect, get_auto_escape_callback, get_formatter};
+//! use spawn_db::sql_formatter::{SqlDialect, get_auto_escape_callback, get_formatter};
 //! use minijinja::Environment;
 //!
 //! let mut env = Environment::new();
@@ -66,7 +66,7 @@ pub type AutoEscapeCallback = fn(&str) -> AutoEscape;
 /// # Example
 ///
 /// ```
-/// use spawn::sql_formatter::{SqlDialect, get_formatter};
+/// use spawn_db::sql_formatter::{SqlDialect, get_formatter};
 /// use minijinja::Environment;
 ///
 /// let mut env = Environment::new();
@@ -87,7 +87,7 @@ pub fn get_formatter(dialect: SqlDialect) -> FormatterFn {
 /// # Example
 ///
 /// ```
-/// use spawn::sql_formatter::{SqlDialect, get_auto_escape_callback};
+/// use spawn_db::sql_formatter::{SqlDialect, get_auto_escape_callback};
 /// use minijinja::Environment;
 ///
 /// let mut env = Environment::new();
