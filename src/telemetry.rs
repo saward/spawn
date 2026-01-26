@@ -173,10 +173,11 @@ impl TelemetryRecorder {
         let enabled = !do_not_track && telemetry_enabled;
 
         // Get or generate distinct_id
+        // Ephemeral IDs are prefixed with "e-" to distinguish them in analytics
         let distinct_id = if enabled {
             project_id
                 .map(|s| s.to_string())
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+                .unwrap_or_else(|| format!("e-{}", uuid::Uuid::new_v4()))
         } else {
             String::new()
         };
@@ -436,8 +437,10 @@ mod tests {
         env::remove_var("DO_NOT_TRACK"); // Ensure clean state
         let recorder = TelemetryRecorder::new(None, true, TelemetryInfo::new("test"));
         assert!(recorder.enabled);
-        // Should be a valid UUID
-        assert!(uuid::Uuid::parse_str(&recorder.distinct_id).is_ok());
+        // Should be prefixed with "e-" and contain a valid UUID
+        assert!(recorder.distinct_id.starts_with("e-"));
+        let uuid_part = recorder.distinct_id.strip_prefix("e-").unwrap();
+        assert!(uuid::Uuid::parse_str(uuid_part).is_ok());
     }
 
     #[test]
