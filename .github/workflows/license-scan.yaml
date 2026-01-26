@@ -32,6 +32,7 @@ jobs:
             MIT OR GPL
           # Full line exceptions – if the entire line matches exactly, skip it.
           LINE_EXCEPTIONS: |
+            AGPL-3.0 (1): spawn-db
             AGPL-3.0-only (1): spawn-db
         run: |
           set -euo pipefail
