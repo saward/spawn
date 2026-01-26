@@ -3,7 +3,7 @@ use futures::TryStreamExt;
 use opendal::services::Memory;
 use opendal::Operator;
 use pretty_assertions::assert_eq;
-use spawn::{
+use spawn_db::{
     commands::{BuildMigration, Command, NewMigration, Outcome, PinMigration},
     config::{Config, ConfigLoaderSaver},
     engine::{DatabaseConfig, EngineType},

@@ -2,9 +2,9 @@ use anyhow::Result;
 use clap::Parser;
 use opendal::services::Fs;
 use opendal::Operator;
-use spawn::cli::{run_cli, Cli};
-use spawn::commands::{Outcome, TelemetryDescribe};
-use spawn::telemetry::{self, CommandStatus, TelemetryRecorder};
+use spawn_db::cli::{run_cli, Cli};
+use spawn_db::commands::{Outcome, TelemetryDescribe};
+use spawn_db::telemetry::{self, CommandStatus, TelemetryRecorder};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
