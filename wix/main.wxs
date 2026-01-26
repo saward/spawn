@@ -60,7 +60,7 @@
 
     <Product
         Id='*'
-        Name='spawn'
+        Name='spawn-db'
         UpgradeCode='EDDD3448-8691-47B5-B21C-BBB6BD3FA1AE'
         Manufacturer='Mark Saward'
         Language='1033'
@@ -83,11 +83,11 @@
             DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
 
         <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
-        <Property Id='DiskPrompt' Value='spawn Installation'/>
+        <Property Id='DiskPrompt' Value='spawn-db Installation'/>
 
         <Directory Id='TARGETDIR' Name='SourceDir'>
             <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
-                <Directory Id='APPLICATIONFOLDER' Name='spawn'>
+                <Directory Id='APPLICATIONFOLDER' Name='spawn-db'>
                     
                     <!--
                       Enabling the license sidecar file in the installer is a four step process:
