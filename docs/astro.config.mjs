@@ -7,6 +7,7 @@ import cloudflare from "@astrojs/cloudflare";
 // https://astro.build/config
 export default defineConfig({
   site: "https://docs.spawn.dev",
+  server: { port: 4321 },
 
   integrations: [
     starlight({
