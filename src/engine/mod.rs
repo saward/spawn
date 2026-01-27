@@ -24,6 +24,16 @@ impl MigrationStatus {
             MigrationStatus::Failure => "FAILURE",
         }
     }
+
+    /// Parse a MigrationStatus from a string representation
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "SUCCESS" => Some(MigrationStatus::Success),
+            "ATTEMPTED" => Some(MigrationStatus::Attempted),
+            "FAILURE" => Some(MigrationStatus::Failure),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for MigrationStatus {
@@ -68,6 +78,15 @@ pub struct ExistingMigrationInfo {
     pub last_status: MigrationHistoryStatus,
     pub last_activity: String,
     pub checksum: String,
+}
+
+/// Database information about a migration
+#[derive(Debug, Clone)]
+pub struct MigrationDbInfo {
+    pub migration_name: String,
+    pub last_status: Option<MigrationHistoryStatus>,
+    pub last_activity: Option<String>,
+    pub checksum: Option<String>,
 }
 
 /// Errors specific to migration operations
@@ -282,4 +301,12 @@ pub trait Engine: Send + Sync {
         migration_name: &str,
         namespace: &str,
     ) -> MigrationResult<String>;
+
+    /// Get database information for all migrations in the given namespace.
+    /// If namespace is None, returns migrations from all namespaces.
+    /// Returns a list of migrations that exist in the database with their latest history entry.
+    async fn get_migrations_from_db(
+        &self,
+        namespace: Option<&str>,
+    ) -> MigrationResult<Vec<MigrationDbInfo>>;
 }

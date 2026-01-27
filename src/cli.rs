@@ -1,6 +1,7 @@
 use crate::commands::{
     AdoptMigration, ApplyMigration, BuildMigration, BuildTest, Command, CompareTests, ExpectTest,
-    Init, NewMigration, NewTest, Outcome, PinMigration, RunTest, TelemetryDescribe, TelemetryInfo,
+    Init, MigrationStatus, NewMigration, NewTest, Outcome, PinMigration, RunTest,
+    TelemetryDescribe, TelemetryInfo,
 };
 use crate::config::Config;
 use opendal::Operator;
@@ -123,6 +124,8 @@ pub enum MigrationCommands {
         /// Migration to adopt
         migration: String,
     },
+    /// Show the status of all migrations
+    Status,
 }
 
 impl TelemetryDescribe for MigrationCommands {
@@ -146,6 +149,7 @@ impl TelemetryDescribe for MigrationCommands {
                 ("apply_all", migration.is_none().to_string()),
             ]),
             MigrationCommands::Adopt { .. } => TelemetryInfo::new("adopt"),
+            MigrationCommands::Status => TelemetryInfo::new("status"),
         }
     }
 }
@@ -313,6 +317,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                 Some(MigrationCommands::Adopt { migration }) => {
                     AdoptMigration { migration }.execute(config).await
                 }
+                Some(MigrationCommands::Status) => MigrationStatus.execute(config).await,
                 None => {
                     eprintln!("No migration subcommand specified");
                     Ok(Outcome::Unimplemented)

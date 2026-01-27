@@ -52,11 +52,18 @@ impl PSQL {
 
         let psql_command = resolve_command_spec(command_spec).await?;
 
-        Ok(Box::new(Self {
+        let eng = Box::new(Self {
             psql_command,
             spawn_schema: config.spawn_schema.clone(),
             db_config: config.clone(),
-        }))
+        });
+
+        // Ensure we have latest schema:
+        eng.update_schema()
+            .await
+            .map_err(MigrationError::Database)?;
+
+        Ok(eng)
     }
 
     fn spawn_schema_literal(&self) -> EscapedLiteral {
@@ -165,10 +172,6 @@ impl Engine for PSQL {
         pin_hash: Option<String>,
         namespace: &str,
     ) -> MigrationResult<String> {
-        // Ensure we have latest schema:
-        self.update_schema()
-            .await
-            .map_err(MigrationError::Database)?;
         self.apply_and_record_migration_v1(
             migration_name,
             write_fn,
@@ -183,11 +186,6 @@ impl Engine for PSQL {
         migration_name: &str,
         namespace: &str,
     ) -> MigrationResult<String> {
-        // Ensure we have latest schema:
-        self.update_schema()
-            .await
-            .map_err(MigrationError::Database)?;
-
         let namespace_lit = EscapedLiteral::new(namespace);
 
         // Check if migration already exists in history
@@ -230,6 +228,89 @@ impl Engine for PSQL {
             "Migration '{}' adopted successfully",
             migration_name
         ))
+    }
+
+    async fn get_migrations_from_db(
+        &self,
+        namespace: Option<&str>,
+    ) -> MigrationResult<Vec<crate::engine::MigrationDbInfo>> {
+        use serde::Deserialize;
+
+        // Build the query with optional namespace filter
+        let namespace_lit = namespace.map(|ns| EscapedLiteral::new(ns));
+        let query = sql_query!(
+            r#"
+            SELECT json_agg(row_to_json(t))
+            FROM (
+                SELECT DISTINCT ON (m.name)
+                    m.name as migration_name,
+                    mh.status_id_status as last_status,
+                    mh.activity_id_activity as last_activity,
+                    encode(mh.checksum, 'hex') as checksum
+                FROM {}.migration m
+                LEFT JOIN {}.migration_history mh ON m.migration_id = mh.migration_id_migration
+                WHERE {} IS NULL OR m.namespace = {}
+                ORDER BY m.name, mh.created_at DESC NULLS LAST
+            ) t
+            "#,
+            self.spawn_schema_ident(),
+            self.spawn_schema_ident(),
+            namespace_lit,
+            namespace_lit
+        );
+
+        let output = self
+            .execute_sql(&query, Some("unaligned"))
+            .await
+            .map_err(MigrationError::Database)?;
+
+        // Define a struct for JSON deserialization
+        #[derive(Deserialize)]
+        struct MigrationRow {
+            migration_name: String,
+            last_status: Option<String>,
+            last_activity: Option<String>,
+            checksum: Option<String>,
+        }
+
+        // Parse the JSON output
+        let json_str = output.trim();
+
+        // Handle case where there are no migrations (json_agg returns null)
+        if json_str == "null" || json_str.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows: Vec<MigrationRow> = serde_json::from_str(json_str).map_err(|e| {
+            MigrationError::Database(anyhow::anyhow!(
+                "Failed to parse JSON from database (output: '{}'): {}",
+                json_str,
+                e
+            ))
+        })?;
+
+        // Convert to MigrationDbInfo
+        let mut results: Vec<crate::engine::MigrationDbInfo> = rows
+            .into_iter()
+            .map(|row| {
+                let status = row
+                    .last_status
+                    .as_deref()
+                    .and_then(MigrationHistoryStatus::from_str);
+
+                crate::engine::MigrationDbInfo {
+                    migration_name: row.migration_name,
+                    last_status: status,
+                    last_activity: row.last_activity,
+                    checksum: row.checksum,
+                }
+            })
+            .collect();
+
+        // Sort by migration name for consistent output
+        results.sort_by(|a, b| a.migration_name.cmp(&b.migration_name));
+
+        Ok(results)
     }
 }
 
