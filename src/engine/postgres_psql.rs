@@ -243,48 +243,28 @@ impl Engine for PSQL {
             .await
             .map_err(MigrationError::Database)?;
 
-        // Build the query based on whether namespace is provided
-        let query = if let Some(ns) = namespace {
-            let namespace_lit = EscapedLiteral::new(ns);
-            sql_query!(
-                r#"
-                SELECT json_agg(row_to_json(t))
-                FROM (
-                    SELECT DISTINCT ON (m.name)
-                        m.name as migration_name,
-                        mh.status_id_status as last_status,
-                        mh.activity_id_activity as last_activity,
-                        encode(mh.checksum, 'hex') as checksum
-                    FROM {}.migration m
-                    LEFT JOIN {}.migration_history mh ON m.migration_id = mh.migration_id_migration
-                    WHERE m.namespace = {}
-                    ORDER BY m.name, mh.created_at DESC NULLS LAST
-                ) t
-                "#,
-                self.spawn_schema_ident(),
-                self.spawn_schema_ident(),
-                namespace_lit
-            )
-        } else {
-            // No namespace filter - return all
-            sql_query!(
-                r#"
-                SELECT json_agg(row_to_json(t))
-                FROM (
-                    SELECT DISTINCT ON (m.name)
-                        m.name as migration_name,
-                        mh.status_id_status as last_status,
-                        mh.activity_id_activity as last_activity,
-                        encode(mh.checksum, 'hex') as checksum
-                    FROM {}.migration m
-                    LEFT JOIN {}.migration_history mh ON m.migration_id = mh.migration_id_migration
-                    ORDER BY m.name, mh.created_at DESC NULLS LAST
-                ) t
-                "#,
-                self.spawn_schema_ident(),
-                self.spawn_schema_ident()
-            )
-        };
+        // Build the query with optional namespace filter
+        let namespace_lit = namespace.map(|ns| EscapedLiteral::new(ns));
+        let query = sql_query!(
+            r#"
+            SELECT json_agg(row_to_json(t))
+            FROM (
+                SELECT DISTINCT ON (m.name)
+                    m.name as migration_name,
+                    mh.status_id_status as last_status,
+                    mh.activity_id_activity as last_activity,
+                    encode(mh.checksum, 'hex') as checksum
+                FROM {}.migration m
+                LEFT JOIN {}.migration_history mh ON m.migration_id = mh.migration_id_migration
+                WHERE {} IS NULL OR m.namespace = {}
+                ORDER BY m.name, mh.created_at DESC NULLS LAST
+            ) t
+            "#,
+            self.spawn_schema_ident(),
+            self.spawn_schema_ident(),
+            namespace_lit,
+            namespace_lit
+        );
 
         let output = self
             .execute_sql(&query, Some("unaligned"))
@@ -320,12 +300,10 @@ impl Engine for PSQL {
         let mut results: Vec<crate::engine::MigrationDbInfo> = rows
             .into_iter()
             .map(|row| {
-                let status = row.last_status.and_then(|s| match s.as_str() {
-                    "SUCCESS" => Some(MigrationHistoryStatus::Success),
-                    "ATTEMPTED" => Some(MigrationHistoryStatus::Attempted),
-                    "FAILURE" => Some(MigrationHistoryStatus::Failure),
-                    _ => None,
-                });
+                let status = row
+                    .last_status
+                    .as_deref()
+                    .and_then(MigrationHistoryStatus::from_str);
 
                 crate::engine::MigrationDbInfo {
                     migration_name: row.migration_name,

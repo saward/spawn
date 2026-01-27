@@ -24,6 +24,16 @@ impl MigrationStatus {
             MigrationStatus::Failure => "FAILURE",
         }
     }
+
+    /// Parse a MigrationStatus from a string representation
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "SUCCESS" => Some(MigrationStatus::Success),
+            "ATTEMPTED" => Some(MigrationStatus::Attempted),
+            "FAILURE" => Some(MigrationStatus::Failure),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for MigrationStatus {

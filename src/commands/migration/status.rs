@@ -29,7 +29,7 @@ impl TelemetryDescribe for MigrationStatus {
 
 impl Command for MigrationStatus {
     async fn execute(&self, config: &Config) -> Result<Outcome> {
-        let status_rows = get_combined_migration_status(config, "default").await?;
+        let status_rows = get_combined_migration_status(config, Some("default")).await?;
 
         if status_rows.is_empty() {
             println!("No migrations found");

@@ -31,10 +31,11 @@ pub struct MigrationStatusRow {
 }
 
 /// Get the combined status of all migrations from both filesystem and database.
+/// If namespace is None, returns migrations from all namespaces.
 /// This is shared logic that can be used by multiple commands (status, apply_all, etc.)
 pub async fn get_combined_migration_status(
     config: &Config,
-    namespace: &str,
+    namespace: Option<&str>,
 ) -> Result<Vec<MigrationStatusRow>> {
     let engine = config.new_engine().await?;
     let op = config.operator();
@@ -46,19 +47,24 @@ pub async fn get_combined_migration_status(
 
     let fs_migrations = store.list_migrations().await?;
 
-    // Extract migration names from paths
+    // Extract migration names from paths, filtering out the parent directory
     let fs_migration_names: HashSet<String> = fs_migrations
         .iter()
         .filter_map(|path| {
-            path.trim_end_matches('/')
-                .rsplit('/')
-                .next()
-                .map(|s| s.to_string())
+            let name = path.trim_end_matches('/').rsplit('/').next()?;
+            // Filter out entries that don't look like migration names
+            // Migration names should start with a timestamp (digits) or be non-empty
+            // Also filter out "migrations" itself which is the parent folder
+            if name.is_empty() || name == "migrations" {
+                None
+            } else {
+                Some(name.to_string())
+            }
         })
         .collect();
 
     // Get all migrations from database with their latest history entry
-    let db_migrations_list = engine.get_migrations_from_db(Some(namespace)).await?;
+    let db_migrations_list = engine.get_migrations_from_db(namespace).await?;
 
     // Convert to a map for easier lookup
     let db_migrations: HashMap<String, MigrationDbInfo> = db_migrations_list

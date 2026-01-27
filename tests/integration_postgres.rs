@@ -464,7 +464,8 @@ COMMIT;"#
     // Now get the combined status
     let config = helper.migration_helper.load_config().await?;
     let status_rows =
-        spawn_db::commands::migration::get_combined_migration_status(&config, "default").await?;
+        spawn_db::commands::migration::get_combined_migration_status(&config, Some("default"))
+            .await?;
 
     // Verify we have all three migrations
     assert_eq!(status_rows.len(), 3, "Should have 3 migrations in status");
