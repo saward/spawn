@@ -84,7 +84,7 @@ pub enum MigrationError {
         \n\
         TO RESOLVE:\n\
         1. Verify the migration was applied by checking your database schema\n\
-        2. Manually insert a record into {schema}.migration and {schema}.migration_history\n\
+        2. Run `spawn migration adopt <name>` to record the migration as adopted\n\
         3. Investigate why the recording failed (connection issue? permissions?)\n\
         \n\
         ********************************************************************************\n"
@@ -244,6 +244,15 @@ pub trait Engine: Send + Sync {
         migration_name: &str,
         write_fn: WriterFn,
         pin_hash: Option<String>,
+        namespace: &str,
+    ) -> MigrationResult<String>;
+
+    /// Adopt a migration without applying it.
+    /// Creates a dummy table entry marking the migration as having been applied manually.
+    /// Sets checksum to empty and status to 'ADOPTED'.
+    async fn migration_adopt(
+        &self,
+        migration_name: &str,
         namespace: &str,
     ) -> MigrationResult<String>;
 }

@@ -176,6 +176,60 @@ impl Engine for PSQL {
         )
         .await
     }
+
+    async fn migration_adopt(
+        &self,
+        migration_name: &str,
+        namespace: &str,
+    ) -> MigrationResult<String> {
+        // Ensure we have latest schema:
+        self.update_schema()
+            .await
+            .map_err(MigrationError::Database)?;
+
+        let namespace_lit = EscapedLiteral::new(namespace);
+
+        // Check if migration already exists in history
+        let existing_status = self
+            .get_migration_status(migration_name, &namespace_lit)
+            .await
+            .map_err(MigrationError::Database)?;
+
+        if let Some(info) = existing_status {
+            let name = migration_name.to_string();
+            let ns = namespace_lit.raw_value().to_string();
+
+            match info.last_status {
+                MigrationHistoryStatus::Success => {
+                    return Err(MigrationError::AlreadyApplied {
+                        name,
+                        namespace: ns,
+                        info,
+                    });
+                }
+                // Allow adopting migrations that previously failed or were attempted.
+                // This is one of the ways to resolve: fix manually and mark as adopted.
+                MigrationHistoryStatus::Attempted | MigrationHistoryStatus::Failure => {}
+            }
+        }
+
+        // Record the migration with SUCCESS status, ADOPT activity, empty checksum
+        self.record_migration(
+            migration_name,
+            &namespace_lit,
+            "SUCCESS",
+            "ADOPT",
+            None, // empty checksum
+            None, // no execution time
+            None, // no pin_hash
+        )
+        .await?;
+
+        Ok(format!(
+            "Migration '{}' adopted successfully",
+            migration_name
+        ))
+    }
 }
 
 /// A simple AsyncWrite implementation that appends to a shared Vec<u8>
@@ -469,6 +523,120 @@ impl PSQL {
         }))
     }
 
+    /// Build the SQL query for recording a migration in the tracking tables.
+    fn build_record_migration_query(
+        &self,
+        migration_name: &str,
+        namespace: &EscapedLiteral,
+        status: &str,
+        activity: &str,
+        checksum: Option<&str>,
+        execution_time: Option<f32>,
+        pin_hash: Option<&str>,
+    ) -> EscapedQuery {
+        let schema_ident = self.spawn_schema_ident();
+        let safe_migration_name = EscapedLiteral::new(migration_name);
+        let safe_status = EscapedLiteral::new(status);
+        let safe_activity = EscapedLiteral::new(activity);
+        // If no checksum provided, use empty bytea (decode returns empty bytea for empty string)
+        let checksum_expr = checksum
+            .map(|c| format!("decode('{}', 'hex')", c))
+            .unwrap_or_else(|| "decode('', 'hex')".to_string());
+        let checksum_raw = InsecureRawSql::new(&checksum_expr);
+        let safe_pin_hash = pin_hash.map(|h| EscapedLiteral::new(h));
+
+        let duration_interval = execution_time
+            .map(|d| InsecureRawSql::new(&format!("INTERVAL '{} second'", d)))
+            .unwrap_or_else(|| InsecureRawSql::new("INTERVAL '0 second'"));
+
+        sql_query!(
+            r#"
+BEGIN;
+WITH inserted_migration AS (
+    INSERT INTO {}.migration (name, namespace) VALUES ({}, {})
+    ON CONFLICT (name, namespace) DO UPDATE SET name = EXCLUDED.name
+    RETURNING migration_id
+)
+INSERT INTO {}.migration_history (
+    migration_id_migration,
+    activity_id_activity,
+    created_by,
+    description,
+    status_note,
+    status_id_status,
+    checksum,
+    execution_time,
+    pin_hash
+)
+SELECT
+    migration_id,
+    {},
+    'unused',
+    '',
+    '',
+    {},
+    {},
+    {},
+    {}
+FROM inserted_migration;
+COMMIT;
+"#,
+            schema_ident,
+            safe_migration_name,
+            namespace,
+            schema_ident,
+            safe_activity,
+            safe_status,
+            checksum_raw,
+            duration_interval,
+            safe_pin_hash,
+        )
+    }
+
+    /// Records a migration in the tracking tables using its own psql session.
+    /// Used when there is no existing writer (e.g., adopt).
+    async fn record_migration(
+        &self,
+        migration_name: &str,
+        namespace: &EscapedLiteral,
+        status: &str,
+        activity: &str,
+        checksum: Option<&str>,
+        execution_time: Option<f32>,
+        pin_hash: Option<&str>,
+    ) -> MigrationResult<()> {
+        let record_query = self.build_record_migration_query(
+            migration_name,
+            namespace,
+            status,
+            activity,
+            checksum,
+            execution_time,
+            pin_hash,
+        );
+
+        self.execute_with_writer(
+            Box::new(move |writer| {
+                writer.write_all(record_query.as_str().as_bytes())?;
+                Ok(())
+            }),
+            None,
+        )
+        .await
+        .map_err(|e| match e {
+            EngineError::ExecutionFailed { exit_code, stderr } => {
+                MigrationError::Database(anyhow!(
+                    "Failed to record migration (exit {}): {}",
+                    exit_code,
+                    stderr
+                ))
+            }
+            EngineError::Io(e) => MigrationError::Database(e.into()),
+        })?;
+
+        Ok(())
+    }
+
     // This is versioned because if we change the schema significantly enough
     // later, we'll have to still write earlier migrations to the table using
     // the format of the migration table as it is at that point.
@@ -520,7 +688,10 @@ impl PSQL {
 
         let lock_checksum = migration_lock_key();
 
-        // Prepare values for the closure
+        // Pre-build the record query template parts we need inside the closure.
+        // We pass migration_name/namespace/pin_hash by value since the closure
+        // needs ownership, but we can't call build_record_migration_query yet
+        // because we don't have the checksum or duration until inside the closure.
         let schema_ident = self.spawn_schema_ident();
         let safe_migration_name = EscapedLiteral::new(migration_name);
         let safe_pin_hash = pin_hash.map(|h| EscapedLiteral::new(&h));
@@ -600,7 +771,6 @@ COMMIT;
                     );
 
                     writer.write_all(record_query.as_str().as_bytes())?;
-
                     Ok(())
                 }),
                 None, // No stdout capture for migrations

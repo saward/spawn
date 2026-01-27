@@ -59,11 +59,14 @@ async fn async_main(cli: Cli) -> Result<()> {
 
     // Handle the actual outcome
     match result.outcome? {
-        Outcome::BuiltMigration { content } => {
-            println!("{}", content);
+        Outcome::AdoptedMigration => {
+            println!("Migration has been adopted.");
         }
         Outcome::AppliedMigrations => {
             println!("All migrations applied successfully.");
+        }
+        Outcome::BuiltMigration { content } => {
+            println!("{}", content);
         }
         Outcome::NewMigration(name) => {
             println!("New migration created: {}", name);
