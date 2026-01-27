@@ -775,21 +775,15 @@ impl PSQL {
             }
         }
 
-        // Record duration of execute_sql:
         let start_time = Instant::now();
-
         let lock_checksum = migration_lock_key();
 
-        // Clone values needed inside the closure
-        let migration_name_owned = migration_name.to_string();
-        let namespace_clone = namespace.clone();
-        let schema_ident_raw = self.spawn_schema_ident().raw_value().to_string();
-        let migration_name_for_closure = migration_name_owned.clone();
-        let schema_ident_for_closure = schema_ident_raw.clone();
+        // Use Arc<Mutex<>> to extract checksum from the closure
+        let checksum_result: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let checksum_result_clone = checksum_result.clone();
 
-        // Execute migration and record it in a single psql session
-        // No stdout capture needed for migrations
-        let result = self
+        // Session 1: Run the migration SQL only
+        let migration_result = self
             .execute_with_writer(
                 Box::new(move |writer| {
                     // Acquire advisory lock
@@ -807,55 +801,86 @@ impl PSQL {
                     // Execute the user's write function (streams migration SQL)
                     write_fn(&mut tee_writer)?;
 
-                    // Extract the checksum and get the inner writer back
-                    let (writer, content_checksum) = tee_writer.finish();
+                    // Extract the checksum
+                    let (_writer, content_checksum) = tee_writer.finish();
                     let checksum_hex = format!("{:032x}", content_checksum);
+                    *checksum_result_clone.lock().unwrap() = Some(checksum_hex);
 
-                    // Calculate duration (approximate, since we're in the closure)
-                    let duration = start_time.elapsed().as_secs_f32();
-
-                    // Use the free function to build the record query.
-                    // We're in a sync closure so we can't call async self methods,
-                    // and checksum/duration are only known after the migration runs.
-                    let record_query = build_record_migration_sql(
-                        &schema_ident_for_closure,
-                        &migration_name_for_closure,
-                        &namespace_clone,
-                        MigrationStatus::Success,
-                        MigrationActivity::Apply,
-                        Some(&checksum_hex),
-                        Some(duration),
-                        pin_hash.as_deref(),
-                        None,
-                    );
-
-                    writer.write_all(record_query.as_str().as_bytes())?;
                     Ok(())
                 }),
-                None, // No stdout capture for migrations
+                None,
             )
             .await;
 
-        match result {
-            Ok(()) => Ok("Migration applied successfully".to_string()),
+        let duration = start_time.elapsed().as_secs_f32();
+        let checksum_hex = checksum_result.lock().unwrap().clone();
+
+        // Determine status based on session 1 result
+        let (status, migration_error) = match &migration_result {
+            Ok(()) => (MigrationStatus::Success, None),
             Err(EngineError::ExecutionFailed { exit_code, stderr }) => {
-                // Check if the error is from advisory lock
                 if stderr.contains("Could not acquire advisory lock") {
-                    Err(MigrationError::AdvisoryLock(std::io::Error::new(
+                    return Err(MigrationError::AdvisoryLock(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        stderr,
-                    )))
-                } else {
-                    // Migration might have partially executed - this is a critical state
-                    Err(MigrationError::MigrationAppliedButNotRecorded {
-                        name: migration_name_owned,
-                        namespace: namespace.raw_value().to_string(),
-                        schema: schema_ident_raw,
-                        recording_error: format!("psql exited with code {}: {}", exit_code, stderr),
-                    })
+                        stderr.clone(),
+                    )));
                 }
+                (
+                    MigrationStatus::Failure,
+                    Some(format!("psql exited with code {}: {}", exit_code, stderr)),
+                )
             }
-            Err(EngineError::Io(e)) => Err(MigrationError::Database(e.into())),
+            Err(EngineError::Io(e)) => {
+                return Err(MigrationError::Database(anyhow!(
+                    "IO error running migration: {}",
+                    e
+                )));
+            }
+        };
+
+        // Session 2: Record the outcome (success or failure)
+        let record_result = self
+            .record_migration(
+                migration_name,
+                &namespace,
+                status,
+                MigrationActivity::Apply,
+                checksum_hex.as_deref(),
+                Some(duration),
+                pin_hash.as_deref(),
+                None,
+            )
+            .await;
+
+        // Handle recording failure
+        if let Err(record_err) = record_result {
+            // If migration succeeded but recording failed, that's the critical state
+            if migration_error.is_none() {
+                return Err(MigrationError::NotRecorded {
+                    name: migration_name.to_string(),
+                    migration_outcome: MigrationStatus::Success,
+                    migration_error: None,
+                    recording_error: format!("{}", record_err),
+                });
+            }
+            // Both migration and recording failed
+            return Err(MigrationError::NotRecorded {
+                name: migration_name.to_string(),
+                migration_outcome: MigrationStatus::Failure,
+                migration_error: migration_error.clone(),
+                recording_error: format!("{}", record_err),
+            });
         }
+
+        // If the migration itself failed (but was recorded), return that error
+        if let Some(err_msg) = migration_error {
+            return Err(MigrationError::Database(anyhow!(
+                "Migration '{}' failed: {}",
+                migration_name,
+                err_msg
+            )));
+        }
+
+        Ok("Migration applied successfully".to_string())
     }
 }
