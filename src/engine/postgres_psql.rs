@@ -4,8 +4,8 @@
 
 use crate::config::FolderPather;
 use crate::engine::{
-    DatabaseConfig, Engine, EngineError, ExistingMigrationInfo, MigrationError,
-    MigrationHistoryStatus, MigrationResult, StdoutWriter, WriterFn,
+    resolve_command_spec, DatabaseConfig, Engine, EngineError, ExistingMigrationInfo,
+    MigrationError, MigrationHistoryStatus, MigrationResult, StdoutWriter, WriterFn,
 };
 use crate::escape::{EscapedIdentifier, EscapedLiteral, EscapedQuery, InsecureRawSql};
 use crate::sql_query;
@@ -44,10 +44,12 @@ static SPAWN_NAMESPACE: &str = "spawn";
 
 impl PSQL {
     pub async fn new(config: &DatabaseConfig) -> Result<Box<dyn Engine>> {
-        let psql_command = config
+        let command_spec = config
             .command
             .clone()
             .ok_or(anyhow!("Command for database config must be defined"))?;
+
+        let psql_command = resolve_command_spec(command_spec).await?;
 
         Ok(Box::new(Self {
             psql_command,

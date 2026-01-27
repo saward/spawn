@@ -59,7 +59,7 @@ impl Command for ApplyMigration {
                         }
                         Err(MigrationError::Database(e)) => {
                             return Err(
-                                anyhow!("Failed applying migration {}", &migration).context(e)
+                                e.context(format!("Failed applying migration {}", &migration))
                             );
                         }
                         Err(MigrationError::AdvisoryLock(e)) => {

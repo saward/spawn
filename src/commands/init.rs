@@ -1,6 +1,6 @@
 use crate::commands::{Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::ConfigLoaderSaver;
-use crate::engine::{DatabaseConfig, EngineType};
+use crate::engine::{CommandSpec, DatabaseConfig, EngineType};
 use anyhow::{anyhow, Result};
 use opendal::Operator;
 use std::collections::HashMap;
@@ -42,16 +42,18 @@ impl Init {
                 spawn_database: "spawn".to_string(),
                 spawn_schema: "_spawn".to_string(),
                 environment: "dev".to_string(),
-                command: Some(vec![
-                    "docker".to_string(),
-                    "exec".to_string(),
-                    "-i".to_string(),
-                    "spawn".to_string(),
-                    "psql".to_string(),
-                    "-U".to_string(),
-                    "spawn".to_string(),
-                    "spawn".to_string(),
-                ]),
+                command: Some(CommandSpec::Direct {
+                    direct: vec![
+                        "docker".to_string(),
+                        "exec".to_string(),
+                        "-i".to_string(),
+                        "spawn".to_string(),
+                        "psql".to_string(),
+                        "-U".to_string(),
+                        "spawn".to_string(),
+                        "spawn".to_string(),
+                    ],
+                }),
             },
         );
 
