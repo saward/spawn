@@ -3,8 +3,6 @@ title: Database Connections
 description: How to configure database connections in spawn.toml
 ---
 
-## Overview
-
 Spawn requires a database connection to apply migrations and run tests. Database connections are configured in your `spawn.toml` file under the `[databases]` section.
 
 ## Basic Configuration
@@ -14,7 +12,7 @@ Each database configuration requires:
 - `engine`: The database engine type (currently only `"postgres-psql"`)
 - `spawn_database`: The database name to connect to
 - `spawn_schema`: The schema where spawn stores migration tracking (default: `"_spawn"`)
-- `environment`: Environment name (e.g., `"dev"`, `"staging"`, `"prod"`)
+- `environment`: Environment name (e.g., `"dev"`, `"prod"`)
 - `command`: How to execute SQL commands (see below)
 
 ## Command Configuration
@@ -82,22 +80,17 @@ The `provider` array specifies a command that outputs a shell command string to 
 
 ### The Problem with Direct gcloud SSH
 
-When connecting to Google Cloud SQL instances via SSH, using `gcloud compute ssh` directly works but is **significantly slower** because gcloud must:
+When connecting to Google Cloud SQL instances via SSH, using `gcloud compute ssh` directly works but is **significantly slower** because gcloud must.
 
-1. Look up the instance details
-2. Retrieve SSH keys
-3. Configure SSH options
-4. Establish the connection
-
-This overhead happens **every time** spawn executes SQL, making migrations and tests painfully slow.
+This overhead happens **every time** spawn executes SQL, making migrations and tests much slower.
 
 ### Solution: Using the Provider Pattern
 
 The provider pattern resolves the SSH command once using `gcloud compute ssh --dry-run`, then reuses the underlying SSH command directly for all subsequent operations.
 
-#### Step 1: Test the Direct Approach (Slow)
+#### Method 1: Test the Direct Approach (Slow)
 
-First, let's see the slow approach for comparison:
+You can use the gcloud command directly, but this will be called multiple times during a single `spawn migration apply` command.
 
 ```toml
 [databases.staging_slow]
@@ -120,11 +113,9 @@ command = {
 }
 ```
 
-**Performance**: ~2-4 seconds per SQL execution (slow!)
+#### Method 2: Use the Provider Pattern (Fast)
 
-#### Step 2: Use the Provider Pattern (Fast)
-
-Now configure spawn to use the provider pattern:
+You can also use gcloud to provide the underlying ssh command needed to connect, which will be resolved just once, and then every connection to the database will use the provided ssh command directly.
 
 ```toml
 [databases.staging]
@@ -144,8 +135,6 @@ command = {
     append = ["-T", "sudo", "-u", "postgres", "psql", "myapp"]
 }
 ```
-
-**Performance**: ~0.1-0.3 seconds per SQL execution (fast!)
 
 #### How It Works
 
@@ -168,22 +157,6 @@ command = {
    ```
 
 4. **Reuse**: This final command is cached and reused for all SQL operations in that spawn session.
-
-### Testing Your Provider Setup
-
-You can test the provider command directly to see what SSH command it generates:
-
-```bash
-gcloud compute ssh --zone us-central1-a my-sql-proxy-vm --project my-project --dry-run
-```
-
-Expected output (the underlying SSH command):
-
-```
-ssh -t -i /home/user/.ssh/google_compute_engine -o UserKnownHostsFile=/home/user/.ssh/google_compute_known_hosts user@35.123.45.67
-```
-
-Spawn will parse this output and append your `append` arguments to create the final command.
 
 ### Complete Example: Multiple Environments
 
@@ -244,13 +217,13 @@ Usage:
 
 ```bash
 # Use local database (default)
-spawn migration apply
+spawn migration apply <migration name>
 
 # Use staging database
-spawn --database staging migration apply
+spawn --database staging migration apply <migration name>
 
 # Use production database
-spawn --database production migration apply
+spawn --database production migration apply <migration name>
 ```
 
 ## Advanced Configuration
@@ -282,55 +255,6 @@ INSERT INTO users (email) VALUES ('test@example.com');
 
 COMMIT;
 ```
-
-## Troubleshooting
-
-### Testing Connection
-
-Test your database connection:
-
-```bash
-spawn --database mydb migration build some-migration
-```
-
-If this succeeds, your connection is configured correctly.
-
-### Google Cloud SSH Issues
-
-If the provider isn't working:
-
-1. Test the provider command directly to ensure it outputs a valid SSH command:
-
-   ```bash
-   gcloud compute ssh --zone ZONE INSTANCE --project PROJECT --dry-run
-   ```
-
-   This should output an SSH command like:
-
-   ```
-   ssh -t -i /path/to/key -o ... user@ip
-   ```
-
-2. Ensure you're authenticated:
-
-   ```bash
-   gcloud auth login
-   ```
-
-### Docker Connection Issues
-
-If Docker connections fail:
-
-1. Verify container is running:
-
-   ```bash
-   docker ps | grep your-container
-   ```
-
-2. Test psql directly:
-   ```bash
-   docker exec -i your-container psql -U postgres dbname -c "SELECT 1;"
-   ```
 
 ## Security Considerations
 
