@@ -27,6 +27,12 @@ export default defineConfig({
             { label: "The Magic of Spawn", slug: "getting-started/magic" },
           ],
         },
+        {
+          label: "Guides",
+          items: [
+            { label: "Manage Databases", slug: "guides/manage-databases" },
+          ],
+        },
         // {
         //   label: "Reference",
         //   autogenerate: { directory: "reference" },
