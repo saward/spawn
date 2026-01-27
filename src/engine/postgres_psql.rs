@@ -5,7 +5,8 @@
 use crate::config::FolderPather;
 use crate::engine::{
     resolve_command_spec, DatabaseConfig, Engine, EngineError, ExistingMigrationInfo,
-    MigrationError, MigrationHistoryStatus, MigrationResult, StdoutWriter, WriterFn,
+    MigrationActivity, MigrationError, MigrationHistoryStatus, MigrationResult, MigrationStatus,
+    StdoutWriter, WriterFn,
 };
 use crate::escape::{EscapedIdentifier, EscapedLiteral, EscapedQuery, InsecureRawSql};
 use crate::sql_query;
@@ -217,8 +218,8 @@ impl Engine for PSQL {
         self.record_migration(
             migration_name,
             &namespace_lit,
-            "SUCCESS",
-            "ADOPT",
+            MigrationStatus::Success,
+            MigrationActivity::Adopt,
             None, // empty checksum
             None, // no execution time
             None, // no pin_hash
@@ -297,16 +298,16 @@ fn build_record_migration_sql(
     spawn_schema: &str,
     migration_name: &str,
     namespace: &EscapedLiteral,
-    status: &str,
-    activity: &str,
+    status: MigrationStatus,
+    activity: MigrationActivity,
     checksum: Option<&str>,
     execution_time: Option<f32>,
     pin_hash: Option<&str>,
 ) -> EscapedQuery {
     let schema_ident = EscapedIdentifier::new(spawn_schema);
     let safe_migration_name = EscapedLiteral::new(migration_name);
-    let safe_status = EscapedLiteral::new(status);
-    let safe_activity = EscapedLiteral::new(activity);
+    let safe_status = EscapedLiteral::new(status.as_str());
+    let safe_activity = EscapedLiteral::new(activity.as_str());
     // If no checksum provided, use empty bytea (decode returns empty bytea for empty string)
     let checksum_expr = checksum
         .map(|c| format!("decode('{}', 'hex')", c))
@@ -601,8 +602,8 @@ impl PSQL {
         &self,
         migration_name: &str,
         namespace: &EscapedLiteral,
-        status: &str,
-        activity: &str,
+        status: MigrationStatus,
+        activity: MigrationActivity,
         checksum: Option<&str>,
         execution_time: Option<f32>,
         pin_hash: Option<&str>,
@@ -734,8 +735,8 @@ impl PSQL {
                         &schema_ident_for_closure,
                         &migration_name_for_closure,
                         &namespace_clone,
-                        "SUCCESS",
-                        "APPLY",
+                        MigrationStatus::Success,
+                        MigrationActivity::Apply,
                         Some(&checksum_hex),
                         Some(duration),
                         pin_hash_str.as_deref(),

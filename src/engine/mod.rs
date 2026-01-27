@@ -7,23 +7,58 @@ use tokio::process::Command;
 
 pub mod postgres_psql;
 
-/// Status of a previous migration attempt
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MigrationHistoryStatus {
+/// Status of a migration in the tracking tables
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MigrationStatus {
     Success,
     Attempted,
     Failure,
 }
 
-impl fmt::Display for MigrationHistoryStatus {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl MigrationStatus {
+    /// Returns the string representation used in the database
+    pub fn as_str(&self) -> &'static str {
         match self {
-            MigrationHistoryStatus::Success => write!(f, "SUCCESS"),
-            MigrationHistoryStatus::Attempted => write!(f, "ATTEMPTED"),
-            MigrationHistoryStatus::Failure => write!(f, "FAILURE"),
+            MigrationStatus::Success => "SUCCESS",
+            MigrationStatus::Attempted => "ATTEMPTED",
+            MigrationStatus::Failure => "FAILURE",
         }
     }
 }
+
+impl fmt::Display for MigrationStatus {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Activity type for a migration operation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MigrationActivity {
+    Apply,
+    Adopt,
+    Revert,
+}
+
+impl MigrationActivity {
+    /// Returns the string representation used in the database
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MigrationActivity::Apply => "APPLY",
+            MigrationActivity::Adopt => "ADOPT",
+            MigrationActivity::Revert => "REVERT",
+        }
+    }
+}
+
+impl fmt::Display for MigrationActivity {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Legacy type alias for backwards compatibility
+pub type MigrationHistoryStatus = MigrationStatus;
 
 /// Information about an existing migration entry
 #[derive(Debug, Clone)]
@@ -210,14 +245,6 @@ async fn resolve_provider(provider: &[String]) -> Result<Vec<String>> {
     //
     // Uses the `shlex` crate for proper POSIX shell-style parsing.
     shlex::split(trimmed).ok_or_else(|| anyhow!("Failed to parse shell command: {}", trimmed))
-}
-
-pub struct MigrationStatus {
-    _applied: bool,
-}
-
-pub struct EngineStatus {
-    _connection_successful: Option<bool>,
 }
 
 /// Type alias for the writer closure used in execute_with_writer
