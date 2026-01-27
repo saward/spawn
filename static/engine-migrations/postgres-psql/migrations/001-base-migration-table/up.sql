@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS {{variables.schema|escape_identifier}}.migration_hist
 
 INSERT INTO {{variables.schema|escape_identifier}}.activity (activity_id) VALUES
 ('APPLY'),
+('ADOPT'),
 ('REVERT')
 ON CONFLICT DO NOTHING;
 

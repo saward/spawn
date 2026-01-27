@@ -41,7 +41,7 @@ use migration_build::MigrationTestHelper;
 use opendal::services::Memory;
 use opendal::Operator;
 use spawn_db::{
-    commands::{ApplyMigration, Command, CompareTests, ExpectTest, Outcome},
+    commands::{AdoptMigration, ApplyMigration, Command, CompareTests, ExpectTest, Outcome},
     config::ConfigLoaderSaver,
     engine::{CommandSpec, DatabaseConfig, EngineType},
 };
@@ -309,6 +309,21 @@ impl IntegrationTestHelper {
         match outcome {
             Outcome::AppliedMigrations => Ok(()),
             _ => Err(anyhow::anyhow!("Unexpected outcome from migration apply")),
+        }
+    }
+
+    /// Adopts a migration without applying it
+    pub async fn adopt_migration(&self, migration_name: &str) -> Result<()> {
+        let config = self.migration_helper.load_config().await?;
+        let cmd = AdoptMigration {
+            migration: migration_name.to_string(),
+        };
+
+        let outcome = cmd.execute(&config).await?;
+
+        match outcome {
+            Outcome::AdoptedMigration => Ok(()),
+            _ => Err(anyhow::anyhow!("Unexpected outcome from migration adopt")),
         }
     }
 
@@ -1041,6 +1056,74 @@ COMMIT;"#,
     assert!(
         !helper.table_exists("public", &test_table)?,
         "Table should NOT exist because migration should have been blocked by lock"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_migration_adopt() -> Result<()> {
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new("test_migration_adopt", None).await?;
+
+    // Create a migration but don't apply it through spawn
+    let migration_content = r#"BEGIN;
+
+CREATE TABLE adopted_test (
+    id SERIAL PRIMARY KEY,
+    value TEXT
+);
+
+COMMIT;"#;
+
+    let migration_name = helper
+        .migration_helper
+        .create_migration_manual("adopted-migration", migration_content.to_string())
+        .await?;
+
+    // Manually run the migration SQL (simulating manual intervention)
+    helper.execute_sql(migration_content)?;
+
+    // Verify the table exists
+    assert!(
+        helper.table_exists("public", "adopted_test")?,
+        "adopted_test table should exist after manual SQL execution"
+    );
+
+    // Now adopt the migration (mark it as applied without running it)
+    helper.adopt_migration(&migration_name).await?;
+
+    // Verify the migration was recorded in history with ADOPT activity
+    let history = helper.execute_sql(
+        "SELECT activity_id_activity, status_id_status FROM _spawn.migration_history ORDER BY migration_history_id DESC LIMIT 1;"
+    )?;
+
+    assert!(
+        history.contains("ADOPT"),
+        "Migration history should show ADOPT activity, got: {}",
+        history
+    );
+    assert!(
+        history.contains("SUCCESS"),
+        "Migration history should show SUCCESS status, got: {}",
+        history
+    );
+
+    // Verify adopting the same migration again is idempotent (returns success)
+    helper.adopt_migration(&migration_name).await?;
+
+    // Verify we can also adopt a migration even if the file doesn't exist
+    // (useful for recording manually-run SQL that wasn't tracked)
+    helper.adopt_migration("manual-sql-no-file").await?;
+
+    // Verify it was recorded
+    let count = helper
+        .execute_sql("SELECT COUNT(*) FROM _spawn.migration WHERE name = 'manual-sql-no-file';")?;
+    assert!(
+        count.contains("1"),
+        "manual-sql-no-file should be recorded in migration table"
     );
 
     Ok(())
