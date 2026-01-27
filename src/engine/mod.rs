@@ -300,6 +300,7 @@ pub trait Engine: Send + Sync {
         &self,
         migration_name: &str,
         namespace: &str,
+        description: &str,
     ) -> MigrationResult<String>;
 
     /// Get database information for all migrations in the given namespace.

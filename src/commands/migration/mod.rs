@@ -12,11 +12,14 @@ pub use new::NewMigration;
 pub use pin::PinMigration;
 pub use status::MigrationStatus;
 
+pub const DEFAULT_NAMESPACE: &str = "default";
+
 use crate::config::Config;
 use crate::engine::{MigrationDbInfo, MigrationHistoryStatus};
 use crate::store::pinner::latest::Latest;
 use crate::store::Store;
 use anyhow::Result;
+use dialoguer::Confirm;
 use std::collections::{HashMap, HashSet};
 
 /// Combined status of a migration from both filesystem and database
@@ -101,4 +104,69 @@ pub async fn get_combined_migration_status(
     results.sort_by(|a, b| a.migration_name.cmp(&b.migration_name));
 
     Ok(results)
+}
+
+/// Get pending migrations (no status, exists on filesystem) and prompt the user
+/// to confirm. Returns `Ok(Some(migrations))` if confirmed, `Ok(None)` if
+/// aborted or empty.
+pub async fn get_pending_and_confirm(
+    config: &Config,
+    action: &str,
+    yes: bool,
+) -> Result<Option<Vec<String>>> {
+    let status_rows = get_combined_migration_status(config, Some(DEFAULT_NAMESPACE)).await?;
+
+    let pending: Vec<String> = status_rows
+        .into_iter()
+        .filter(|row| row.last_status.is_none() && row.exists_in_filesystem)
+        .map(|row| row.migration_name)
+        .collect();
+
+    if pending.is_empty() {
+        println!("No pending migrations to {}.", action);
+        return Ok(None);
+    }
+
+    let db_config = config.db_config()?;
+    let target = config.database.as_deref().unwrap_or("unknown");
+    let env = &db_config.environment;
+
+    println!();
+    println!("TARGET: {}", target);
+    if env.starts_with("prod") {
+        println!("ENVIRONMENT: {} \u{26a0}\u{fe0f}", env);
+    } else {
+        println!("ENVIRONMENT: {}", env);
+    }
+    println!();
+    println!(
+        "The following {} migration{} will be {}:",
+        pending.len(),
+        if pending.len() == 1 { "" } else { "s" },
+        if action == "apply" {
+            "applied"
+        } else {
+            "adopted"
+        },
+    );
+    for (i, name) in pending.iter().enumerate() {
+        println!("  {}. {}", i + 1, name);
+    }
+    println!();
+
+    if !yes {
+        let prompt = format!("Do you want to {} these migrations?", action);
+        let confirmed = Confirm::new()
+            .with_prompt(prompt)
+            .default(false)
+            .interact()?;
+
+        if !confirmed {
+            println!("Aborted.");
+            return Ok(None);
+        }
+    }
+
+    println!();
+    Ok(Some(pending))
 }

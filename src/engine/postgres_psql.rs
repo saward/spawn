@@ -185,6 +185,7 @@ impl Engine for PSQL {
         &self,
         migration_name: &str,
         namespace: &str,
+        description: &str,
     ) -> MigrationResult<String> {
         let namespace_lit = EscapedLiteral::new(namespace);
 
@@ -221,6 +222,7 @@ impl Engine for PSQL {
             None, // empty checksum
             None, // no execution time
             None, // no pin_hash
+            Some(description),
         )
         .await?;
 
@@ -384,11 +386,13 @@ fn build_record_migration_sql(
     checksum: Option<&str>,
     execution_time: Option<f32>,
     pin_hash: Option<&str>,
+    description: Option<&str>,
 ) -> EscapedQuery {
     let schema_ident = EscapedIdentifier::new(spawn_schema);
     let safe_migration_name = EscapedLiteral::new(migration_name);
     let safe_status = EscapedLiteral::new(status.as_str());
     let safe_activity = EscapedLiteral::new(activity.as_str());
+    let safe_description = EscapedLiteral::new(description.unwrap_or(""));
     // If no checksum provided, use empty bytea (decode returns empty bytea for empty string)
     let checksum_expr = checksum
         .map(|c| format!("decode('{}', 'hex')", c))
@@ -423,7 +427,7 @@ SELECT
     migration_id,
     {},
     'unused',
-    '',
+    {},
     '',
     {},
     {},
@@ -437,6 +441,7 @@ COMMIT;
         namespace,
         schema_ident,
         safe_activity,
+        safe_description,
         safe_status,
         checksum_raw,
         duration_interval,
@@ -688,6 +693,7 @@ impl PSQL {
         checksum: Option<&str>,
         execution_time: Option<f32>,
         pin_hash: Option<&str>,
+        description: Option<&str>,
     ) -> MigrationResult<()> {
         let record_query = build_record_migration_sql(
             &self.spawn_schema,
@@ -698,6 +704,7 @@ impl PSQL {
             checksum,
             execution_time,
             pin_hash,
+            description,
         );
 
         self.execute_with_writer(
@@ -819,6 +826,7 @@ impl PSQL {
                         Some(&checksum_hex),
                         Some(duration),
                         pin_hash.as_deref(),
+                        None,
                     );
 
                     writer.write_all(record_query.as_str().as_bytes())?;
