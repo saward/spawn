@@ -1756,6 +1756,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "shlex",
  "similar",
  "tempfile",
  "thiserror",

@@ -6,7 +6,7 @@ use pretty_assertions::assert_eq;
 use spawn_db::{
     commands::{BuildMigration, Command, NewMigration, Outcome, PinMigration},
     config::{Config, ConfigLoaderSaver},
-    engine::{DatabaseConfig, EngineType},
+    engine::{CommandSpec, DatabaseConfig, EngineType},
     store,
 };
 use std::collections::HashMap;
@@ -79,16 +79,18 @@ impl MigrationTestHelper {
                 spawn_database: "spawn".to_string(),
                 spawn_schema: "public".to_string(),
                 environment: "dev".to_string(),
-                command: Some(vec![
-                    "docker".to_string(),
-                    "exec".to_string(),
-                    "-i".to_string(),
-                    "spawn-db".to_string(),
-                    "psql".to_string(),
-                    "-U".to_string(),
-                    "spawn".to_string(),
-                    "spawn".to_string(),
-                ]),
+                command: Some(CommandSpec::Direct {
+                    direct: vec![
+                        "docker".to_string(),
+                        "exec".to_string(),
+                        "-i".to_string(),
+                        "spawn-db".to_string(),
+                        "psql".to_string(),
+                        "-U".to_string(),
+                        "spawn".to_string(),
+                        "spawn".to_string(),
+                    ],
+                }),
             },
         );
 

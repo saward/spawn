@@ -43,7 +43,7 @@ use opendal::Operator;
 use spawn_db::{
     commands::{ApplyMigration, Command, CompareTests, ExpectTest, Outcome},
     config::ConfigLoaderSaver,
-    engine::{DatabaseConfig, EngineType},
+    engine::{CommandSpec, DatabaseConfig, EngineType},
 };
 use std::collections::HashMap;
 use std::env;
@@ -228,7 +228,9 @@ impl IntegrationTestHelper {
                 spawn_database: db_name.to_string(),
                 spawn_schema: "_spawn".to_string(),
                 environment: "test".to_string(),
-                command: Some(connection_mode.psql_command(db_name)),
+                command: Some(CommandSpec::Direct {
+                    direct: connection_mode.psql_command(db_name),
+                }),
             },
         );
 

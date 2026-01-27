@@ -1,7 +1,9 @@
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use thiserror::Error;
+use tokio::process::Command;
 
 pub mod postgres_psql;
 
@@ -124,6 +126,20 @@ impl fmt::Display for EngineType {
     }
 }
 
+/// Specifies how to obtain the command to execute for database operations.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CommandSpec {
+    /// Direct command to execute
+    Direct { direct: Vec<String> },
+    /// A provider command that outputs the actual command as JSON
+    Provider {
+        provider: Vec<String>,
+        #[serde(default)]
+        append: Vec<String>,
+    },
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DatabaseConfig {
     pub engine: EngineType,
@@ -134,7 +150,7 @@ pub struct DatabaseConfig {
     pub environment: String,
 
     #[serde(default)]
-    pub command: Option<Vec<String>>,
+    pub command: Option<CommandSpec>,
 }
 
 fn default_environment() -> String {
@@ -143,6 +159,57 @@ fn default_environment() -> String {
 
 fn default_schema() -> String {
     "_spawn".to_string()
+}
+
+/// Resolves a CommandSpec to the actual command to execute.
+///
+/// This is a generic function that can be used by any database engine
+/// to resolve their command specification.
+pub async fn resolve_command_spec(spec: CommandSpec) -> Result<Vec<String>> {
+    match spec {
+        CommandSpec::Direct { direct } => Ok(direct),
+        CommandSpec::Provider { provider, append } => {
+            let mut resolved = resolve_provider(&provider).await?;
+            resolved.extend(append);
+            Ok(resolved)
+        }
+    }
+}
+
+/// Executes a provider command and parses its output as a shell command.
+///
+/// The provider must output a shell command string (e.g., `ssh -t -i /path/key user@host`).
+/// The parser handles quoted strings properly using POSIX shell-style parsing.
+async fn resolve_provider(provider: &[String]) -> Result<Vec<String>> {
+    if provider.is_empty() {
+        return Err(anyhow!("Provider command cannot be empty"));
+    }
+
+    let output = Command::new(&provider[0])
+        .args(&provider[1..])
+        .output()
+        .await
+        .context("Failed to execute provider command")?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Provider command failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout).context("Provider output is not valid UTF-8")?;
+    let trimmed = stdout.trim();
+
+    if trimmed.is_empty() {
+        return Err(anyhow!("Provider returned empty output"));
+    }
+
+    // Parses a shell command string into a Vec<String>, handling quoted arguments.
+    //
+    // Uses the `shlex` crate for proper POSIX shell-style parsing.
+    shlex::split(trimmed).ok_or_else(|| anyhow!("Failed to parse shell command: {}", trimmed))
 }
 
 pub struct MigrationStatus {
