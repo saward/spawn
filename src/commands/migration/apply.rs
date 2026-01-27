@@ -71,13 +71,22 @@ impl Command for ApplyMigration {
                                 anyhow!("Unable to obtain advisory lock for migration").context(e)
                             );
                         }
-                        Err(e @ MigrationError::MigrationAppliedButNotRecorded { .. }) => {
+                        Err(e @ MigrationError::NotRecorded { .. }) => {
                             return Err(anyhow!("{}", e));
                         }
                     }
                 }
                 Err(e) => {
-                    return Err(e.context(anyhow!("failed to generate migration '{}'", &migration,)))
+                    let context = if self.pinned {
+                        anyhow!(
+                            "Failed to generate migration '{}'. Is it pinned? \
+                             Run `spawn migration pin {}` or use `--no-pin` to apply without pinning.",
+                            &migration, &migration
+                        )
+                    } else {
+                        anyhow!("failed to generate migration '{}'", &migration)
+                    };
+                    return Err(e.context(context));
                 }
             };
         }

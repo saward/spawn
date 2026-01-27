@@ -107,9 +107,9 @@ pub enum MigrationCommands {
     /// Apply will apply this migration to the database if not already applied,
     /// or all migrations if called without argument.
     Apply {
-        /// Whether to use pinned components
+        /// Skip the pin requirement and use unpinned components
         #[arg(long)]
-        pinned: bool,
+        no_pin: bool,
 
         migration: Option<String>,
 
@@ -152,12 +152,12 @@ impl TelemetryDescribe for MigrationCommands {
                 ("has_variables", variables.is_some().to_string()),
             ]),
             MigrationCommands::Apply {
-                pinned,
+                no_pin,
                 variables,
                 migration,
                 ..
             } => TelemetryInfo::new("apply").with_properties(vec![
-                ("opt_pinned", pinned.to_string()),
+                ("opt_no_pin", no_pin.to_string()),
                 ("has_variables", variables.is_some().to_string()),
                 ("apply_all", migration.is_none().to_string()),
             ]),
@@ -312,7 +312,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                 }
                 Some(MigrationCommands::Apply {
                     migration,
-                    pinned,
+                    no_pin,
                     variables,
                     yes,
                 }) => {
@@ -322,7 +322,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                     };
                     ApplyMigration {
                         migration,
-                        pinned,
+                        pinned: !no_pin,
                         variables: vars,
                         yes,
                     }

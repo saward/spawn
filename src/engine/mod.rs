@@ -117,38 +117,74 @@ pub enum MigrationError {
     #[error("could not get advisory lock: {0}")]
     AdvisoryLock(std::io::Error),
 
-    /// CRITICAL: Migration executed successfully but recording to migration tables failed.
-    /// The database is now in an inconsistent state - the migration has been applied
-    /// but spawn has no record of it. Manual intervention is required.
-    #[error(
-        "\n\
-        ********************************************************************************\n\
-        *                         CRITICAL ERROR - MANUAL INTERVENTION REQUIRED                          *\n\
-        ********************************************************************************\n\
-        \n\
-        Migration '{name}' in namespace '{namespace}' was SUCCESSFULLY APPLIED to the database,\n\
-        but FAILED to record in spawn's migration tracking tables.\n\
-        \n\
-        YOUR DATABASE IS NOW IN AN INCONSISTENT STATE.\n\
-        \n\
-        The migration changes ARE in your database, but spawn does not know about them.\n\
-        If you retry this migration, it may cause errors or duplicate changes.\n\
-        \n\
-        Recording error: {recording_error}\n\
-        \n\
-        TO RESOLVE:\n\
-        1. Verify the migration was applied by checking your database schema\n\
-        2. Run `spawn migration adopt <name>` to record the migration as adopted\n\
-        3. Investigate why the recording failed (connection issue? permissions?)\n\
-        \n\
-        ********************************************************************************\n"
-    )]
-    MigrationAppliedButNotRecorded {
+    /// CRITICAL: A migration was run but the result could not be recorded in
+    /// spawn's migration tracking tables. Manual intervention is required.
+    #[error("{}", format_not_recorded_error(.name, .migration_outcome, .migration_error, .recording_error))]
+    NotRecorded {
         name: String,
-        namespace: String,
-        schema: String,
+        /// Whether the migration itself succeeded or failed
+        migration_outcome: MigrationStatus,
+        /// The error from the migration itself, if it failed
+        migration_error: Option<String>,
+        /// The error from recording the result
         recording_error: String,
     },
+}
+
+fn format_not_recorded_error(
+    name: &str,
+    migration_outcome: &MigrationStatus,
+    migration_error: &Option<String>,
+    recording_error: &str,
+) -> String {
+    let (outcome_label, consequence, resolve_steps) = match migration_outcome {
+        MigrationStatus::Success => (
+            "SUCCEEDED",
+            format!(
+                "The migration changes ARE in your database, but spawn does not know about them.\n\
+                 Re-running this migration may cause errors or duplicate changes."
+            ),
+            format!(
+                "1. Verify the migration was applied by checking your database\n\
+                 2. Run `spawn migration adopt {name}` to record the migration\n\
+                 3. Investigate why recording failed (connection issue? permissions?)"
+            ),
+        ),
+        _ => (
+            "FAILED",
+            format!(
+                "The migration did NOT apply, but spawn was unable to record the failure.\n\
+                 Spawn may not be aware this migration was attempted."
+            ),
+            format!(
+                "1. Check your database to confirm the migration was not applied\n\
+                 2. Investigate why recording failed (connection issue? permissions?)\n\
+                 3. Re-run the migration once the issue is resolved"
+            ),
+        ),
+    };
+
+    let mut msg = format!(
+        "\n\
+         [ACTION REQUIRED] Migration '{name}' {outcome_label} but the result could not be recorded.\n\
+         \n\
+         {consequence}\n\
+         \n\
+         Recording error: {recording_error}",
+    );
+
+    if let Some(migration_err) = migration_error {
+        msg.push_str(&format!("\nMigration error: {}", migration_err));
+    }
+
+    msg.push_str(&format!(
+        "\n\
+         \n\
+         To resolve:\n\
+         {resolve_steps}\n",
+    ));
+
+    msg
 }
 
 /// Result type for migration operations

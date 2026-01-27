@@ -749,8 +749,8 @@ COMMIT;"#;
 
     // Verify the error message contains the critical indicators
     assert!(
-        error_message.contains("CRITICAL") || error_message.contains("MANUAL INTERVENTION"),
-        "Error should indicate critical/manual intervention needed, got: '''{}'''",
+        error_message.contains("ACTION REQUIRED"),
+        "Error should indicate action required, got: '''{}'''",
         error_message
     );
 
@@ -1180,12 +1180,18 @@ COMMIT;"#;
         "Expected migration with SQL error to fail, but it succeeded"
     );
 
-    // Verify the migration was NOT recorded as successful
-    let migration_check = helper.execute_sql(&format!(
-        "SELECT COUNT(*) FROM _spawn.migration WHERE name = '{}';",
+    // Verify the migration was recorded with FAILURE status
+    let status_check = helper.execute_sql(&format!(
+        "SELECT mh.status_id_status FROM _spawn.migration m \
+         JOIN _spawn.migration_history mh ON m.migration_id = mh.migration_id_migration \
+         WHERE m.name = '{}' ORDER BY mh.created_at DESC LIMIT 1;",
         migration_name
     ))?;
-    assert_eq!(migration_check, " count \n-------\n     0\n(1 row)\n\n");
+    assert!(
+        status_check.contains("FAILURE"),
+        "Migration should be recorded with FAILURE status, got: {}",
+        status_check
+    );
 
     Ok(())
 }
@@ -1388,6 +1394,62 @@ COMMIT;"#;
     assert!(
         count.contains("1"),
         "manual-sql-no-file should be recorded in migration table"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_apply_requires_pinned() -> Result<()> {
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new("test_apply_requires_pinned", None).await?;
+
+    let migration_content = r#"BEGIN;
+CREATE TABLE pin_test (id SERIAL PRIMARY KEY);
+COMMIT;"#;
+
+    let migration_name = helper
+        .migration_helper
+        .create_migration_manual("pin-required", migration_content.to_string())
+        .await?;
+
+    let config = helper.migration_helper.load_config().await?;
+
+    // Applying with pinned=true (the CLI default) should fail when migration is not pinned
+    let cmd = ApplyMigration {
+        migration: Some(migration_name.clone()),
+        pinned: true,
+        variables: None,
+        yes: true,
+    };
+    let result = cmd.execute(&config).await;
+    assert!(
+        result.is_err(),
+        "apply should fail when migration is not pinned"
+    );
+    let err_msg = result.err().unwrap().to_string();
+    assert!(
+        err_msg.contains("pinned") || err_msg.contains("pin"),
+        "error should mention pinning, got: {}",
+        err_msg
+    );
+
+    // Applying with pinned=false (--no-pin) should succeed
+    let cmd = ApplyMigration {
+        migration: Some(migration_name.clone()),
+        pinned: false,
+        variables: None,
+        yes: true,
+    };
+    let result = cmd.execute(&config).await;
+    assert!(result.is_ok(), "apply with --no-pin should succeed");
+
+    // Verify the table was created
+    assert!(
+        helper.table_exists("public", "pin_test")?,
+        "pin_test table should exist after migration"
     );
 
     Ok(())
