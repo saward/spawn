@@ -131,6 +131,10 @@ pub enum MigrationCommands {
         /// Skip confirmation prompt
         #[arg(long)]
         yes: bool,
+
+        /// Description of why the migration is being adopted
+        #[arg(long)]
+        description: Option<String>,
     },
     /// Show the status of all migrations
     Status,
@@ -325,8 +329,18 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                     .execute(config)
                     .await
                 }
-                Some(MigrationCommands::Adopt { migration, yes }) => {
-                    AdoptMigration { migration, yes }.execute(config).await
+                Some(MigrationCommands::Adopt {
+                    migration,
+                    yes,
+                    description,
+                }) => {
+                    AdoptMigration {
+                        migration,
+                        yes,
+                        description,
+                    }
+                    .execute(config)
+                    .await
                 }
                 Some(MigrationCommands::Status) => MigrationStatus.execute(config).await,
                 None => {

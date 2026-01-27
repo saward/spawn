@@ -319,6 +319,7 @@ impl IntegrationTestHelper {
         let cmd = AdoptMigration {
             migration: Some(migration_name.to_string()),
             yes: true,
+            description: Some("test adoption".to_string()),
         };
 
         let outcome = cmd.execute(&config).await?;
@@ -477,6 +478,7 @@ COMMIT;"#
                 let cmd = AdoptMigration {
                     migration: None,
                     yes: true,
+                    description: Some("mass adopt test".to_string()),
                 };
                 let outcome = cmd.execute(&config).await?;
                 assert!(

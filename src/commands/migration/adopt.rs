@@ -3,16 +3,41 @@ use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::engine::MigrationError;
 use anyhow::{anyhow, Result};
+use dialoguer::Editor;
 
 pub struct AdoptMigration {
     pub migration: Option<String>,
     pub yes: bool,
+    pub description: Option<String>,
 }
 
 impl TelemetryDescribe for AdoptMigration {
     fn telemetry(&self) -> TelemetryInfo {
         TelemetryInfo::new("migration adopt")
     }
+}
+
+/// Prompt the user for a description using their preferred editor.
+/// Returns an error if the description is empty or the editor is aborted.
+fn prompt_description() -> Result<String> {
+    let description = Editor::new()
+        .require_save(true)
+        .edit("# Why is this migration being adopted?\n# Lines starting with # will be ignored.\n")?
+        .map(|s| {
+            s.lines()
+                .filter(|line| !line.starts_with('#'))
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim()
+                .to_string()
+        })
+        .unwrap_or_default();
+
+    if description.is_empty() {
+        return Err(anyhow!("A description is required when adopting migrations. Use --description or provide one in the editor."));
+    }
+
+    Ok(description)
 }
 
 impl Command for AdoptMigration {
@@ -25,11 +50,23 @@ impl Command for AdoptMigration {
             },
         };
 
+        let description = match &self.description {
+            Some(desc) => {
+                if desc.trim().is_empty() {
+                    return Err(anyhow!(
+                        "A description is required when adopting migrations."
+                    ));
+                }
+                desc.clone()
+            }
+            None => prompt_description()?,
+        };
+
         let engine = config.new_engine().await?;
 
         for migration in &migrations {
             match engine
-                .migration_adopt(migration, super::DEFAULT_NAMESPACE)
+                .migration_adopt(migration, super::DEFAULT_NAMESPACE, &description)
                 .await
             {
                 Ok(msg) => {
