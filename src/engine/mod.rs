@@ -276,7 +276,7 @@ pub trait Engine: Send + Sync {
 
     /// Adopt a migration without applying it.
     /// Creates a dummy table entry marking the migration as having been applied manually.
-    /// Sets checksum to empty and status to 'ADOPTED'.
+    /// Sets checksum to empty and status to 'SUCCESS'.
     async fn migration_adopt(
         &self,
         migration_name: &str,

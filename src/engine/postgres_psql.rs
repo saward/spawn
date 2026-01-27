@@ -692,14 +692,12 @@ impl PSQL {
 
         let lock_checksum = migration_lock_key();
 
-        // Clone values needed inside the closure and for error reporting
+        // Clone values needed inside the closure
         let migration_name_owned = migration_name.to_string();
-        let migration_name_for_closure = migration_name_owned.clone();
         let namespace_clone = namespace.clone();
         let schema_ident_raw = self.spawn_schema_ident().raw_value().to_string();
+        let migration_name_for_closure = migration_name_owned.clone();
         let schema_ident_for_closure = schema_ident_raw.clone();
-        let namespace_raw = namespace.raw_value().to_string();
-        let pin_hash_str = pin_hash.clone();
 
         // Execute migration and record it in a single psql session
         // No stdout capture needed for migrations
@@ -739,7 +737,7 @@ impl PSQL {
                         MigrationActivity::Apply,
                         Some(&checksum_hex),
                         Some(duration),
-                        pin_hash_str.as_deref(),
+                        pin_hash.as_deref(),
                     );
 
                     writer.write_all(record_query.as_str().as_bytes())?;
@@ -762,7 +760,7 @@ impl PSQL {
                     // Migration might have partially executed - this is a critical state
                     Err(MigrationError::MigrationAppliedButNotRecorded {
                         name: migration_name_owned,
-                        namespace: namespace_raw,
+                        namespace: namespace.raw_value().to_string(),
                         schema: schema_ident_raw,
                         recording_error: format!("psql exited with code {}: {}", exit_code, stderr),
                     })
