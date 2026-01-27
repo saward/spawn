@@ -133,7 +133,7 @@ pub async fn get_pending_and_confirm(
 
     println!();
     println!("TARGET: {}", target);
-    if env.contains("prod") {
+    if env.starts_with("prod") {
         println!("ENVIRONMENT: {} \u{26a0}\u{fe0f}", env);
     } else {
         println!("ENVIRONMENT: {}", env);
