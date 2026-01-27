@@ -231,6 +231,116 @@ impl Engine for PSQL {
             migration_name
         ))
     }
+
+    async fn get_migrations_from_db(
+        &self,
+        namespace: Option<&str>,
+    ) -> MigrationResult<Vec<crate::engine::MigrationDbInfo>> {
+        use serde::Deserialize;
+
+        // Ensure we have latest schema
+        self.update_schema()
+            .await
+            .map_err(MigrationError::Database)?;
+
+        // Build the query based on whether namespace is provided
+        let query = if let Some(ns) = namespace {
+            let namespace_lit = EscapedLiteral::new(ns);
+            sql_query!(
+                r#"
+                SELECT json_agg(row_to_json(t))
+                FROM (
+                    SELECT DISTINCT ON (m.name)
+                        m.name as migration_name,
+                        mh.status_id_status as last_status,
+                        mh.activity_id_activity as last_activity,
+                        encode(mh.checksum, 'hex') as checksum
+                    FROM {}.migration m
+                    LEFT JOIN {}.migration_history mh ON m.migration_id = mh.migration_id_migration
+                    WHERE m.namespace = {}
+                    ORDER BY m.name, mh.created_at DESC NULLS LAST
+                ) t
+                "#,
+                self.spawn_schema_ident(),
+                self.spawn_schema_ident(),
+                namespace_lit
+            )
+        } else {
+            // No namespace filter - return all
+            sql_query!(
+                r#"
+                SELECT json_agg(row_to_json(t))
+                FROM (
+                    SELECT DISTINCT ON (m.name)
+                        m.name as migration_name,
+                        mh.status_id_status as last_status,
+                        mh.activity_id_activity as last_activity,
+                        encode(mh.checksum, 'hex') as checksum
+                    FROM {}.migration m
+                    LEFT JOIN {}.migration_history mh ON m.migration_id = mh.migration_id_migration
+                    ORDER BY m.name, mh.created_at DESC NULLS LAST
+                ) t
+                "#,
+                self.spawn_schema_ident(),
+                self.spawn_schema_ident()
+            )
+        };
+
+        let output = self
+            .execute_sql(&query, Some("unaligned"))
+            .await
+            .map_err(MigrationError::Database)?;
+
+        // Define a struct for JSON deserialization
+        #[derive(Deserialize)]
+        struct MigrationRow {
+            migration_name: String,
+            last_status: Option<String>,
+            last_activity: Option<String>,
+            checksum: Option<String>,
+        }
+
+        // Parse the JSON output
+        let json_str = output.trim();
+
+        // Handle case where there are no migrations (json_agg returns null)
+        if json_str == "null" || json_str.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let rows: Vec<MigrationRow> = serde_json::from_str(json_str).map_err(|e| {
+            MigrationError::Database(anyhow::anyhow!(
+                "Failed to parse JSON from database (output: '{}'): {}",
+                json_str,
+                e
+            ))
+        })?;
+
+        // Convert to MigrationDbInfo
+        let mut results: Vec<crate::engine::MigrationDbInfo> = rows
+            .into_iter()
+            .map(|row| {
+                let status = row.last_status.and_then(|s| match s.as_str() {
+                    "SUCCESS" => Some(MigrationHistoryStatus::Success),
+                    "ATTEMPTED" => Some(MigrationHistoryStatus::Attempted),
+                    "FAILURE" => Some(MigrationHistoryStatus::Failure),
+                    _ => None,
+                });
+
+                crate::engine::MigrationDbInfo {
+                    migration_name: row.migration_name,
+                    last_status: status,
+                    last_activity: row.last_activity,
+                    checksum: row.checksum,
+                }
+            })
+            .collect();
+
+        // Sort by migration name for consistent output
+        results.sort_by(|a, b| a.migration_name.cmp(&b.migration_name));
+
+        Ok(results)
+    }
 }
 
 /// A simple AsyncWrite implementation that appends to a shared Vec<u8>

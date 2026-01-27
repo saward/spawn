@@ -70,6 +70,15 @@ pub struct ExistingMigrationInfo {
     pub checksum: String,
 }
 
+/// Database information about a migration
+#[derive(Debug, Clone)]
+pub struct MigrationDbInfo {
+    pub migration_name: String,
+    pub last_status: Option<MigrationHistoryStatus>,
+    pub last_activity: Option<String>,
+    pub checksum: Option<String>,
+}
+
 /// Errors specific to migration operations
 #[derive(Debug, Error)]
 pub enum MigrationError {
@@ -282,4 +291,12 @@ pub trait Engine: Send + Sync {
         migration_name: &str,
         namespace: &str,
     ) -> MigrationResult<String>;
+
+    /// Get database information for all migrations in the given namespace.
+    /// If namespace is None, returns migrations from all namespaces.
+    /// Returns a list of migrations that exist in the database with their latest history entry.
+    async fn get_migrations_from_db(
+        &self,
+        namespace: Option<&str>,
+    ) -> MigrationResult<Vec<MigrationDbInfo>>;
 }

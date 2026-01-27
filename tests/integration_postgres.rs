@@ -408,6 +408,135 @@ fn require_postgres() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_migration_status() -> Result<()> {
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new("test_migration_status", None).await?;
+
+    // Create and apply a migration
+    let applied_migration = helper
+        .migration_helper
+        .create_migration_manual(
+            "applied-migration",
+            r#"BEGIN;
+CREATE TABLE status_test (id SERIAL PRIMARY KEY);
+COMMIT;"#
+                .to_string(),
+        )
+        .await?;
+
+    helper.apply_migration(&applied_migration).await?;
+
+    // Create a migration and adopt it
+    let adopted_migration = helper
+        .migration_helper
+        .create_migration_manual(
+            "adopted-migration",
+            r#"BEGIN;
+CREATE TABLE adopted_status_test (id SERIAL PRIMARY KEY);
+COMMIT;"#
+                .to_string(),
+        )
+        .await?;
+
+    // Manually run the migration
+    helper.execute_sql(
+        r#"BEGIN;
+CREATE TABLE adopted_status_test (id SERIAL PRIMARY KEY);
+COMMIT;"#,
+    )?;
+
+    helper.adopt_migration(&adopted_migration).await?;
+
+    // Create a migration but don't apply it
+    let _pending_migration = helper
+        .migration_helper
+        .create_migration_manual(
+            "pending-migration",
+            r#"BEGIN;
+CREATE TABLE pending_test (id SERIAL PRIMARY KEY);
+COMMIT;"#
+                .to_string(),
+        )
+        .await?;
+
+    // Now get the combined status
+    let config = helper.migration_helper.load_config().await?;
+    let status_rows =
+        spawn_db::commands::migration::get_combined_migration_status(&config, "default").await?;
+
+    // Verify we have all three migrations
+    assert_eq!(status_rows.len(), 3, "Should have 3 migrations in status");
+
+    // Find each migration and verify its status
+    let applied = status_rows
+        .iter()
+        .find(|r| r.migration_name == applied_migration)
+        .expect("applied-migration should be in status");
+
+    assert!(
+        applied.exists_in_filesystem,
+        "applied migration should exist in filesystem"
+    );
+    assert!(applied.exists_in_db, "applied migration should exist in db");
+    assert_eq!(
+        applied.last_status,
+        Some(spawn_db::engine::MigrationStatus::Success),
+        "applied migration should have SUCCESS status"
+    );
+    assert_eq!(
+        applied.last_activity.as_deref(),
+        Some("APPLY"),
+        "applied migration should have APPLY activity"
+    );
+
+    let adopted = status_rows
+        .iter()
+        .find(|r| r.migration_name == adopted_migration)
+        .expect("adopted-migration should be in status");
+
+    assert!(
+        adopted.exists_in_filesystem,
+        "adopted migration should exist in filesystem"
+    );
+    assert!(adopted.exists_in_db, "adopted migration should exist in db");
+    assert_eq!(
+        adopted.last_status,
+        Some(spawn_db::engine::MigrationStatus::Success),
+        "adopted migration should have SUCCESS status"
+    );
+    assert_eq!(
+        adopted.last_activity.as_deref(),
+        Some("ADOPT"),
+        "adopted migration should have ADOPT activity"
+    );
+
+    let pending = status_rows
+        .iter()
+        .find(|r| r.migration_name.contains("pending-migration"))
+        .expect("pending-migration should be in status");
+
+    assert!(
+        pending.exists_in_filesystem,
+        "pending migration should exist in filesystem"
+    );
+    assert!(
+        !pending.exists_in_db,
+        "pending migration should NOT exist in db"
+    );
+    assert_eq!(
+        pending.last_status, None,
+        "pending migration should have no status"
+    );
+    assert_eq!(
+        pending.last_activity, None,
+        "pending migration should have no activity"
+    );
+
+    Ok(())
+}
+
 // ============================================================================
 // Integration Tests
 // ============================================================================

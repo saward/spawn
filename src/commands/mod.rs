@@ -6,7 +6,9 @@ pub mod migration;
 pub mod test;
 
 pub use init::Init;
-pub use migration::{AdoptMigration, ApplyMigration, BuildMigration, NewMigration, PinMigration};
+pub use migration::{
+    AdoptMigration, ApplyMigration, BuildMigration, MigrationStatus, NewMigration, PinMigration,
+};
 pub use test::{BuildTest, CompareTests, ExpectTest, NewTest, RunTest};
 
 /// Telemetry information for a command.
