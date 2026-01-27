@@ -54,8 +54,9 @@ pub async fn get_combined_migration_status(
             let name = path.trim_end_matches('/').rsplit('/').next()?;
             // Filter out entries that don't look like migration names
             // Migration names should start with a timestamp (digits) or be non-empty
-            // Also filter out "migrations" itself which is the parent folder
-            if name.is_empty() || name == "migrations" {
+            // Also filter out the parent folder, which seems to be prefixed with
+            // "./".
+            if name.is_empty() || path.starts_with("./") {
                 None
             } else {
                 Some(name.to_string())

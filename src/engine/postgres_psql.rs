@@ -52,11 +52,18 @@ impl PSQL {
 
         let psql_command = resolve_command_spec(command_spec).await?;
 
-        Ok(Box::new(Self {
+        let eng = Box::new(Self {
             psql_command,
             spawn_schema: config.spawn_schema.clone(),
             db_config: config.clone(),
-        }))
+        });
+
+        // Ensure we have latest schema:
+        eng.update_schema()
+            .await
+            .map_err(MigrationError::Database)?;
+
+        Ok(eng)
     }
 
     fn spawn_schema_literal(&self) -> EscapedLiteral {
@@ -165,10 +172,6 @@ impl Engine for PSQL {
         pin_hash: Option<String>,
         namespace: &str,
     ) -> MigrationResult<String> {
-        // Ensure we have latest schema:
-        self.update_schema()
-            .await
-            .map_err(MigrationError::Database)?;
         self.apply_and_record_migration_v1(
             migration_name,
             write_fn,
@@ -183,11 +186,6 @@ impl Engine for PSQL {
         migration_name: &str,
         namespace: &str,
     ) -> MigrationResult<String> {
-        // Ensure we have latest schema:
-        self.update_schema()
-            .await
-            .map_err(MigrationError::Database)?;
-
         let namespace_lit = EscapedLiteral::new(namespace);
 
         // Check if migration already exists in history
@@ -237,11 +235,6 @@ impl Engine for PSQL {
         namespace: Option<&str>,
     ) -> MigrationResult<Vec<crate::engine::MigrationDbInfo>> {
         use serde::Deserialize;
-
-        // Ensure we have latest schema
-        self.update_schema()
-            .await
-            .map_err(MigrationError::Database)?;
 
         // Build the query with optional namespace filter
         let namespace_lit = namespace.map(|ns| EscapedLiteral::new(ns));
