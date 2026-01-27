@@ -117,12 +117,20 @@ pub enum MigrationCommands {
         /// Overrides the variables_file setting in spawn.toml.
         #[arg(long)]
         variables: Option<String>,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
     },
     /// Mark a migration as applied without actually running it.
     /// Useful when a migration was applied manually and needs to be recorded.
     Adopt {
         /// Migration to adopt
-        migration: String,
+        migration: Option<String>,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
     },
     /// Show the status of all migrations
     Status,
@@ -143,6 +151,7 @@ impl TelemetryDescribe for MigrationCommands {
                 pinned,
                 variables,
                 migration,
+                ..
             } => TelemetryInfo::new("apply").with_properties(vec![
                 ("opt_pinned", pinned.to_string()),
                 ("has_variables", variables.is_some().to_string()),
@@ -301,6 +310,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                     migration,
                     pinned,
                     variables,
+                    yes,
                 }) => {
                     let vars = match variables {
                         Some(vars_path) => Some(config.load_variables_from_path(&vars_path).await?),
@@ -310,12 +320,13 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                         migration,
                         pinned,
                         variables: vars,
+                        yes,
                     }
                     .execute(config)
                     .await
                 }
-                Some(MigrationCommands::Adopt { migration }) => {
-                    AdoptMigration { migration }.execute(config).await
+                Some(MigrationCommands::Adopt { migration, yes }) => {
+                    AdoptMigration { migration, yes }.execute(config).await
                 }
                 Some(MigrationCommands::Status) => MigrationStatus.execute(config).await,
                 None => {

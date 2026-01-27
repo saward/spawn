@@ -302,6 +302,7 @@ impl IntegrationTestHelper {
             migration: Some(migration_name.to_string()),
             pinned: false,
             variables: None,
+            yes: true,
         };
 
         let outcome = cmd.execute(&config).await?;
@@ -316,7 +317,8 @@ impl IntegrationTestHelper {
     pub async fn adopt_migration(&self, migration_name: &str) -> Result<()> {
         let config = self.migration_helper.load_config().await?;
         let cmd = AdoptMigration {
-            migration: migration_name.to_string(),
+            migration: Some(migration_name.to_string()),
+            yes: true,
         };
 
         let outcome = cmd.execute(&config).await?;
@@ -405,6 +407,136 @@ fn require_postgres() -> Result<()> {
             "PostgreSQL is not available. Start it with: docker compose up -d"
         ));
     }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_mass_apply_and_adopt() -> Result<()> {
+    require_postgres()?;
+
+    for mode in ["apply", "adopt"] {
+        let test_name = format!("test_mass_{}", mode);
+        let helper = IntegrationTestHelper::new(&test_name, None).await?;
+
+        // Create three migrations
+        let m1 = helper
+            .migration_helper
+            .create_migration_manual(
+                "first-table",
+                r#"BEGIN;
+CREATE TABLE first_table (id SERIAL PRIMARY KEY);
+COMMIT;"#
+                    .to_string(),
+            )
+            .await?;
+
+        let m2 = helper
+            .migration_helper
+            .create_migration_manual(
+                "second-table",
+                r#"BEGIN;
+CREATE TABLE second_table (id SERIAL PRIMARY KEY);
+COMMIT;"#
+                    .to_string(),
+            )
+            .await?;
+
+        let m3 = helper
+            .migration_helper
+            .create_migration_manual(
+                "third-table",
+                r#"BEGIN;
+CREATE TABLE third_table (id SERIAL PRIMARY KEY);
+COMMIT;"#
+                    .to_string(),
+            )
+            .await?;
+
+        // Apply the first one individually so it has a status
+        helper.apply_migration(&m1).await?;
+
+        // Mass apply/adopt the remaining pending migrations
+        let config = helper.migration_helper.load_config().await?;
+        let expected_activity = match mode {
+            "apply" => {
+                let cmd = ApplyMigration {
+                    migration: None,
+                    pinned: false,
+                    variables: None,
+                    yes: true,
+                };
+                let outcome = cmd.execute(&config).await?;
+                assert!(
+                    matches!(outcome, Outcome::AppliedMigrations),
+                    "mass apply should return AppliedMigrations"
+                );
+                "APPLY"
+            }
+            "adopt" => {
+                let cmd = AdoptMigration {
+                    migration: None,
+                    yes: true,
+                };
+                let outcome = cmd.execute(&config).await?;
+                assert!(
+                    matches!(outcome, Outcome::AdoptedMigration),
+                    "mass adopt should return AdoptedMigration"
+                );
+                "ADOPT"
+            }
+            _ => unreachable!(),
+        };
+
+        // Verify all three are recorded with SUCCESS status
+        let status_rows =
+            spawn_db::commands::migration::get_combined_migration_status(&config, Some("default"))
+                .await?;
+
+        // m1 was applied individually, always APPLY
+        let row = status_rows
+            .iter()
+            .find(|r| r.migration_name == m1)
+            .unwrap_or_else(|| panic!("[{}] migration {} should be in status", mode, m1));
+        assert_eq!(
+            row.last_status,
+            Some(spawn_db::engine::MigrationStatus::Success),
+            "[{}] migration {} should have SUCCESS status",
+            mode,
+            m1
+        );
+        assert_eq!(
+            row.last_activity.as_deref(),
+            Some("APPLY"),
+            "[{}] migration {} should have APPLY activity",
+            mode,
+            m1
+        );
+
+        // m2 and m3 were mass applied/adopted
+        for name in [&m2, &m3] {
+            let row = status_rows
+                .iter()
+                .find(|r| r.migration_name == *name)
+                .unwrap_or_else(|| panic!("[{}] migration {} should be in status", mode, name));
+            assert_eq!(
+                row.last_status,
+                Some(spawn_db::engine::MigrationStatus::Success),
+                "[{}] migration {} should have SUCCESS status",
+                mode,
+                name
+            );
+            assert_eq!(
+                row.last_activity.as_deref(),
+                Some(expected_activity),
+                "[{}] migration {} should have {} activity",
+                mode,
+                name,
+                expected_activity
+            );
+        }
+    }
+
     Ok(())
 }
 

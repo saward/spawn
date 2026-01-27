@@ -1,3 +1,4 @@
+use crate::commands::migration::get_pending_and_confirm;
 use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::engine::MigrationError;
@@ -9,6 +10,7 @@ pub struct ApplyMigration {
     pub migration: Option<String>,
     pub pinned: bool,
     pub variables: Option<Variables>,
+    pub yes: bool,
 }
 
 impl TelemetryDescribe for ApplyMigration {
@@ -23,11 +25,13 @@ impl TelemetryDescribe for ApplyMigration {
 
 impl Command for ApplyMigration {
     async fn execute(&self, config: &Config) -> Result<Outcome> {
-        let mut migrations = Vec::new();
-        match &self.migration {
-            Some(migration) => migrations.push(migration.clone()),
-            None => return Err(anyhow!("applying all migrations not implemented")),
-        }
+        let migrations = match &self.migration {
+            Some(migration) => vec![migration.clone()],
+            None => match get_pending_and_confirm(config, "apply", self.yes).await? {
+                Some(pending) => pending,
+                None => return Ok(Outcome::AppliedMigrations),
+            },
+        };
 
         for migration in migrations {
             let mgrtr = Migrator::new(config, &migration, self.pinned);
@@ -36,7 +40,7 @@ impl Command for ApplyMigration {
                     let engine = config.new_engine().await?;
                     let write_fn = streaming.into_writer_fn();
                     match engine
-                        .migration_apply(&migration, write_fn, None, "default")
+                        .migration_apply(&migration, write_fn, None, super::DEFAULT_NAMESPACE)
                         .await
                     {
                         Ok(_) => {
