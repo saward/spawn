@@ -183,9 +183,9 @@ pub enum TestCommands {
     Build {
         name: String,
     },
-    /// Run a particular test
+    /// Run a particular test, or all tests if no name provided.
     Run {
-        name: String,
+        name: Option<String>,
     },
     /// Run tests and compare to expected.  Runs all tests if no name provided.
     Compare {
@@ -201,7 +201,8 @@ impl TelemetryDescribe for TestCommands {
         match self {
             TestCommands::New { .. } => TelemetryInfo::new("new"),
             TestCommands::Build { .. } => TelemetryInfo::new("build"),
-            TestCommands::Run { .. } => TelemetryInfo::new("run"),
+            TestCommands::Run { name } => TelemetryInfo::new("run")
+                .with_properties(vec![("run_all", name.is_none().to_string())]),
             TestCommands::Compare { name } => TelemetryInfo::new("compare")
                 .with_properties(vec![("compare_all", name.is_none().to_string())]),
             TestCommands::Expect { .. } => TelemetryInfo::new("expect"),
