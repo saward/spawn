@@ -171,12 +171,14 @@ impl Engine for PSQL {
         write_fn: WriterFn,
         pin_hash: Option<String>,
         namespace: &str,
+        retry: bool,
     ) -> MigrationResult<String> {
         self.apply_and_record_migration_v1(
             migration_name,
             write_fn,
             pin_hash,
             EscapedLiteral::new(namespace),
+            retry,
         )
         .await
     }
@@ -533,6 +535,7 @@ impl PSQL {
                     write_fn,
                     None, // pin_hash not used for engine migrations
                     self.safe_spawn_namespace(),
+                    false, // no retry for internal schema migrations
                 )
                 .await
             {
@@ -738,6 +741,7 @@ impl PSQL {
         write_fn: WriterFn,
         pin_hash: Option<String>,
         namespace: EscapedLiteral,
+        retry: bool,
     ) -> MigrationResult<String> {
         // Check if migration already exists in history (skip if table doesn't exist yet)
         let existing_status = if self
@@ -765,12 +769,14 @@ impl PSQL {
                     });
                 }
                 MigrationHistoryStatus::Attempted | MigrationHistoryStatus::Failure => {
-                    return Err(MigrationError::PreviousAttemptFailed {
-                        name,
-                        namespace: ns,
-                        status: info.last_status.clone(),
-                        info,
-                    });
+                    if !retry {
+                        return Err(MigrationError::PreviousAttemptFailed {
+                            name,
+                            namespace: ns,
+                            status: info.last_status.clone(),
+                            info,
+                        });
+                    }
                 }
             }
         }

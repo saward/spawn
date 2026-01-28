@@ -303,6 +303,7 @@ impl IntegrationTestHelper {
             pinned: false,
             variables: None,
             yes: true,
+            retry: false,
         };
 
         let outcome = cmd.execute(&config).await?;
@@ -466,6 +467,7 @@ COMMIT;"#
                     pinned: false,
                     variables: None,
                     yes: true,
+                    retry: false,
                 };
                 let outcome = cmd.execute(&config).await?;
                 assert!(
@@ -1193,6 +1195,48 @@ COMMIT;"#;
         status_check
     );
 
+    // A second apply without --retry should be blocked by PreviousAttemptFailed
+    let config = helper.migration_helper.load_config().await?;
+    let cmd = ApplyMigration {
+        migration: Some(migration_name.clone()),
+        pinned: false,
+        variables: None,
+        yes: true,
+        retry: false,
+    };
+    let result = cmd.execute(&config).await;
+    assert!(
+        result.is_err(),
+        "apply without --retry should fail after a previous failure"
+    );
+    let err_msg = result.err().unwrap().to_string();
+    assert!(
+        err_msg.contains("previous") && err_msg.contains("FAILURE"),
+        "error should mention previous FAILURE attempt, got: {}",
+        err_msg
+    );
+
+    // A third apply with --retry should be allowed through (will fail again due to bad SQL)
+    let cmd = ApplyMigration {
+        migration: Some(migration_name.clone()),
+        pinned: false,
+        variables: None,
+        yes: true,
+        retry: true,
+    };
+    let result = cmd.execute(&config).await;
+    assert!(
+        result.is_err(),
+        "apply with --retry should still fail because the SQL is bad"
+    );
+    let err_msg = result.err().unwrap().to_string();
+    // The error should be from the migration itself, not from PreviousAttemptFailed
+    assert!(
+        !err_msg.contains("previous"),
+        "with --retry the error should be from the migration SQL, not PreviousAttemptFailed, got: {}",
+        err_msg
+    );
+
     Ok(())
 }
 
@@ -1423,6 +1467,7 @@ COMMIT;"#;
         pinned: true,
         variables: None,
         yes: true,
+        retry: false,
     };
     let result = cmd.execute(&config).await;
     assert!(
@@ -1442,6 +1487,7 @@ COMMIT;"#;
         pinned: false,
         variables: None,
         yes: true,
+        retry: false,
     };
     let result = cmd.execute(&config).await;
     assert!(result.is_ok(), "apply with --no-pin should succeed");

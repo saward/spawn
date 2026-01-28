@@ -121,6 +121,10 @@ pub enum MigrationCommands {
         /// Skip confirmation prompt
         #[arg(long)]
         yes: bool,
+
+        /// Retry a previously failed migration
+        #[arg(long)]
+        retry: bool,
     },
     /// Mark a migration as applied without actually running it.
     /// Useful when a migration was applied manually and needs to be recorded.
@@ -155,9 +159,11 @@ impl TelemetryDescribe for MigrationCommands {
                 no_pin,
                 variables,
                 migration,
+                retry,
                 ..
             } => TelemetryInfo::new("apply").with_properties(vec![
                 ("opt_no_pin", no_pin.to_string()),
+                ("opt_retry", retry.to_string()),
                 ("has_variables", variables.is_some().to_string()),
                 ("apply_all", migration.is_none().to_string()),
             ]),
@@ -315,6 +321,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                     no_pin,
                     variables,
                     yes,
+                    retry,
                 }) => {
                     let vars = match variables {
                         Some(vars_path) => Some(config.load_variables_from_path(&vars_path).await?),
@@ -325,6 +332,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                         pinned: !no_pin,
                         variables: vars,
                         yes,
+                        retry,
                     }
                     .execute(config)
                     .await
