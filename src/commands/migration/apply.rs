@@ -11,6 +11,7 @@ pub struct ApplyMigration {
     pub pinned: bool,
     pub variables: Option<Variables>,
     pub yes: bool,
+    pub retry: bool,
 }
 
 impl TelemetryDescribe for ApplyMigration {
@@ -40,7 +41,13 @@ impl Command for ApplyMigration {
                     let engine = config.new_engine().await?;
                     let write_fn = streaming.into_writer_fn();
                     match engine
-                        .migration_apply(&migration, write_fn, None, super::DEFAULT_NAMESPACE)
+                        .migration_apply(
+                            &migration,
+                            write_fn,
+                            None,
+                            super::DEFAULT_NAMESPACE,
+                            self.retry,
+                        )
                         .await
                     {
                         Ok(_) => {
@@ -54,11 +61,12 @@ impl Command for ApplyMigration {
                         }
                         Err(MigrationError::PreviousAttemptFailed { status, info, .. }) => {
                             return Err(anyhow!(
-                                "Migration '{}' has a previous {} attempt (checksum: {}). \
-                                 Manual intervention may be required.",
+                                "Migration '{}' has a previous {} attempt (checksum: {}).\n\
+                                 Use `spawn migration apply --retry {}` to retry.",
                                 &migration,
                                 status,
-                                info.checksum
+                                info.checksum,
+                                &migration,
                             ));
                         }
                         Err(MigrationError::Database(e)) => {

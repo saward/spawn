@@ -327,6 +327,7 @@ pub trait Engine: Send + Sync {
         write_fn: WriterFn,
         pin_hash: Option<String>,
         namespace: &str,
+        retry: bool,
     ) -> MigrationResult<String>;
 
     /// Adopt a migration without applying it.
