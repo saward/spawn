@@ -586,7 +586,7 @@ COMMIT;"#,
     helper.adopt_migration(&adopted_migration).await?;
 
     // Create a migration but don't apply it
-    let _pending_migration = helper
+    let pending_migration = helper
         .migration_helper
         .create_migration_manual(
             "pending-migration",
@@ -597,14 +597,59 @@ COMMIT;"#
         )
         .await?;
 
+    // Create a pinned migration (write a lock.toml alongside up.sql)
+    let pinned_migration = helper
+        .migration_helper
+        .create_migration_manual(
+            "pinned-migration",
+            r#"BEGIN;
+CREATE TABLE pinned_test (id SERIAL PRIMARY KEY);
+COMMIT;"#
+                .to_string(),
+        )
+        .await?;
+    let pinned_config = helper.migration_helper.load_config().await?;
+    let lock_path = pinned_config
+        .pather()
+        .migration_lock_file_path(&pinned_migration);
+    helper
+        .migration_helper
+        .fs
+        .write(&lock_path, "# pinned\n")
+        .await?;
+
+    // Create a migration that is pinned but has up.sql deleted (filesystem = false, pinned = true)
+    let deleted_migration = helper
+        .migration_helper
+        .create_migration_manual(
+            "deleted-upsql-migration",
+            r#"BEGIN;
+CREATE TABLE deleted_test (id SERIAL PRIMARY KEY);
+COMMIT;"#
+                .to_string(),
+        )
+        .await?;
+    let deleted_lock_path = pinned_config
+        .pather()
+        .migration_lock_file_path(&deleted_migration);
+    helper
+        .migration_helper
+        .fs
+        .write(&deleted_lock_path, "# pinned\n")
+        .await?;
+    let deleted_up_path = pinned_config
+        .pather()
+        .migration_script_file_path(&deleted_migration);
+    helper.migration_helper.fs.delete(&deleted_up_path).await?;
+
     // Now get the combined status
     let config = helper.migration_helper.load_config().await?;
     let status_rows =
         spawn_db::commands::migration::get_combined_migration_status(&config, Some("default"))
             .await?;
 
-    // Verify we have all three migrations
-    assert_eq!(status_rows.len(), 3, "Should have 3 migrations in status");
+    // Verify we have all five migrations
+    assert_eq!(status_rows.len(), 5, "Should have 5 migrations in status");
 
     // Find each migration and verify its status
     let applied = status_rows
@@ -627,6 +672,7 @@ COMMIT;"#
         Some("APPLY"),
         "applied migration should have APPLY activity"
     );
+    assert!(!applied.is_pinned, "applied migration should not be pinned");
 
     let adopted = status_rows
         .iter()
@@ -648,6 +694,7 @@ COMMIT;"#
         Some("ADOPT"),
         "adopted migration should have ADOPT activity"
     );
+    assert!(!adopted.is_pinned, "adopted migration should not be pinned");
 
     let pending = status_rows
         .iter()
@@ -669,6 +716,42 @@ COMMIT;"#
     assert_eq!(
         pending.last_activity, None,
         "pending migration should have no activity"
+    );
+    assert!(!pending.is_pinned, "pending migration should not be pinned");
+
+    // Verify pinned migration
+    let pinned = status_rows
+        .iter()
+        .find(|r| r.migration_name == pinned_migration)
+        .expect("pinned-migration should be in status");
+
+    assert!(
+        pinned.exists_in_filesystem,
+        "pinned migration should exist in filesystem"
+    );
+    assert!(pinned.is_pinned, "pinned migration should be pinned");
+    assert!(
+        !pinned.exists_in_db,
+        "pinned migration should NOT exist in db"
+    );
+
+    // Verify deleted up.sql migration: pinned = true, filesystem = false
+    let deleted = status_rows
+        .iter()
+        .find(|r| r.migration_name == deleted_migration)
+        .expect("deleted-upsql-migration should be in status");
+
+    assert!(
+        !deleted.exists_in_filesystem,
+        "deleted migration should NOT exist in filesystem"
+    );
+    assert!(
+        deleted.is_pinned,
+        "deleted migration should be pinned (lock.toml still present)"
+    );
+    assert!(
+        !deleted.exists_in_db,
+        "deleted migration should NOT exist in db"
     );
 
     Ok(())

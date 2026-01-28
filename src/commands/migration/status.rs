@@ -13,6 +13,8 @@ struct MigrationStatusDisplay {
     name: String,
     #[tabled(rename = "Filesystem")]
     on_filesystem: String,
+    #[tabled(rename = "Pinned")]
+    pinned: String,
     #[tabled(rename = "Database")]
     in_database: String,
     #[tabled(rename = "Status")]
@@ -41,6 +43,12 @@ impl Command for MigrationStatus {
             .into_iter()
             .map(|row| {
                 let on_filesystem = if row.exists_in_filesystem {
+                    style("✓").green().to_string()
+                } else {
+                    style("✗").red().to_string()
+                };
+
+                let pinned = if row.is_pinned {
                     style("✓").green().to_string()
                 } else {
                     style("✗").red().to_string()
@@ -75,6 +83,7 @@ impl Command for MigrationStatus {
                 MigrationStatusDisplay {
                     name: row.migration_name,
                     on_filesystem,
+                    pinned,
                     in_database,
                     status,
                 }
