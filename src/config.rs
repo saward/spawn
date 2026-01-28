@@ -92,6 +92,7 @@ impl ConfigLoaderSaver {
     }
 }
 
+#[derive(Clone)]
 pub struct FolderPather {
     pub spawn_folder: String,
 }
