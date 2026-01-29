@@ -34,7 +34,18 @@ impl Command for ApplyMigration {
             },
         };
 
-        for migration in migrations {
+        let total = migrations.len();
+        for (i, migration) in migrations.into_iter().enumerate() {
+            let counter = if total > 1 {
+                format!(
+                    "[{:>width$}/{}] ",
+                    i + 1,
+                    total,
+                    width = total.to_string().len()
+                )
+            } else {
+                String::new()
+            };
             let mgrtr = Migrator::new(config, &migration, self.pinned);
             match mgrtr.generate_streaming(self.variables.clone()).await {
                 Ok(streaming) => {
@@ -51,12 +62,12 @@ impl Command for ApplyMigration {
                         .await
                     {
                         Ok(_) => {
-                            println!("Migration '{}' applied successfully", &migration);
+                            println!("{}Migration '{}' applied successfully", counter, &migration);
                         }
                         Err(MigrationError::AlreadyApplied { info, .. }) => {
                             println!(
-                                "Migration '{}' already applied (status: {}, checksum: {})",
-                                &migration, info.last_status, info.checksum
+                                "{}Migration '{}' already applied (status: {}, checksum: {})",
+                                counter, &migration, info.last_status, info.checksum
                             );
                         }
                         Err(MigrationError::PreviousAttemptFailed { status, info, .. }) => {
