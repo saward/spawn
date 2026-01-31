@@ -87,9 +87,7 @@ async fn async_main(cli: Cli) -> Result<()> {
         Outcome::PinnedMigration { hash } => {
             println!("Migration pinned: {}", hash);
         }
-        Outcome::Success => {
-            println!("Success.");
-        }
+        Outcome::Success => {}
         Outcome::Unimplemented => {
             println!("Unimplemented command.");
         }
