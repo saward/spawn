@@ -5,6 +5,10 @@ description: SQL templating with Minijinja in Spawn.
 
 Spawn uses [Minijinja](https://docs.rs/minijinja/latest/minijinja/syntax/index.html) to render migration and test templates. This allows you to generate dynamic SQL based on variables, includes, and logic.
 
+:::tip[Full template syntax reference]
+This page provides a very brief overview of templating syntax, along with a description of Spawn-specific templating features. For the complete template syntax including all expressions, operators, and built-in functions, see the [Minijinja template syntax documentation](https://docs.rs/minijinja/latest/minijinja/syntax/index.html).
+:::
+
 ## Template files
 
 Templates are used in:
@@ -12,8 +16,6 @@ Templates are used in:
 - Migration files (`migrations/*/up.sql`)
 - Component files (`components/**/*.sql`)
 - Test files (`tests/*/test.sql`)
-
-All template syntax is processed before SQL execution.
 
 ## Built-in variables
 
@@ -66,7 +68,7 @@ BEGIN;
 COMMIT;
 ```
 
-Component paths are relative to `components/`. The `.sql` extension is required.
+Component paths are relative to `components/`. The full file name including extension is required.
 
 ## Control flow
 
@@ -129,52 +131,123 @@ SELECT * FROM {{ variables.table | default(value="users") }};
 
 See [Minijinja filters documentation](https://docs.rs/minijinja/latest/minijinja/filters/index.html) for the complete list.
 
-## SQL-safe output
+## SQL escaping and security
 
-### Automatic escaping
+Spawn adds a security layer on top of Minijinja that automatically escapes all template output for SQL safety. This reduces the risk of SQL injection attacks by escaping provided template values by default. For the PostgreSQL psql engine, this means escaping variables as literals by default.
 
-Spawn automatically escapes string values in template output to prevent SQL injection:
+### How it works
+
+When you use `{{ }}` to output a value, Spawn:
+
+1. Detects the value type (string, number, boolean, etc.)
+2. Applies PostgreSQL escaping rules appropriate for that type
+3. Wraps strings in single quotes with proper escaping
+
+This happens **automatically** for all template output, unlike plain Minijinja where you control escaping.
+
+### Automatic literal escaping
+
+By default, all values are escaped as **SQL literals** (values):
 
 ```sql
--- Safe: automatically quoted and escaped
-INSERT INTO users (name) VALUES ('{{ variables.user_name }}');
+-- Automatically escaped and quoted
+INSERT INTO users (name, age) VALUES ({{ user_name }}, {{ user_age }});
 ```
 
-If `variables.user_name` is `O'Reilly`, the output is:
+If `user_name` is `O'Reilly` and `user_age` is `42`:
 
 ```sql
-INSERT INTO users (name) VALUES ('O''Reilly');
+INSERT INTO users (name, age) VALUES ('O''Reilly', 42);
 ```
 
-### Identifiers
+Notice the string is automatically wrapped in single quotes and the embedded quote is doubled to prevent breaking out of the string literal. Numbers are output without quotes.
 
-For table/column names (identifiers), use the `ident` filter:
+**SQL injection attempt is safely escaped:**
 
 ```sql
--- Correct: identifier quoting
-CREATE TABLE {{ variables.table_name | ident }} (
+-- Input: user_name = "'; DROP TABLE users; --"
+INSERT INTO users (name) VALUES ({{ user_name }});
+
+-- Output (safe):
+INSERT INTO users (name) VALUES ('''; DROP TABLE users; --');
+```
+
+### Identifier escaping
+
+When you need to use a variable as a **table or column name** (identifier), use the `escape_identifier` filter:
+
+```sql
+-- Variable used as an identifier
+SELECT * FROM my_schema.{{ table_name | escape_identifier }} my_table;
+
+CREATE TABLE {{ schema_name | escape_identifier }}.{{ table_name | escape_identifier }} (
   id SERIAL PRIMARY KEY
 );
 ```
 
-If `variables.table_name` is `user-data`, the output is:
+If `table_name` is `user-data`:
 
 ```sql
-CREATE TABLE "user-data" (
-  id SERIAL PRIMARY KEY
-);
+SELECT * FROM my_schema."user-data" my_table;
 ```
 
-### Raw SQL
+The value is wrapped in double quotes and any embedded quotes are escaped.
 
-To bypass escaping (when you're generating SQL fragments), use the `safe` filter:
+**When to use `escape_identifier`:**
+
+- Table names
+- Column names
+- Schema names
+- View names
+- Function names
+
+**When NOT to use it:**
+
+- String values in `WHERE` clauses (use default escaping)
+- Numbers, booleans (use default escaping)
+- Complete SQL expressions (use `safe` filter)
+
+### Bypassing escaping with `safe`
+
+To output raw SQL without any escaping (for trusted SQL fragments), use the `safe` filter:
 
 ```sql
 {% set conditions = "status = 'active' AND created_at > NOW() - INTERVAL '1 day'" %}
 SELECT * FROM users WHERE {{ conditions | safe }};
 ```
 
-**Warning:** Only use `safe` with trusted input. Never with user-provided data.
+:::danger[Be careful with `safe`]
+Use of `safe` may make it easier for untrusted SQL to make its way into your database. We recommend only using `safe` in the following ways:
+
+- Hard-coded SQL fragments you write yourself
+- SQL generated by other trusted parts of your templates
+- **Never** with user input or external data
+  :::
+
+### Type-specific escaping
+
+Spawn's auto-escaper handles different types appropriately:
+
+```sql
+-- String → single-quoted literal
+{{ "hello" }}              -- Output: 'hello'
+
+-- Number → unquoted
+{{ 42 }}                   -- Output: 42
+{{ 3.14 }}                 -- Output: 3.14
+
+-- Boolean → PostgreSQL boolean
+{{ true }}                 -- Output: TRUE
+{{ false }}                -- Output: FALSE
+
+-- null/undefined → NULL
+{{ none }}                 -- Output: NULL
+{{ undefined_var }}        -- Output: NULL
+
+-- Array → PostgreSQL array literal
+{{ [1, 2, 3] }}            -- Output: ARRAY[1, 2, 3]
+{{ ["a", "b"] }}           -- Output: ARRAY['a', 'b']
+```
 
 ## Macros
 

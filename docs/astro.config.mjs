@@ -35,7 +35,10 @@ export default defineConfig({
         },
         {
           label: "Recipes",
-          items: [{ label: "Test Macros", slug: "recipes/test-macros" }],
+          items: [
+            { label: "Introduction", slug: "recipes/introduction" },
+            { label: "Test Macros", slug: "recipes/test-macros" },
+          ],
         },
         {
           label: "Reference",
