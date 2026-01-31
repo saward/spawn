@@ -21,7 +21,7 @@ import { globalOptions, databaseOption } from "../../../components/cli-options";
 
 Reports any migration that has an `up.sql` but no `lock.toml`. Unpinned migrations are not reproducible because they resolve components from the current working tree rather than from a pinned snapshot.
 
-To fix, pin the migration:
+To fix, pin the migration using [`spawn migration pin`](/cli/migration-pin/):
 
 ```bash
 spawn migration pin <migration-name>
