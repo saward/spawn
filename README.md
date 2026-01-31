@@ -26,9 +26,9 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/saward/spawn/releases/l
 
 ## The Philosophy
 
-Standard migration tools (Flyway, dbmate) are great at running scripts, but bad at managing code. When you update a complex function, you have to copy-paste the code into a new file, which is cumbersome, makes your Git history messy, and making code reviews more challenging.
+Standard migration tools (Flyway, dbmate) are great at running scripts, but bad at managing code. When you update a complex function, you have to copy-paste the code into a new file, which is cumbersome, makes your Git history messy, and makes code reviews more challenging.
 
-**Spawn works different:**
+**Spawn works differently:**
 
 1.  **Edit in Place:** Keep your functions in `components/`. Edit them there. Get perfect Git diffs.
 2.  **Pin in Time:** When you create a migration, Spawn **snapshots** your components in an efficient git-like storage, referenced per-migration via their `lock.toml`.
@@ -82,12 +82,6 @@ command = {
 ```
 
 > Docs: [Manage Databases](https://docs.spawn.dev/guides/manage-databases/) | [Configuration](https://docs.spawn.dev/reference/config/)
-
----
-
-To make it "punchy," you need to show the **Workflow** (Edit -> Include -> Pin) in as few lines as possible. Avoid complex SQL logic; focus on the _structure_.
-
-Here is a snippet that fits nicely right after your "The Philosophy" section.
 
 ---
 
