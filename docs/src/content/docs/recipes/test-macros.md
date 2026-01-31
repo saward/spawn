@@ -7,26 +7,20 @@ Test macros let you define reusable data factories directly in SQL, making it ea
 
 ## Basic macro
 
-Define a macro that creates a user (for example, in `components/macros/create_user.sql`):
+Define a macro that creates a user, to reduce boilerplate for SQL creation and provide defaults when not important.
 
 ```sql
 {% macro create_user(email, name="Test User") %}
 INSERT INTO users (email, name, created_at)
 VALUES ({{ email }}, {{ name }}, NOW())
 RETURNING id;
-{% endmacro %}
-```
+{% endmacro -%}
 
-Use it in your test:
-
-```sql
 BEGIN;
-
-{% from "macros/create-user.sql" import create_user -%}
 
 -- Create test users
 {{ create_user("alice@example.com", "Alice") }}
-{{ create_user("bob@example.com") }} -- Name is set to default value
+{{ create_user("bob@example.com") }}
 
 ROLLBACK;
 ```
