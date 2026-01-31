@@ -1,0 +1,63 @@
+---
+import type { CLIOption } from "./cli-options";
+
+interface ExitCode {
+  code: string;
+  description: string;
+}
+
+interface Props {
+  usage: string;
+  options?: CLIOption[];
+  exitCodes?: ExitCode[];
+}
+
+const { usage, options = [], exitCodes } = Astro.props;
+---
+
+<section class="cli-command">
+  <h2>Usage</h2>
+  <pre class="astro-code" style="background-color: var(--astro-code-color-background); padding: 1em; border-radius: 0.5em; overflow-x: auto;"><code>{usage}</code></pre>
+
+  <slot />
+
+  {options.length > 0 && (
+    <h2>Options</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Option</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        {options.map((opt) => (
+          <tr>
+            <td><code>{opt.flag}</code></td>
+            <td>{opt.description}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+
+  {exitCodes && exitCodes.length > 0 && (
+    <h2>Exit status</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Code</th>
+          <th>Meaning</th>
+        </tr>
+      </thead>
+      <tbody>
+        {exitCodes.map((ec) => (
+          <tr>
+            <td><code>{ec.code}</code></td>
+            <td>{ec.description}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+</section>

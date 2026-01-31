@@ -33,10 +33,10 @@ export default defineConfig({
             { label: "Manage Databases", slug: "guides/manage-databases" },
           ],
         },
-        // {
-        //   label: "Reference",
-        //   autogenerate: { directory: "reference" },
-        // },
+        {
+          label: "CLI Reference",
+          items: [{ label: "spawn check", slug: "cli/check" }],
+        },
       ],
     }),
   ],
