@@ -49,6 +49,7 @@ export default defineConfig({
           items: [
             { label: "Configuration File", slug: "reference/config" },
             { label: "Templating", slug: "reference/templating" },
+            { label: "CI/CD", slug: "reference/ci-cd" },
             { label: "Roadmap", slug: "reference/roadmap" },
           ],
         },
