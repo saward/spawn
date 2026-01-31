@@ -33,6 +33,7 @@ export default defineConfig({
         {
           label: "Guides",
           items: [
+            { label: "Local Development", slug: "guides/local-development" },
             { label: "Manage Databases", slug: "guides/manage-databases" },
           ],
         },
@@ -48,6 +49,7 @@ export default defineConfig({
           items: [
             { label: "Configuration File", slug: "reference/config" },
             { label: "Templating", slug: "reference/templating" },
+            { label: "Roadmap", slug: "reference/roadmap" },
           ],
         },
         {
