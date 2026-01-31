@@ -7,16 +7,54 @@ use opendal::Operator;
 use regex::Regex;
 use std::collections::BTreeMap;
 use std::fmt::Debug;
+use std::sync::OnceLock;
 
 use crate::store::pinner::Pinner;
 
 pub mod pinner;
+
+/// Regex patterns for matching migration files. Compiled once and cached.
+static UP_SQL_REGEX: OnceLock<Regex> = OnceLock::new();
+static LOCK_TOML_REGEX: OnceLock<Regex> = OnceLock::new();
+
+fn up_sql_regex() -> &'static Regex {
+    UP_SQL_REGEX.get_or_init(|| Regex::new(r"(?P<name>[^/]+)/up\.sql$").expect("valid regex"))
+}
+
+fn lock_toml_regex() -> &'static Regex {
+    LOCK_TOML_REGEX.get_or_init(|| Regex::new(r"(?P<name>[^/]+)/lock\.toml$").expect("valid regex"))
+}
 
 /// Filesystem-level status of a single migration.
 #[derive(Debug, Clone)]
 pub struct MigrationFileStatus {
     pub has_up_sql: bool,
     pub has_lock_toml: bool,
+}
+
+/// Helper function to process file paths and update migration status.
+/// This is the canonical way to determine if a path represents a migration file.
+fn process_migration_path(path: &str, result: &mut BTreeMap<String, MigrationFileStatus>) {
+    if let Some(caps) = up_sql_regex().captures(path) {
+        let name = caps["name"].to_string();
+        result
+            .entry(name)
+            .or_insert(MigrationFileStatus {
+                has_up_sql: false,
+                has_lock_toml: false,
+            })
+            .has_up_sql = true;
+    }
+    if let Some(caps) = lock_toml_regex().captures(path) {
+        let name = caps["name"].to_string();
+        result
+            .entry(name)
+            .or_insert(MigrationFileStatus {
+                has_up_sql: false,
+                has_lock_toml: false,
+            })
+            .has_lock_toml = true;
+    }
 }
 
 /// Get the filesystem status of a single migration.
@@ -26,16 +64,33 @@ pub async fn get_migration_fs_status(
     pather: &FolderPather,
     migration_name: &str,
 ) -> Result<MigrationFileStatus> {
-    let up_sql_path = pather.migration_script_file_path(migration_name);
-    let lock_toml_path = pather.migration_lock_file_path(migration_name);
+    let migrations_folder = pather.migrations_folder();
+    let migration_prefix = format!(
+        "{}/{}/",
+        migrations_folder.trim_start_matches('/'),
+        migration_name
+    );
 
-    let has_up_sql = op.exists(&up_sql_path).await.unwrap_or(false);
-    let has_lock_toml = op.exists(&lock_toml_path).await.unwrap_or(false);
+    let mut lister = op
+        .lister_with(&migration_prefix)
+        .recursive(true)
+        .await
+        .context("listing migration files")?;
 
-    Ok(MigrationFileStatus {
-        has_up_sql,
-        has_lock_toml,
-    })
+    let mut result: BTreeMap<String, MigrationFileStatus> = BTreeMap::new();
+
+    while let Some(entry) = lister.try_next().await? {
+        let path = entry.path().to_string();
+        process_migration_path(&path, &mut result);
+    }
+
+    // Return the status for the requested migration, or default if not found
+    Ok(result
+        .remove(migration_name)
+        .unwrap_or(MigrationFileStatus {
+            has_up_sql: false,
+            has_lock_toml: false,
+        }))
 }
 
 /// Scan the migrations folder and return the filesystem status of each migration,
@@ -53,33 +108,11 @@ pub async fn list_migration_fs_status(
         .await
         .context("listing migrations")?;
 
-    let up_sql_re = Regex::new(r"(?P<name>[^/]+)/up\.sql$").expect("valid regex");
-    let lock_toml_re = Regex::new(r"(?P<name>[^/]+)/lock\.toml$").expect("valid regex");
-
     let mut result: BTreeMap<String, MigrationFileStatus> = BTreeMap::new();
 
     while let Some(entry) = lister.try_next().await? {
         let path = entry.path().to_string();
-        if let Some(caps) = up_sql_re.captures(&path) {
-            let name = caps["name"].to_string();
-            result
-                .entry(name)
-                .or_insert(MigrationFileStatus {
-                    has_up_sql: false,
-                    has_lock_toml: false,
-                })
-                .has_up_sql = true;
-        }
-        if let Some(caps) = lock_toml_re.captures(&path) {
-            let name = caps["name"].to_string();
-            result
-                .entry(name)
-                .or_insert(MigrationFileStatus {
-                    has_up_sql: false,
-                    has_lock_toml: false,
-                })
-                .has_lock_toml = true;
-        }
+        process_migration_path(&path, &mut result);
     }
 
     Ok(result)
@@ -356,5 +389,58 @@ mod tests {
             "Expected to find 20240908123456-second migration, got {:?}",
             migration_names
         );
+    }
+
+    #[tokio::test]
+    async fn test_get_migration_fs_status_with_lock() {
+        // Create an in-memory operator with both up.sql and lock.toml
+        let mem_service = Memory::default();
+        let op = Operator::new(mem_service).unwrap().finish();
+
+        // Write both up.sql and lock.toml
+        op.write("/migrations/20240101000000-test/up.sql", "SELECT 1;")
+            .await
+            .expect("Failed to write up.sql");
+        op.write(
+            "/migrations/20240101000000-test/lock.toml",
+            "pin = \"abc123\"",
+        )
+        .await
+        .expect("Failed to write lock.toml");
+
+        let pather = FolderPather {
+            spawn_folder: "".to_string(),
+        };
+
+        // This migration should have both up.sql and lock.toml
+        let status = get_migration_fs_status(&op, &pather, "20240101000000-test")
+            .await
+            .expect("Failed to get migration status");
+
+        assert!(status.has_up_sql, "Migration should have up.sql");
+        assert!(status.has_lock_toml, "Migration should have lock.toml");
+    }
+
+    #[tokio::test]
+    async fn test_get_migration_fs_status_without_lock() {
+        // Create an in-memory operator with just an up.sql file
+        let mem_service = Memory::default();
+        let op = Operator::new(mem_service).unwrap().finish();
+
+        // Write only up.sql, no lock.toml
+        op.write("/migrations/20240101000000-test/up.sql", "SELECT 1;")
+            .await
+            .expect("Failed to write up.sql");
+
+        let pather = FolderPather {
+            spawn_folder: "".to_string(),
+        };
+
+        let status = get_migration_fs_status(&op, &pather, "20240101000000-test")
+            .await
+            .expect("Failed to get migration status");
+
+        assert!(status.has_up_sql, "Migration should have up.sql");
+        assert!(!status.has_lock_toml, "Migration should not have lock.toml");
     }
 }
