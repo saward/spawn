@@ -33,8 +33,11 @@ export default defineConfig({
         {
           label: "Guides",
           items: [
-            { label: "Local Development", slug: "guides/local-development" },
             { label: "Manage Databases", slug: "guides/manage-databases" },
+            {
+              label: "Local Spawn Development",
+              slug: "guides/local-development",
+            },
           ],
         },
         {
@@ -47,10 +50,10 @@ export default defineConfig({
         {
           label: "Reference",
           items: [
-            { label: "Configuration File", slug: "reference/config" },
-            { label: "Templating", slug: "reference/templating" },
             { label: "CI/CD", slug: "reference/ci-cd" },
+            { label: "Configuration File", slug: "reference/config" },
             { label: "Roadmap", slug: "reference/roadmap" },
+            { label: "Templating", slug: "reference/templating" },
           ],
         },
         {

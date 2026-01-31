@@ -12,31 +12,28 @@ This guide covers setting up a local development environment for working with Sp
 
 ## Starting PostgreSQL
 
-If you initialized your project with `spawn init --docker`, you already have a `docker-compose.yaml`. Start the database:
+This project has a docker-compose file that you can use for integration testing:
 
 ```bash
 docker compose up -d
 ```
 
-This starts a PostgreSQL 17 instance accessible on the port configured in your compose file.
-
 ## Running Tests
 
-Spawn has two categories of tests: unit tests that use in-memory storage and require no external dependencies, and integration tests that require a running PostgreSQL instance.
+Spawn has two categories of tests: unit tests, some of which use in-memory storage and require no external dependencies, and integration tests that require a running PostgreSQL instance.
 
 ### Unit Tests
 
 Unit tests use in-memory storage via opendal and don't need a database:
 
 ```bash
-cargo test --lib --bins
-cargo test --test migration_build
+cargo test
 ```
 
-Or to run all non-integration tests:
+Or to run all integration tests, which require the local database running
 
 ```bash
-cargo test
+cargo test -- --ignored
 ```
 
 ### Integration Tests
@@ -50,7 +47,7 @@ docker compose up -d
 cargo test --test integration_postgres -- --ignored
 ```
 
-**With a direct PostgreSQL connection:**
+**With a direct PostgreSQL configuration:**
 
 Set environment variables to point at your PostgreSQL instance:
 
@@ -68,16 +65,9 @@ cargo test --test integration_postgres -- --ignored
 cargo test --test integration_postgres test_migration_is_idempotent -- --ignored --nocapture
 ```
 
-### Running All Tests
-
-```bash
-docker compose up -d
-cargo test -- --ignored
-```
-
 ## Test Isolation
 
-Each integration test creates its own unique database, so tests can run in parallel without interference. Databases are automatically dropped when each test completes.
+Each integration test creates its own unique database, so tests can run without interference. Databases are automatically dropped when each test completes.
 
 ## Keeping Test Databases for Inspection
 
@@ -88,17 +78,3 @@ SPAWN_TEST_KEEP_DB=1 cargo test --test integration_postgres test_migration_creat
 ```
 
 This prints the database name and connection instructions so you can connect and inspect the results with `psql`.
-
-## CI Configuration
-
-In CI environments where Docker may not be available, connect to PostgreSQL directly via environment variables:
-
-```bash
-SPAWN_TEST_PSQL_HOST=localhost \
-SPAWN_TEST_PSQL_PORT=5432 \
-SPAWN_TEST_PSQL_USER=spawn \
-PGPASSWORD=spawn \
-cargo test --test integration_postgres -- --ignored
-```
-
-Set these variables in your CI provider's secrets or environment configuration as appropriate.

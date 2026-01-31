@@ -28,6 +28,7 @@ This is a high-level overview of where Spawn is headed. Items here are subject t
 - ✅ **Expected output comparison** - PostgreSQL-style diff-based testing
 - ✅ **Test expectation generation** - `spawn test expect <test>` creates baseline outputs
 - ✅ **Batch test running** - `spawn test compare` runs all tests
+- ✅ **GitHub Actions** - Official CI/CD integration
 
 ### Configuration & Structure
 
@@ -78,7 +79,6 @@ This is a high-level overview of where Spawn is headed. Items here are subject t
 - 🔄 **Dependency tracking** - Alert when components need recreation
 - 🔄 **Script execution** - Run ad-hoc database scripts outside migrations
 - 🔄 **SQL validation** - Static analysis similar to sqlx
-- 🔄 **GitHub Actions** - Official CI/CD integration
 
 ## Enhanced Testing & Safety
 
