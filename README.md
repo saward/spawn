@@ -90,39 +90,40 @@ command = {
 Here is how you handle a changing database function in Spawn without breaking history.
 
 **1. Create a Component** (Your Source of Truth)
-
-_`components/pricing/vat.sql`_
+_`components/users/full_name.sql`_
 
 ```sql
-CREATE OR REPLACE FUNCTION calculate_vat(price numeric) RETURNS numeric AS $$
+CREATE OR REPLACE FUNCTION get_full_name(first text, last text)
+RETURNS text AS $$
 BEGIN
-    RETURN price * 0.20; -- Current VAT rate
+    -- V1 Logic: Simple concatenation
+    RETURN first || ' ' || last;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql IMMUTABLE;
 ```
 
 **2. Write a Migration** (Import, don't Copy)
-
-_`migrations/20260101-add-vat/up.sql`_
+_`migrations/20260101-add-users/up.sql`_
 
 ```sql
 BEGIN;
-{% include 'pricing/vat.sql' %}
+CREATE TABLE users (id serial, first text, last text);
+
+-- Import the logic to generate names
+{% include 'users/full_name.sql' %}
 COMMIT;
 ```
 
 **3. Pin It** (The Magic)
-
-Run `spawn migration pin`. Spawn calculates the hash of `vat.sql` and locks this migration to that specific version.
+Run `spawn migration pin`. Spawn calculates the hash of `full_name.sql` and locks this migration to that specific version.
 
 ```toml
-# migrations/20260101-add-vat/lock.toml
-pin = "a1b2c3d4..." # 🔒 This migration will ALWAYS use the 20% version.
+# migrations/20260101-add-users/lock.toml
+pin = "a1b2c3d4..." # 🔒 This migration will ALWAYS use the V1 logic.
 ```
 
 **4. Evolve It**
-
-Next year, when VAT changes to 22%, you simply update `components/pricing/vat.sql` and create a _new_ migration. The old migration remains locked to the old 20% version forever. **Zero copy-pasting.**
+Next year, when you decide to include **Middle Initials**, you simply update `components/users/full_name.sql` and create a _new_ migration. The old migration remains locked to the V1 logic forever. **Zero copy-pasting.**
 
 ## Roadmap
 
