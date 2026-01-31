@@ -64,18 +64,29 @@ impl Command for AdoptMigration {
 
         let engine = config.new_engine().await?;
 
-        for migration in &migrations {
+        let total = migrations.len();
+        for (i, migration) in migrations.iter().enumerate() {
+            let counter = if total > 1 {
+                format!(
+                    "[{:>width$}/{}] ",
+                    i + 1,
+                    total,
+                    width = total.to_string().len()
+                )
+            } else {
+                String::new()
+            };
             match engine
                 .migration_adopt(migration, super::DEFAULT_NAMESPACE, &description)
                 .await
             {
                 Ok(msg) => {
-                    println!("{}", msg);
+                    println!("{}{}", counter, msg);
                 }
                 Err(MigrationError::AlreadyApplied { info, .. }) => {
                     println!(
-                        "Migration '{}' already applied (status: {}, activity: {})",
-                        migration, info.last_status, info.last_activity
+                        "{}Migration '{}' already applied (status: {}, activity: {})",
+                        counter, migration, info.last_status, info.last_activity
                     );
                 }
                 Err(e) => {

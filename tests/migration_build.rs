@@ -4,7 +4,7 @@ use opendal::services::Memory;
 use opendal::Operator;
 use pretty_assertions::assert_eq;
 use spawn_db::{
-    commands::{BuildMigration, Command, NewMigration, Outcome, PinMigration},
+    commands::{BuildMigration, Check, Command, NewMigration, Outcome, PinMigration},
     config::{Config, ConfigLoaderSaver},
     engine::{CommandSpec, DatabaseConfig, EngineType},
     store,
@@ -376,6 +376,42 @@ CREATE TABLE "users" (
 COMMIT;"#;
 
     assert_eq!(expected, built_with_vars);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_check_passes_with_no_migrations() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let config = helper.load_config().await?;
+
+    let outcome = Check.execute(&config).await?;
+    assert!(matches!(outcome, Outcome::Success));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_check_fails_with_unpinned_migration() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    helper.create_migration("unpinned-migration").await?;
+
+    let config = helper.load_config().await?;
+    let outcome = Check.execute(&config).await?;
+    assert!(matches!(outcome, Outcome::CheckFailed));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_check_passes_when_all_pinned() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration_name = helper.create_migration("will-be-pinned").await?;
+    helper.pin_migration(&migration_name).await?;
+
+    let config = helper.load_config().await?;
+    let outcome = Check.execute(&config).await?;
+    assert!(matches!(outcome, Outcome::Success));
 
     Ok(())
 }
