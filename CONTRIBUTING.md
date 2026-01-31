@@ -1,11 +1,26 @@
 # Contributing
 
-We love your input! We want to make contributing to this project as easy and transparent as possible, whether it's:
+Thank you for your interest in Spawn.
 
-- Reporting a bug
-- Discussing the current state of the code
-- Submitting a fix
-- Proposing new features
+Spawn is an opinionated tool with a specific architectural vision. To ensure the project remains focused and maintainable, we ask that you follow the guidelines below.
+
+### ⚠️ Important: Discuss First
+
+**Please open an issue to discuss any changes before submitting a Pull Request.**
+
+We prioritize features that align with the core "Database Build System" philosophy. Pull Requests submitted without a prior discussion or linked issue may be closed without review. This ensures we don't waste your time on work that cannot be merged.
+
+### Reporting Bugs
+
+If you find a bug, please open an issue using the Bug Report template.
+
+- Include your `spawn.toml` (redacted).
+- Include the output of `spawn migration status`.
+- Provide clear steps to reproduce the issue.
+
+### Proposing Features
+
+Feature requests are welcome, but please verify they align with the project's scope (PostgreSQL-first, zero-abstraction). Please describe **the problem you are trying to solve**, not just the solution you want to implement.
 
 ## Contributor License Agreement (CLA)
 
