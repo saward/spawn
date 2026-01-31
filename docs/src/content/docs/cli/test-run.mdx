@@ -7,7 +7,7 @@ import CLICommand from "../../../components/CLICommand.astro";
 import { globalOptions, databaseOption } from "../../../components/cli-options";
 
 <CLICommand
-  usage="spawn test run [name]"
+  usage="spawn test run <name>"
   options={[...databaseOption, ...globalOptions]}
 >
 
@@ -15,11 +15,11 @@ Executes one or all tests against the configured database and displays the resul
 
 ## Arguments
 
-- `[name]` — Optional. Specific test to run. If omitted, runs all tests in the `tests/` directory.
+- `<name>` — Specific test to run.
 
 ## Behavior
 
-Each test runs in a transaction that is rolled back, ensuring tests don't affect the database state.
+Runs the SQL for the test against the database, showing the output from that test.
 
 ## Examples
 
@@ -27,12 +27,6 @@ Run a specific test:
 
 ```bash
 spawn test run user-creation
-```
-
-Run all tests:
-
-```bash
-spawn test run
 ```
 
 </CLICommand>

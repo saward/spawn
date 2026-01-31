@@ -4,13 +4,18 @@ description: Build a migration into final SQL.
 ---
 
 import CLICommand from "../../../components/CLICommand.astro";
-import { globalOptions, databaseOption, environmentOption } from "../../../components/cli-options";
+import {
+  globalOptions,
+  databaseOption,
+  environmentOption,
+  variablesOption,
+} from "../../../components/cli-options";
 
 <CLICommand
   usage="spawn migration build <migration> [--pinned] [--variables <path>]"
   options={[
     { flag: "--pinned", description: "Use pinned component versions from lock.toml" },
-    { flag: "--variables <path>", description: "Path to variables file (JSON, TOML, or YAML)" },
+    ...variablesOption,
     ...environmentOption,
     ...databaseOption,
     ...globalOptions

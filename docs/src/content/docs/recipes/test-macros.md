@@ -7,12 +7,12 @@ Test macros let you define reusable data factories directly in SQL, making it ea
 
 ## Basic macro
 
-Define a macro that creates a user:
+Define a macro that creates a user (for example, in `components/macros/create_user.sql`):
 
 ```sql
 {% macro create_user(email, name="Test User") %}
 INSERT INTO users (email, name, created_at)
-VALUES ('{{ email }}', '{{ name }}', NOW())
+VALUES ({{ email }}, {{ name }}, NOW())
 RETURNING id;
 {% endmacro %}
 ```
@@ -22,12 +22,31 @@ Use it in your test:
 ```sql
 BEGIN;
 
+{% from "macros/create-user.sql" import create_user -%}
+
 -- Create test users
 {{ create_user("alice@example.com", "Alice") }}
-{{ create_user("bob@example.com", "Bob") }}
+{{ create_user("bob@example.com") }} -- Name is set to default value
 
--- Run your test query
-SELECT COUNT(*) FROM users;
+ROLLBACK;
+```
+
+Which produces the following output:
+
+```sql
+BEGIN;
+
+-- Create test users
+
+INSERT INTO users (email, name, created_at)
+VALUES ('alice@example.com', 'Alice', NOW())
+RETURNING id;
+
+
+INSERT INTO users (email, name, created_at)
+VALUES ('bob@example.com', 'Test User', NOW())
+RETURNING id;
+
 
 ROLLBACK;
 ```
@@ -54,10 +73,10 @@ DECLARE
   user_id INTEGER;
 BEGIN
   SELECT id INTO user_id FROM ({{ create_user("alice@example.com", "Alice") }}) AS u;
-  
+
   -- Create posts for that user
   INSERT INTO posts (user_id, title, content)
-  VALUES 
+  VALUES
     (user_id, 'First Post', 'Hello world'),
     (user_id, 'Second Post', 'Another post');
 END $$;
@@ -79,10 +98,10 @@ Create factories with optional fields:
 {% macro create_post(user_id, title, content="", published=false) %}
 INSERT INTO posts (user_id, title, content, published, created_at)
 VALUES (
-  {{ user_id }}, 
-  '{{ title }}', 
-  '{{ content }}', 
-  {{ published }}, 
+  {{ user_id }},
+  '{{ title }}',
+  '{{ content }}',
+  {{ published }},
   NOW()
 )
 RETURNING id;
@@ -160,17 +179,19 @@ ROLLBACK;
 Use variables for more realistic data:
 
 **test-data.json:**
+
 ```json
 {
   "companies": [
-    {"name": "Acme Corp", "industry": "Manufacturing"},
-    {"name": "Globex Inc", "industry": "Technology"},
-    {"name": "Initech", "industry": "Software"}
+    { "name": "Acme Corp", "industry": "Manufacturing" },
+    { "name": "Globex Inc", "industry": "Technology" },
+    { "name": "Initech", "industry": "Software" }
   ]
 }
 ```
 
 **Test:**
+
 ```sql
 {% macro create_company(name, industry) %}
 INSERT INTO companies (name, industry, created_at)
@@ -185,8 +206,8 @@ BEGIN;
 {% endfor %}
 
 -- Test
-SELECT industry, COUNT(*) 
-FROM companies 
+SELECT industry, COUNT(*)
+FROM companies
 GROUP BY industry;
 
 ROLLBACK;
@@ -197,6 +218,7 @@ ROLLBACK;
 Store commonly used macros in a component file:
 
 **components/test_macros.sql:**
+
 ```sql
 {% macro create_user(email, name="Test User") %}
 INSERT INTO users (email, name, created_at)
@@ -212,6 +234,7 @@ RETURNING id;
 ```
 
 **tests/user-posts/test.sql:**
+
 ```sql
 {% include "test_macros.sql" %}
 
