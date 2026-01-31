@@ -5,16 +5,34 @@ export interface CLIOption {
 
 /** Options available on every command. */
 export const globalOptions: CLIOption[] = [
-  { flag: "--config-file <path>", description: "Path to config file. Defaults to spawn.toml." },
+  {
+    flag: "--config-file <path>",
+    description: "Path to config file. Defaults to spawn.toml.",
+  },
   { flag: "-d, --debug", description: "Turn on debug output." },
 ];
 
 /** The --database flag. Relevant to commands that read or validate the database config. */
 export const databaseOption: CLIOption[] = [
-  { flag: "--database <name>", description: "Select which database from spawn.toml to use." },
+  {
+    flag: "--database <name>",
+    description: "Select which database from spawn.toml to use.",
+  },
 ];
 
 /** The --environment flag used by migration subcommands. */
 export const environmentOption: CLIOption[] = [
-  { flag: "-e, --environment <name>", description: "Override the environment for the database config." },
+  {
+    flag: "-e, --environment <name>",
+    description: "Override the environment for the database config.",
+  },
+];
+
+/** The --variables flag for loading template variables. Values are available in templates as `{{ variables.key }}`. */
+export const variablesOption: CLIOption[] = [
+  {
+    flag: "--variables <path>",
+    description:
+      "Path to variables file (JSON, TOML, or YAML). Values are available in templates under {{ variables }}.",
+  },
 ];

@@ -1,0 +1,34 @@
+---
+title: spawn test expect
+description: Update expected test output.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import { globalOptions, databaseOption } from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn test expect <name>"
+  options={[...databaseOption, ...globalOptions]}
+>
+
+Runs a test and saves its output as the new expected result for future comparisons.
+
+## Arguments
+
+- `<name>` — The test directory name
+
+## Behavior
+
+1. Runs the specified test
+2. Captures the output
+3. Writes it to `tests/<name>/expected.txt`
+
+Use this command when test behavior changes intentionally and you want to update the baseline for [`spawn test compare`](/cli/test-compare/).
+
+## Example
+
+```bash
+spawn test expect user-creation
+```
+
+</CLICommand>

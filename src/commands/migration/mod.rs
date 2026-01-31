@@ -43,7 +43,7 @@ pub async fn get_combined_migration_status(
     let engine = config.new_engine().await?;
 
     // Get filesystem status
-    let fs_status = list_migration_fs_status(config.operator(), &config.pather()).await?;
+    let fs_status = list_migration_fs_status(config.operator(), &config.pather(), None).await?;
 
     // Get all migrations from database with their latest history entry
     let db_migrations_list = engine.get_migrations_from_db(namespace).await?;

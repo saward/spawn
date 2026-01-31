@@ -1,0 +1,36 @@
+---
+title: spawn test compare
+description: Run tests and compare output to expected results.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import { globalOptions, databaseOption } from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn test compare <name>"
+  options={[...databaseOption, ...globalOptions]}
+>
+
+Runs tests and compares their output against saved expected results, reporting any differences.
+
+## Arguments
+
+- `<name>` — Specific test to compare.
+
+## Behavior
+
+For each test:
+
+1. Runs the test and captures output
+2. Compares output to the `expected` file in the test directory
+3. Reports differences (if any)
+
+Use [`spawn test expect`](/cli/test-expect/) to update the expected output.
+
+## Example
+
+```bash
+spawn test compare user-creation
+```
+
+</CLICommand>

@@ -1,0 +1,85 @@
+---
+title: spawn migration apply
+description: Apply migrations to the database.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import {
+  globalOptions,
+  databaseOption,
+  environmentOption,
+  variablesOption,
+} from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn migration apply [migration] [options]"
+  options={[
+    { flag: "--no-pin", description: "Allow unpinned migrations (use current components)" },
+    ...variablesOption,
+    { flag: "--yes", description: "Skip confirmation prompt" },
+    { flag: "--retry", description: "Retry a previously failed migration" },
+    ...environmentOption,
+    ...databaseOption,
+    ...globalOptions
+  ]}
+>
+
+Applies one or more migrations to the configured database. By default, requires migrations to be pinned for reproducibility.
+
+## Arguments
+
+- `[migration]` — Optional. Specific migration to apply. If omitted, applies all pending migrations.
+
+## Behavior
+
+### Single migration
+
+```bash
+spawn migration apply 20260131120000-add-users-table
+```
+
+Applies the specified migration if not already applied.
+
+### All pending migrations
+
+```bash
+spawn migration apply
+```
+
+Shows a list of pending migrations and prompts for confirmation before applying all.
+
+## Pin requirement
+
+By default, `apply` requires migrations to have a `lock.toml`. This ensures the exact same component versions are used every time. Use `--no-pin` to bypass this requirement and use current working tree components (not recommended for production).
+
+## Retry logic
+
+If a migration previously failed, `apply` will refuse to run it again unless you pass `--retry`. This prevents accidental re-execution of partially applied migrations.
+
+## Examples
+
+Apply all pending migrations:
+
+```bash
+spawn migration apply
+```
+
+Apply a specific migration without confirmation:
+
+```bash
+spawn migration apply 20260131120000-add-users-table --yes
+```
+
+Retry a failed migration:
+
+```bash
+spawn migration apply 20260131120000-add-users-table --retry
+```
+
+Use unpinned components (not recommended):
+
+```bash
+spawn migration apply 20260131120000-add-users-table --no-pin
+```
+
+</CLICommand>

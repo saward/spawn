@@ -3,7 +3,7 @@ title: Database Connections
 description: How to configure database connections in spawn.toml
 ---
 
-Spawn requires a database connection to apply migrations and run tests. Database connections are configured in your `spawn.toml` file under the `[databases]` section.
+Spawn requires a database connection to apply migrations and run tests. Database connections are configured in your `spawn.toml` file under the `[databases]` section. See the [configuration reference](/reference/config/#database-configurations) for the full list of database fields.
 
 ## Basic Configuration
 

@@ -1,0 +1,46 @@
+---
+title: spawn migration status
+description: Show migration status across filesystem and database.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import { globalOptions, databaseOption, environmentOption } from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn migration status"
+  options={[...environmentOption, ...databaseOption, ...globalOptions]}
+>
+
+Displays a table showing the status of all migrations from both the filesystem and database.
+
+## Output columns
+
+- **Migration** — Migration directory name
+- **Filesystem** — ✓ if `up.sql` exists, ✗ otherwise
+- **Pinned** — ✓ if `lock.toml` exists, ✗ otherwise
+- **Database** — ✓ if recorded in `_spawn.migration_history`, ✗ otherwise
+- **Status** — Current state:
+  - ✓ Applied — Successfully applied
+  - ⊙ Adopted — Marked as applied without running
+  - ⚠ Attempted — Previous attempt failed
+  - ✗ Failed — Last execution failed
+  - ○ Pending — Not yet applied
+
+## Example output
+
+```
+┌─────────────────────────────────┬────────────┬────────┬──────────┬───────────┐
+│ Migration                       │ Filesystem │ Pinned │ Database │ Status    │
+├─────────────────────────────────┼────────────┼────────┼──────────┼───────────┤
+│ 20260131120000-add-users-table  │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+│ 20260131130000-add-posts-table  │ ✓          │ ✗      │ ✗        │ ○ Pending │
+└─────────────────────────────────┴────────────┴────────┴──────────┴───────────┘
+```
+
+## Example
+
+```bash
+spawn migration status
+```
+
+</CLICommand>

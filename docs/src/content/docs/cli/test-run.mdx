@@ -1,0 +1,32 @@
+---
+title: spawn test run
+description: Run tests against the database.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import { globalOptions, databaseOption } from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn test run <name>"
+  options={[...databaseOption, ...globalOptions]}
+>
+
+Executes one or all tests against the configured database and displays the results.
+
+## Arguments
+
+- `<name>` — Specific test to run.
+
+## Behavior
+
+Runs the SQL for the test against the database, showing the output from that test.
+
+## Examples
+
+Run a specific test:
+
+```bash
+spawn test run user-creation
+```
+
+</CLICommand>

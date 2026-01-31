@@ -42,7 +42,12 @@ impl TelemetryDescribe for Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Initialize a new migration environment
-    Init,
+    Init {
+        /// Generate a docker-compose.yaml file for local PostgreSQL development.
+        /// Optionally specify a database/project name (defaults to 'postgres').
+        #[arg(long)]
+        docker: Option<Option<String>>,
+    },
     /// Check for potential issues (unpinned migrations, etc.)
     Check,
     Migration {
@@ -60,7 +65,7 @@ pub enum Commands {
 impl TelemetryDescribe for Commands {
     fn telemetry(&self) -> TelemetryInfo {
         match self {
-            Commands::Init => TelemetryInfo::new("init"),
+            Commands::Init { .. } => TelemetryInfo::new("init"),
             Commands::Check => TelemetryInfo::new("check"),
             Commands::Migration { command, .. } => match command {
                 Some(cmd) => {
@@ -224,9 +229,10 @@ pub struct CliResult {
 
 pub async fn run_cli(cli: Cli, base_op: &Operator) -> CliResult {
     // Handle init command separately as it doesn't require existing config
-    if let Some(Commands::Init) = &cli.command {
+    if let Some(Commands::Init { docker }) = &cli.command {
         let init_cmd = Init {
             config_file: cli.config_file.clone(),
+            docker: docker.clone(),
         };
         match init_cmd.execute(base_op).await {
             Ok((outcome, project_id)) => {
@@ -290,7 +296,7 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> CliResult {
 
 async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
     match cli.command {
-        Some(Commands::Init) => unreachable!(), // Already handled in run_cli
+        Some(Commands::Init { .. }) => unreachable!(), // Already handled in run_cli
         Some(Commands::Check) => Check.execute(config).await,
         Some(Commands::Migration {
             command,

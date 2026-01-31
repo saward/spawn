@@ -1,0 +1,39 @@
+---
+title: spawn migration new
+description: Create a new migration.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import { globalOptions, databaseOption, environmentOption } from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn migration new <name>"
+  options={[...environmentOption, ...databaseOption, ...globalOptions]}
+>
+
+Creates a new timestamped migration directory with a template `up.sql` file.
+
+## Arguments
+
+- `<name>` — A descriptive name for the migration (e.g., `add-users-table`)
+
+## Behavior
+
+The command creates a new directory at `migrations/YYYYMMDDHHMMSS-<name>/` with an `up.sql` template:
+
+```sql
+BEGIN;
+
+COMMIT;
+```
+
+The timestamp prefix ensures migrations are applied in chronological order.
+
+## Example
+
+```bash
+spawn migration new add-users-table
+# Creates: migrations/20260131120000-add-users-table/up.sql
+```
+
+</CLICommand>

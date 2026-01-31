@@ -1,0 +1,54 @@
+---
+title: spawn migration adopt
+description: Mark a migration as applied without running it.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import { globalOptions, databaseOption, environmentOption } from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn migration adopt [migration] [options]"
+  options={[
+    { flag: "--yes", description: "Skip confirmation prompt" },
+    { flag: "--description <text>", description: "Reason for adoption (recorded in history)" },
+    ...environmentOption,
+    ...databaseOption,
+    ...globalOptions
+  ]}
+>
+
+Records a migration as applied in `_spawn.migration_history` without executing the SQL. Useful when migrations were applied manually or through other means.
+
+## Arguments
+
+- `[migration]` — Optional. Specific migration to adopt. If omitted, adopts all pending migrations.
+
+## Use cases
+
+- Migrations were run manually via psql
+- Database was created from a backup that includes newer schema
+- Initial setup where migrations don't need to run but should be tracked
+
+## Behavior
+
+Adoption creates a history entry with:
+- Status: `success`
+- Activity: `ADOPT`
+- Optional description explaining why it was adopted
+
+## Examples
+
+Adopt a specific migration:
+
+```bash
+spawn migration adopt 20260131120000-add-users-table \
+  --description "Applied manually via psql"
+```
+
+Adopt all pending migrations:
+
+```bash
+spawn migration adopt --yes
+```
+
+</CLICommand>

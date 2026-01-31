@@ -1,0 +1,60 @@
+---
+title: spawn migration build
+description: Build a migration into final SQL.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import {
+  globalOptions,
+  databaseOption,
+  environmentOption,
+  variablesOption,
+} from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn migration build <migration> [--pinned] [--variables <path>]"
+  options={[
+    { flag: "--pinned", description: "Use pinned component versions from lock.toml" },
+    ...variablesOption,
+    ...environmentOption,
+    ...databaseOption,
+    ...globalOptions
+  ]}
+>
+
+Renders a migration's `up.sql` template into final SQL, resolving component includes and template variables. Outputs to stdout.
+
+## Arguments
+
+- `<migration>` — The migration directory name
+
+## Behavior
+
+1. Loads the migration's `up.sql` template
+2. Resolves component includes from `components/` (or `pinned/` if `--pinned`)
+3. Injects template variables from config or `--variables` file
+4. Renders final SQL to stdout
+
+Without `--pinned`, the migration uses the current working tree versions of components. With `--pinned`, it uses the locked versions from the migration's `lock.toml`.
+
+## Examples
+
+Build with current components:
+
+```bash
+spawn migration build 20260131120000-add-users-table
+```
+
+Build with pinned components:
+
+```bash
+spawn migration build 20260131120000-add-users-table --pinned
+```
+
+Build with custom variables:
+
+```bash
+spawn migration build 20260131120000-add-users-table --variables ./prod-vars.json
+```
+
+</CLICommand>

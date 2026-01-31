@@ -22,7 +22,7 @@ impl Command for Check {
         let mut warnings: Vec<String> = Vec::new();
 
         // Grab status from store
-        let fs_status = list_migration_fs_status(config.operator(), &config.pather()).await?;
+        let fs_status = list_migration_fs_status(config.operator(), &config.pather(), None).await?;
 
         for (name, status) in &fs_status {
             if status.has_up_sql && !status.has_lock_toml {

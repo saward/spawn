@@ -55,7 +55,7 @@ pub trait Command: TelemetryDescribe {
 pub enum Outcome {
     AdoptedMigration,
     AppliedMigrations,
-    BuiltMigration { content: String },
+    BuiltMigration { content: String, pinned_warn: bool },
     CheckFailed,
     NewMigration(String),
     NewTest(String),

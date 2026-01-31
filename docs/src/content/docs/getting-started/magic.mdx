@@ -10,19 +10,35 @@ Spawn is a Database Build System. It currently supports PostgreSQL via psql, but
 - Reusable components
 - Easy updating of database functions and views while maintaining history
 
+## Getting started
+
+First, initialize a new Spawn project with Docker support:
+
+```bash
+spawn init --docker
+```
+
+This creates a `spawn.toml` configuration file, a `docker-compose.yaml` for local PostgreSQL development, and the necessary project structure. Start your database:
+
+```bash
+docker compose up -d
+```
+
+You're now ready to create migrations!
+
 ## The magic
 
-Spawn solves these pain points:
+Spawn solves a few pain points for database development, including:
 
-- How do I update a database function, but keep the change history visible via git, while ensuring old migrations work?
+- How do I update a database function, keeping the change history visible via git in an easy to review way, all while ensuring old migrations work?
 - How do I run complex tests against my database?
 - How can I use external data in my migrations?
-- How do I create per-migration as well as regression tests?
+- How do I create per-migration (not yet available) as well as regression tests?
 - How can I apply some changes to local but not prod?
 
 Spawn solves these pain points through four mechanisms:
 
-1. Separate components (views, functions, triggers, reusable snippets) from the migrations.
+1. Separate the components (views, functions, triggers, reusable snippets) from the migrations.
 2. Content Addressable Storage (CAS), much like git, for components. Pin migrations to specific versions of components.
 3. Dynamic SQL generation via templating.
 4. Comprehensive testing framework.
@@ -44,10 +60,19 @@ Then you create your new migration:
 
 ```bash
 spawn migration new add_fee
-# creating migration with name 20260124064957-add_fee
-# creating migration at spawn/migrations/20260124064957-add_fee/up.sql
-# New migration created: 20260124064957-add_fee
 ```
+
+```
+creating migration with name 20260131075608-add_fee
+creating migration at spawn/migrations/20260131075608-add_fee/up.sql
+New migration created: 20260131075608-add_fee
+```
+
+:::tip[Rename your migration for this tutorial]
+In order to follow this tutorial a little easier, you may wish to rename the migration folder names to match the same timestamp as our tutorial. Otherwise, don't forget to rename the commands to match your local migration name.
+:::
+
+`migration apply` will always use the pinned version by default.
 
 Now, open up that migration script and reference your migration:
 
@@ -62,7 +87,7 @@ COMMIT;
 Finally, use `build` to see how the final SQL looks:
 
 ```bash
-spawn migration build 20260124064957-add_fee
+spawn migration build 20260131075608-add_fee
 ```
 
 ```sql
@@ -88,40 +113,121 @@ You've realised now that you'd rather your add_fee function pull the fee from a 
 However, if you update the component directly, we hit two problems:
 
 1. Any old migration tests (not yet implemented) that depend on that functionality will break.
-2. If we try running old migrations against a new database, `20260124064957-add_fee` will now pick up the new version of the component instead of the old.
+2. If we try running old migrations against a new database, `20260131075608-add_fee` will now pick up the new version of the component instead of the old.
 
-We can solve both of these problems via pinning. Pinning pins the migration to a specific version of the components folder. Run like so:
+We can solve both of these problems via pinning. Pinning pins the migration to a specific version of the components folder.
+
+If you try and apply your migration now, you'll hit an error:
 
 ```bash
-spawn migration pin 20260124064957-add_fee
-# Migration pinned: 257372323412c39db23080ade53cb9da
+spawn migration apply 20260131075608-add_fee
+```
+
+```
+Error: Failed to generate migration '20260131075608-add_fee'. Is it pinned? Run `spawn migration pin 20260131075608-add_fee` or use `--no-pin` to apply without pinning.
+
+Caused by:
+    0: could not load pinned files lock file
+    1: NotFound (permanent) at read, context: { service: fs, path: spawn/migrations/20260131075608-add_fee/lock.toml, range: 0- } => entity not found, source: No such file or dir
+ectory (os error 2)
+    2: No such file or directory (os error 2)
+```
+
+The error tells us that we need to either pin the pingration, or use `--no-pin`. Run like so:
+
+```bash
+spawn migration pin 20260131075608-add_fee
+```
+
+```
+Migration pinned: 257372323412c39db23080ade53cb9da
 ```
 
 This creates a `lock.toml` file in the migration folder:
 
 ```bash
-ls spawn/migrations/20260124064957-add_fee
-# lock.toml       up.sql
+ls spawn/migrations/20260131075608-add_fee
+```
 
-cat spawn/migrations/20260124064957-add_fee/lock.toml
+```
+lock.toml       up.sql
+```
+
+```bash
+cat spawn/migrations/20260131075608-add_fee/lock.toml
 ```
 
 ```toml
 pin = "257372323412c39db23080ade53cb9da"
 ```
 
-This stores a snapshot of the components inside `spawn/pinned` in a manner similar to how git works.
+This stores a snapshot of the components inside `spawn/pinned` in a manner very similar to how git works. The files produced by pin are stored in `/pinned`.
+
+Let's apply this to our locally running database:
+
+```bash
+spawn migration apply
+```
+
+```
+TARGET: postgres_psql
+ENVIRONMENT: dev
+
+The following 1 migration will be applied:
+  1. 20260131075608-add_fee
+
+Do you want to apply these migrations? [y/N]
+
+Migration '20260131075608-add_fee' applied successfully
+All migrations applied successfully.
+```
+
+Or alternatively, you can target this specific migration to apply:
+
+```bash
+spawn migration apply 20260131075608-add_fee
+```
+
+You can see that it has been applied:
+
+```bash
+spawn migration status
+```
+
+```
+┌────────────────────────┬────────────┬────────┬──────────┬───────────┐
+│ Migration              │ Filesystem │ Pinned │ Database │ Status    │
+├────────────────────────┼────────────┼────────┼──────────┼───────────┤
+│ 20260131075608-add_fee │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+└────────────────────────┴────────────┴────────┴──────────┴───────────┘
+```
+
+And can verify by calling it via docker using psql
+
+```bash
+docker exec -it postgres-db psql -U postgres -d postgres -c "select add_fee(12.2)"
+```
+
+```
+ add_fee
+---------
+   13.42
+(1 row)
+```
 
 Now let's make a new migration that updates the component:
 
 ```bash
 spawn migration new update-add-func
-# creating migration with name 20260124073534-update-add-func
-# creating migration at spawn/migrations/20260124073534-update-add-func/up.sql
-# New migration created: 20260124073534-update-add-func
 ```
 
-We can edit the component in place, so that we get proper git history record of changes, and so that PRs are easier to review. We update the migration:
+```
+creating migration with name 20260131080417-update-add-func
+creating migration at spawn/migrations/20260131080417-update-add-func/up.sql
+New migration created: 20260131080417-update-add-func
+```
+
+We can edit the component in place, so that we have a useful git record of changes made over time, and so that PRs are easier to review. We update the migration in place. In this example, we are going to update the function to obtain the base fee multiplier from a table rather than hard coded into the function. Create the migration first, replacing the contents of your new `<timestamp>-update-add-func` migration:
 
 ```sql
 BEGIN;
@@ -147,24 +253,38 @@ BEGIN
     RETURN a * (SELECT amount FROM fee WHERE name = 'base');
 END;
 $$ LANGUAGE plpgsql;
-
 ```
 
-Now if we were to build the old migration, we see the new version, but if we use `--pinned` then it builds with the component as it was originally at the time:
+If we were to build the old migration again, we would see that it now uses the new component instead of the old, even though we pinned it!
 
 ```bash
-spawn migration pin 20260124073534-update-add-func
-# Migration pinned: f12696fd7a68e4102f8c03dd23a774bf
-```
-
-The pinned version of the old migration uses the old version of the function:
-
-```bash
-spawn migration build 20260124064957-add_fee --pinned
+spawn migration build 20260131075608-add_fee
 ```
 
 ```sql
--- Output:
+BEGIN;
+
+CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
+RETURNS NUMERIC AS $$
+BEGIN
+    RETURN a * (SELECT amount FROM fee WHERE name = 'base');
+END;
+$$ LANGUAGE plpgsql;
+
+COMMIT;
+```
+
+```
+⚠️  This migration has been pinned. Run with --pinned to see how it will be generated when applied to a database.
+```
+
+However, it does give a warning at the end to tell us that this migration is pinned, and so we should use `--pinned` to see how it will be applied to the database:
+
+```bash
+spawn migration build 20260131075608-add_fee --pinned
+```
+
+```sql
 BEGIN;
 
 CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
@@ -177,14 +297,21 @@ $$ LANGUAGE plpgsql;
 COMMIT;
 ```
 
-The new migration uses the new version of the function:
+Perfect. The old migration script is unaffected by our changes to the `functions/add_fee.sql` migration.
+
+:::tip[Pinning with `build` and `apply`]
+`migration build` will always use the current version of components, rather than the pinned version, even if a lock file is present. Therefore, you must use `--pinned` to see how it will render the component when it applies.
+
+`migration apply` will always use the pinned version by default.
+:::
+
+Let's test building our new migration to ensure it shows us the new version of the component, and then pin it:
 
 ```bash
-spawn migration build 20260124073534-update-add-func --pinned
+spawn migration build 20260131080417-update-add-func
 ```
 
 ```sql
--- Output:
 BEGIN;
 
 CREATE TABLE fee (
@@ -192,7 +319,7 @@ CREATE TABLE fee (
     amount NUMERIC(3, 2)
 );
 
-INSERT INTO fee (name, amount) VALUES ('base', 0.12);
+INSERT INTO fee (name, amount) VALUES ('base', 1.12);
 
 CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
 RETURNS NUMERIC AS $$
@@ -203,6 +330,218 @@ $$ LANGUAGE plpgsql;
 
 COMMIT;
 ```
+
+```bash
+spawn migration status
+```
+
+```
+┌────────────────────────────────┬────────────┬────────┬──────────┬───────────┐
+│ Migration                      │ Filesystem │ Pinned │ Database │ Status    │
+├────────────────────────────────┼────────────┼────────┼──────────┼───────────┤
+│ 20260131075608-add_fee         │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+│ 20260131080417-update-add-func │ ✓          │ ✗      │ ✗        │ ○ Pending │
+└────────────────────────────────┴────────────┴────────┴──────────┴───────────┘
+```
+
+```bash
+spawn migration pin 20260131080417-update-add-func
+```
+
+```
+Migration pinned: f12696fd7a68e4102f8c03dd23a774bf
+```
+
+```bash
+spawn migration status
+```
+
+```
+┌────────────────────────────────┬────────────┬────────┬──────────┬───────────┐
+│ Migration                      │ Filesystem │ Pinned │ Database │ Status    │
+├────────────────────────────────┼────────────┼────────┼──────────┼───────────┤
+│ 20260131075608-add_fee         │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+│ 20260131080417-update-add-func │ ✓          │ ✓      │ ✗        │ ○ Pending │
+└────────────────────────────────┴────────────┴────────┴──────────┴───────────┘
+```
+
+Let's test our call to fee both before and after applying the new migration:
+
+```bash
+docker exec -it postgres-db psql -U postgres -d postgres -c "select add_fee(12.2)"
+```
+
+```
+ add_fee
+---------
+   13.42
+(1 row)
+```
+
+```bash
+spawn migration apply 20260131080417-update-add-func
+```
+
+```
+Migration '20260131080417-update-add-func' applied successfully
+All migrations applied successfully.
+```
+
+```bash
+docker exec -it postgres-db psql -U postgres -d postgres -c "select add_fee(12.2)"
+```
+
+```
+ add_fee
+---------
+  13.664
+(1 row)
+```
+
+```bash
+spawn migration status
+```
+
+```
+┌────────────────────────────────┬────────────┬────────┬──────────┬───────────┐
+│ Migration                      │ Filesystem │ Pinned │ Database │ Status    │
+├────────────────────────────────┼────────────┼────────┼──────────┼───────────┤
+│ 20260131075608-add_fee         │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+│ 20260131080417-update-add-func │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+└────────────────────────────────┴────────────┴────────┴──────────┴───────────┘
+```
+
+### Testing
+
+Let's create a test for our migration. Spawn's testing works by comparing the expected output from the actual output from running a series of SQL commands. In order to make our test easy to rerun without having to restart our database, we will use PostgreSQL's `WITH TEMPLATE` option which creates a copy of our database from the provided template. It also means that we don't have to run everything inside a test, which can be helpful when we want to test things that are related to transactions themselves. In this case, our `add_fee` func is simple enough that we could use a transaction, but we'll create a copy anyway to demonstrate how it works.
+
+Create a new test:
+
+```bash
+spawn test new add-func
+```
+
+```
+creating test with name add-func
+creating test at spawn/tests/add-func/test.sql
+New test created: add-func
+```
+
+Edit the file in `tests/add-func/test-sql, and let's create it like so:
+
+```sql
+-- In case a previous attempt for this test ran, let's make sure the old db is
+-- deleted.
+DROP DATABASE IF EXISTS add_fee_test;
+CREATE DATABASE add_fee_test WITH TEMPLATE postgres;
+-- connect to our new db for testing
+\c add_fee_test
+
+-- Test normal case
+SELECT add_fee(12.2);
+
+-- Update to a new fee
+UPDATE fee SET amount = 1.20 WHERE name = 'base';
+
+-- Test that the fee now reports new value correctly
+SELECT add_fee(12.2);
+
+-- connect back to postgres so we can delete this database
+\c postgres
+
+-- Clean up
+DROP DATABASE add_fee_test;
+```
+
+Now run the test, and see the output:
+
+```bash
+spawn test run add-func
+```
+
+```
+ add_fee
+---------
+  13.664
+(1 row)
+
+ add_fee
+---------
+  14.640
+(1 row)
+```
+
+Those are the fees we expect! Since the test looks good, let's tell spawn that this is the output we expect to see:
+
+```bash
+spawn test expect add-func
+```
+
+```bash
+cat spawn/tests/add-func/expected
+```
+
+```
+ add_fee
+---------
+  13.664
+(1 row)
+
+ add_fee
+---------
+  14.640
+(1 row)
+```
+
+Now we can run the test and confirm success:
+
+```bash
+spawn test compare add-func
+```
+
+```
+[PASS] add-func
+```
+
+```bash
+echo $?
+```
+
+```
+0
+```
+
+Perfect! Now, let's mess with our test to verify failure. Edit `tests/add-func/expected`, and change one of the numbers. In this case, I have changed the first number to `10.00`:
+
+```bash
+spawn test compare add-func
+```
+
+```
+[FAIL] add-func
+--- Diff ---
+1   1    |  add_fee
+2   2    | ---------
+3        |-  10.00
+    3    |+  13.664
+4   4    | (1 row)
+5   5    |
+6   6    |  add_fee
+
+-------------
+
+Error: ! Differences found in one or more tests
+```
+
+```bash
+echo $?
+```
+
+```
+1
+```
+
+We have been given a clear diff to show us where our expected test output differed from the actual, a FAIL note, and an exit status of 1.
 
 ### Dynamic templating
 
@@ -212,53 +551,14 @@ Spawn includes by default some useful variables. For example, we may have some d
 
 ```sql
 {%- if env == "dev" %}
-INSERT INTO fee (name, amount) VALUES ('high-test', 0.98);
+INSERT INTO fee (name, amount) VALUES ('high-test', 1.98);
 {% endif %}
 ```
 
-Now if we run it, we see that it doesn't show this insert:
+Now if we run it, we see that it shows this new insert:
 
 ```bash
-spawn migration build 20260124073534-update-add-func --pinned
-```
-
-```sql
--- Output:
-BEGIN;
-
-CREATE TABLE fee (
-    name TEXT PRIMARY KEY,
-    amount NUMERIC(3, 2)
-);
-
-INSERT INTO fee (name, amount) VALUES ('base', 0.12);
-
-CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
-RETURNS NUMERIC AS $$
-BEGIN
-    RETURN a * (SELECT amount FROM fee WHERE name = 'base');
-END;
-$$ LANGUAGE plpgsql;
-
-COMMIT;
-```
-
-But if we edit the database in `spawn.toml` to specify that it is a dev environment, like so:
-
-```toml {6}
-...
-database = "postgres_psql"
-
-[databases.postgres_psql]
-...
-environment = "dev"
-command = ["docker", "exec", "-i", "blhcdb", "psql", "-U", "postgres", "postgres"]
-```
-
-Then it includes the extra insert!
-
-```bash
-spawn migration build 20260124073534-update-add-func --pinned
+spawn migration build 20260131080417-update-add-func --pinned
 ```
 
 ```sql {9}
@@ -281,3 +581,43 @@ $$ LANGUAGE plpgsql;
 
 COMMIT;
 ```
+
+But if we edit the database in `spawn.toml` to specify that it is a dev environment, like so:
+
+```toml {6}
+...
+[databases.postgres_psql]
+engine = "postgres-psql"
+spawn_database = "postgres"
+spawn_schema = "_spawn"
+environment = "prod"
+```
+
+Then it hides the extra insert!
+
+```bash
+spawn migration build 20260131080417-update-add-func --pinned
+```
+
+```sql
+-- Output:
+BEGIN;
+
+CREATE TABLE fee (
+    name TEXT PRIMARY KEY,
+    amount NUMERIC(3, 2)
+);
+
+INSERT INTO fee (name, amount) VALUES ('base', 1.12);
+
+CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
+RETURNS NUMERIC AS $$
+BEGIN
+    RETURN a * (SELECT amount FROM fee WHERE name = 'base');
+END;
+$$ LANGUAGE plpgsql;
+
+COMMIT;
+```
+
+Templates open up a lot of power for managing your database migrations. Check out [Recipes](/recipes/introduction) for some ideas, and [Templating](/reference/templating) for details on how to use it.
