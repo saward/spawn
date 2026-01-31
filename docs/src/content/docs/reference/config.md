@@ -93,7 +93,7 @@ Set the `DO_NOT_TRACK` environment variable to disable telemetry globally.
 
 ## Database configurations
 
-The `[databases]` section defines one or more database connections. Each database is a table with the following fields:
+The `[databases]` section defines one or more database connections. Each database is a table with the following fields. For practical setup examples including Docker and Google Cloud SQL, see the [Database Connections guide](/guides/manage-databases/).
 
 ### `engine`
 
@@ -156,7 +156,7 @@ environment = "dev"
 **Type:** Table (CommandSpec)  
 **Required:** Yes
 
-Specifies how to execute SQL against the database. Two modes: `direct` and `provider`. For now, only connection via PostgreSQL psql is supported, so this should be the command that allows piping changes to the database.
+Specifies how to execute SQL against the database. Two modes: `direct` and `provider`. For now, only connection via PostgreSQL psql is supported, so this should be the command that allows piping changes to the database. See the [Database Connections guide](/guides/manage-databases/#command-configuration) for detailed examples of both modes.
 
 #### Direct command
 
