@@ -34,8 +34,15 @@ export default defineConfig({
           ],
         },
         {
+          label: "Recipes",
+          items: [{ label: "Test Macros", slug: "recipes/test-macros" }],
+        },
+        {
           label: "Reference",
-          items: [{ label: "Configuration File", slug: "reference/config" }],
+          items: [
+            { label: "Configuration File", slug: "reference/config" },
+            { label: "Templating", slug: "reference/templating" },
+          ],
         },
         {
           label: "CLI Reference",

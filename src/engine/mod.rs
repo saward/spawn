@@ -222,7 +222,7 @@ impl fmt::Display for EngineType {
 pub enum CommandSpec {
     /// Direct command to execute
     Direct { direct: Vec<String> },
-    /// A provider command that outputs the actual command as JSON
+    /// A provider command that outputs the actual command as a shell command.
     Provider {
         provider: Vec<String>,
         #[serde(default)]

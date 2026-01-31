@@ -137,7 +137,7 @@ spawn_schema = "_spawn"
 **Required:** No  
 **Default:** `"prod"`
 
-Environment identifier. Available in migration templates as `{{ env }}`. Used for conditional logic:
+Environment identifier. Available in migration [templates](/reference/templating) as `{{ env }}`. Used for conditional logic:
 
 ```sql
 {% if env == "dev" %}
@@ -156,7 +156,7 @@ environment = "dev"
 **Type:** Table (CommandSpec)  
 **Required:** Yes
 
-Specifies how to execute SQL against the database. Two modes: `direct` and `provider`.
+Specifies how to execute SQL against the database. Two modes: `direct` and `provider`. For now, only connection via PostgreSQL psql is supported, so this should be the command that allows piping changes to the database.
 
 #### Direct command
 
@@ -177,17 +177,11 @@ command = { kind = "direct", direct = [
 
 #### Provider command
 
-Use when the connection details need to be resolved dynamically (e.g., via `gcloud`).
+Use when the connection details need to be resolved dynamically, or are faster to resolve once per command for faster performance (e.g., via `gcloud`).
 
-The `provider` command must output JSON to stdout in this format:
+The `provider` command must output the command as a shell command.
 
-```json
-{
-  "command": ["ssh", "user@host", "psql", "-U", "postgres", "mydb"]
-}
-```
-
-Spawn runs the `provider` command, parses the JSON, then executes the resolved command with `append` args added.
+Spawn runs the `provider` command, parses the command, then executes the resolved command with `append` args added.
 
 **Google Cloud SQL example:**
 
@@ -204,15 +198,14 @@ command = {
 }
 ```
 
-The `--dry-run` flag makes `gcloud` output the SSH command as JSON instead of executing it.
+The `--dry-run` flag makes `gcloud` output the SSH command as a string instead of executing it.
 
 ## Complete example
 
 ```toml
 spawn_folder = "./database/spawn"
 database = "local"
-project_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-telemetry = true
+project_id = <replace with random uuid>
 
 [databases.local]
 spawn_database = "spawn"
