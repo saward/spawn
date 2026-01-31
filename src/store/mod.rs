@@ -19,6 +19,25 @@ pub struct MigrationFileStatus {
     pub has_lock_toml: bool,
 }
 
+/// Get the filesystem status of a single migration.
+/// Returns the status indicating whether up.sql and lock.toml files exist.
+pub async fn get_migration_fs_status(
+    op: &Operator,
+    pather: &FolderPather,
+    migration_name: &str,
+) -> Result<MigrationFileStatus> {
+    let up_sql_path = pather.migration_script_file_path(migration_name);
+    let lock_toml_path = pather.migration_lock_file_path(migration_name);
+
+    let has_up_sql = op.exists(&up_sql_path).await.unwrap_or(false);
+    let has_lock_toml = op.exists(&lock_toml_path).await.unwrap_or(false);
+
+    Ok(MigrationFileStatus {
+        has_up_sql,
+        has_lock_toml,
+    })
+}
+
 /// Scan the migrations folder and return the filesystem status of each migration,
 /// keyed by migration name. This does not touch the database.
 pub async fn list_migration_fs_status(

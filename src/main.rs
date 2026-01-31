@@ -65,8 +65,15 @@ async fn async_main(cli: Cli) -> Result<()> {
         Outcome::AppliedMigrations => {
             println!("All migrations applied successfully.");
         }
-        Outcome::BuiltMigration { content } => {
+        Outcome::BuiltMigration {
+            content,
+            pinned_warn,
+        } => {
             println!("{}", content);
+            // Show warning if lock file exists but --pinned not used
+            if pinned_warn {
+                eprintln!("\n\n⚠️  This migration has been pinned. Run with --pinned to see how it will be generated when applied to a database.");
+            }
         }
         Outcome::CheckFailed => {
             std::process::exit(1);

@@ -171,7 +171,10 @@ impl MigrationTestHelper {
         let outcome = cmd.execute(&config).await?;
 
         match outcome {
-            Outcome::BuiltMigration { content } => Ok(content),
+            Outcome::BuiltMigration {
+                content,
+                pinned_warn: _pinned_warn,
+            } => Ok(content),
             _ => Err(anyhow::anyhow!("Unexpected outcome")),
         }
     }
@@ -412,6 +415,47 @@ async fn test_check_passes_when_all_pinned() -> Result<(), Box<dyn std::error::E
     let config = helper.load_config().await?;
     let outcome = Check.execute(&config).await?;
     assert!(matches!(outcome, Outcome::Success));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_build_shows_warning_when_pinned_but_not_using_pinned_flag(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    let script_content = r#"BEGIN;
+CREATE TABLE test (id SERIAL PRIMARY KEY);
+COMMIT;"#;
+
+    let migration_name = helper
+        .create_migration_manual("test-pinned-warning", script_content.to_string())
+        .await?;
+
+    // Pin the migration
+    helper.pin_migration(&migration_name).await?;
+
+    let config = helper.load_config().await?;
+
+    // Build without --pinned flag - should still succeed but show warning
+    let cmd = BuildMigration {
+        migration: migration_name.to_string(),
+        pinned: false,
+        variables: None,
+    };
+
+    let outcome = cmd.execute(&config).await?;
+    assert!(matches!(outcome, Outcome::BuiltMigration { .. }));
+
+    // Build with --pinned flag - should not show warning
+    let cmd_pinned = BuildMigration {
+        migration: migration_name.to_string(),
+        pinned: true,
+        variables: None,
+    };
+
+    let outcome_pinned = cmd_pinned.execute(&config).await?;
+    assert!(matches!(outcome_pinned, Outcome::BuiltMigration { .. }));
 
     Ok(())
 }
