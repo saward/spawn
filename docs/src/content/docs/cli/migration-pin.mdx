@@ -1,0 +1,50 @@
+---
+title: spawn migration pin
+description: Pin a migration to current component versions.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import { globalOptions, databaseOption, environmentOption } from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn migration pin <migration>"
+  options={[...environmentOption, ...databaseOption, ...globalOptions]}
+>
+
+Creates a snapshot of all components referenced by the migration and stores them in the content-addressable `pinned/` directory. Writes a `lock.toml` file in the migration folder with the snapshot hash.
+
+## Arguments
+
+- `<migration>` — The migration directory name (e.g., `20260131120000-add-users-table`)
+
+## Why pin?
+
+Pinning ensures migrations are reproducible:
+
+- Historical migrations continue to work even as components evolve
+- Tests can verify migrations against their original component versions
+- Re-running old migrations produces identical SQL
+
+## Behavior
+
+1. Scans the migration's `up.sql` for component includes
+2. Computes a content hash of all referenced components
+3. Stores snapshots in `pinned/<hash>/`
+4. Creates `lock.toml` in the migration directory
+
+## Example
+
+```bash
+spawn migration pin 20260131120000-add-users-table
+# Migration pinned: a1b2c3d4e5f6g7h8
+```
+
+The migration folder now contains:
+
+```
+migrations/20260131120000-add-users-table/
+├── up.sql
+└── lock.toml
+```
+
+</CLICommand>

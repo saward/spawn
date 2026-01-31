@@ -1,0 +1,36 @@
+---
+title: spawn init
+description: Initialize a new Spawn project.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import { globalOptions } from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn init"
+  options={[...globalOptions]}
+>
+
+Creates a new Spawn project in the current directory with example configuration and folder structure. Check the [Configuration File](/reference/config/) documentation for more information on how to configure.
+
+## Behavior
+
+Creates:
+
+- `spawn.toml` — Project configuration file
+- `migrations/` — Directory for migration scripts
+- `components/` — Directory for reusable SQL components
+- `tests/` — Directory for test scripts
+- Example migration and component files to get started
+
+If `spawn.toml` already exists, the command will fail to avoid overwriting your configuration.
+
+## Example
+
+```bash
+mkdir my-database-project
+cd my-database-project
+spawn init
+```
+
+</CLICommand>

@@ -34,8 +34,39 @@ export default defineConfig({
           ],
         },
         {
+          label: "Reference",
+          items: [{ label: "Configuration File", slug: "reference/config" }],
+        },
+        {
           label: "CLI Reference",
-          items: [{ label: "spawn check", slug: "cli/check" }],
+          items: [
+            { label: "spawn init", slug: "cli/init" },
+            { label: "spawn check", slug: "cli/check" },
+            {
+              label: "Migration",
+              items: [
+                { label: "spawn migration new", slug: "cli/migration-new" },
+                { label: "spawn migration pin", slug: "cli/migration-pin" },
+                { label: "spawn migration build", slug: "cli/migration-build" },
+                { label: "spawn migration apply", slug: "cli/migration-apply" },
+                { label: "spawn migration adopt", slug: "cli/migration-adopt" },
+                {
+                  label: "spawn migration status",
+                  slug: "cli/migration-status",
+                },
+              ],
+            },
+            {
+              label: "Test",
+              items: [
+                { label: "spawn test new", slug: "cli/test-new" },
+                { label: "spawn test build", slug: "cli/test-build" },
+                { label: "spawn test run", slug: "cli/test-run" },
+                { label: "spawn test compare", slug: "cli/test-compare" },
+                { label: "spawn test expect", slug: "cli/test-expect" },
+              ],
+            },
+          ],
         },
       ],
     }),

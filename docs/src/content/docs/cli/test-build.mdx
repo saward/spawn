@@ -1,0 +1,30 @@
+---
+title: spawn test build
+description: Build a test into final SQL.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import { globalOptions, databaseOption } from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn test build <name>"
+  options={[...databaseOption, ...globalOptions]}
+>
+
+Renders a test's `test.sql` template into final SQL, resolving component includes and template variables. Outputs to stdout.
+
+## Arguments
+
+- `<name>` — The test directory name
+
+## Behavior
+
+Similar to [`spawn migration build`](/cli/migration-build/), but for tests. Processes the `test.sql` template and resolves any component includes or template logic.
+
+## Example
+
+```bash
+spawn test build user-creation
+```
+
+</CLICommand>

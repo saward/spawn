@@ -1,0 +1,31 @@
+---
+title: spawn test new
+description: Create a new test.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import { globalOptions, databaseOption } from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn test new <name>"
+  options={[...databaseOption, ...globalOptions]}
+>
+
+Creates a new test directory with a template `test.sql` file.
+
+## Arguments
+
+- `<name>` — A descriptive name for the test
+
+## Behavior
+
+Creates a directory at `tests/<name>/` with a `test.sql` template for writing SQL test scenarios.
+
+## Example
+
+```bash
+spawn test new user-creation
+# Creates: tests/user-creation/test.sql
+```
+
+</CLICommand>
