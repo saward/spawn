@@ -34,6 +34,8 @@ Standard migration tools (Flyway, dbmate) are great at running scripts, but bad 
 2.  **Pin in Time:** When you create a migration, Spawn **snapshots** your components in an efficient git-like storage, referenced per-migration via their `lock.toml`.
 3.  **Compile to SQL:** Spawn compiles your templates and pinned components into standard SQL transactions.
 
+> See it in action in the [Tutorial](https://docs.spawn.dev/getting-started/magic/).
+
 ---
 
 ## Key Features
@@ -44,6 +46,8 @@ Store reusable SQL snippets (views, functions, triggers) in a dedicated folder. 
 
 - **Result:** Old migrations never break, because they point to the _snapshot_ of the function from 2 years ago, not the version in your folder today.
 
+> Docs: [Tutorial: Components](https://docs.spawn.dev/getting-started/magic/) | [Templating](https://docs.spawn.dev/reference/templating/)
+
 ### 🧪 Integration Testing Framework
 
 Spawn includes a native testing harness designed for SQL.
@@ -51,6 +55,8 @@ Spawn includes a native testing harness designed for SQL.
 - **Macros:** Use [Minijinja](https://github.com/mitsuhiko/minijinja) macros to create reusable data factories (`{{ create_user('alice') }}`).
 - **Ephemeral DBs:** Tests can run against temporary database copies (`WITH TEMPLATE`) for speed.
 - **Diff-Based Assertions:** Tests pass if the output matches your `expected` file.
+
+> Docs: [Tutorial: Testing](https://docs.spawn.dev/getting-started/magic/) | [Test Macros](https://docs.spawn.dev/recipes/test-macros/)
 
 ### 🚀 Zero-Abstractions
 
@@ -75,7 +81,54 @@ command = {
 }
 ```
 
+> Docs: [Manage Databases](https://docs.spawn.dev/guides/manage-databases/) | [Configuration](https://docs.spawn.dev/reference/config/)
+
 ---
+
+To make it "punchy," you need to show the **Workflow** (Edit -> Include -> Pin) in as few lines as possible. Avoid complex SQL logic; focus on the _structure_.
+
+Here is a snippet that fits nicely right after your "The Philosophy" section.
+
+---
+
+## A Quick Look
+
+Here is how you handle a changing database function in Spawn without breaking history.
+
+**1. Create a Component** (Your Source of Truth)
+
+_`components/pricing/vat.sql`_
+
+```sql
+CREATE OR REPLACE FUNCTION calculate_vat(price numeric) RETURNS numeric AS $$
+BEGIN
+    RETURN price * 0.20; -- Current VAT rate
+END;
+$$ LANGUAGE plpgsql;
+```
+
+**2. Write a Migration** (Import, don't Copy)
+
+_`migrations/20260101-add-vat/up.sql`_
+
+```sql
+BEGIN;
+{% include 'pricing/vat.sql' %}
+COMMIT;
+```
+
+**3. Pin It** (The Magic)
+
+Run `spawn migration pin`. Spawn calculates the hash of `vat.sql` and locks this migration to that specific version.
+
+```toml
+# migrations/20260101-add-vat/lock.toml
+pin = "a1b2c3d4..." # 🔒 This migration will ALWAYS use the 20% version.
+```
+
+**4. Evolve It**
+
+Next year, when VAT changes to 22%, you simply update `components/pricing/vat.sql` and create a _new_ migration. The old migration remains locked to the old 20% version forever. **Zero copy-pasting.**
 
 ## Roadmap
 
@@ -88,7 +141,7 @@ Spawn is currently in **Public Beta**. The core features are stable and producti
 - ✅ Minijinja Templating
 - ✅ Testing Framework (Run, Expect, Compare)
 - ✅ Database Tracking & Advisory Locks
-- ✅ CI/CD Integration
+- ✅ [CI/CD Integration](https://docs.spawn.dev/reference/ci-cd/)
 
 **What's Next:**
 
