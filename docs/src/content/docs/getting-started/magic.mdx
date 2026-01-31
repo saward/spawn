@@ -59,7 +59,10 @@ $$ LANGUAGE plpgsql;
 Then you create your new migration:
 
 ```bash
-% spawn migration new add_fee
+spawn migration new add_fee
+```
+
+```
 creating migration with name 20260131075608-add_fee
 creating migration at spawn/migrations/20260131075608-add_fee/up.sql
 New migration created: 20260131075608-add_fee
@@ -117,7 +120,10 @@ We can solve both of these problems via pinning. Pinning pins the migration to a
 If you try and apply your migration now, you'll hit an error:
 
 ```bash
-% spawn migration apply 20260131075608-add_fee
+spawn migration apply 20260131075608-add_fee
+```
+
+```
 Error: Failed to generate migration '20260131075608-add_fee'. Is it pinned? Run `spawn migration pin 20260131075608-add_fee` or use `--no-pin` to apply without pinning.
 
 Caused by:
@@ -130,17 +136,28 @@ ectory (os error 2)
 The error tells us that we need to either pin the pingration, or use `--no-pin`. Run like so:
 
 ```bash
-% spawn migration pin 20260131075608-add_fee
+spawn migration pin 20260131075608-add_fee
+```
+
+```
 Migration pinned: 257372323412c39db23080ade53cb9da
 ```
 
 This creates a `lock.toml` file in the migration folder:
 
 ```bash
-% ls spawn/migrations/20260131075608-add_fee
-lock.toml       up.sql
+ls spawn/migrations/20260131075608-add_fee
+```
 
-% cat spawn/migrations/20260131075608-add_fee/lock.toml
+```
+lock.toml       up.sql
+```
+
+```bash
+cat spawn/migrations/20260131075608-add_fee/lock.toml
+```
+
+```toml
 pin = "257372323412c39db23080ade53cb9da"
 ```
 
@@ -149,8 +166,10 @@ This stores a snapshot of the components inside `spawn/pinned` in a manner very 
 Let's apply this to our locally running database:
 
 ```bash
-% spawn migration apply
+spawn migration apply
+```
 
+```
 TARGET: postgres_psql
 ENVIRONMENT: dev
 
@@ -172,21 +191,24 @@ spawn migration apply 20260131075608-add_fee
 You can see that it has been applied:
 
 ```bash
-% spawn migration status
+spawn migration status
+```
 
+```
 ┌────────────────────────┬────────────┬────────┬──────────┬───────────┐
 │ Migration              │ Filesystem │ Pinned │ Database │ Status    │
 ├────────────────────────┼────────────┼────────┼──────────┼───────────┤
 │ 20260131075608-add_fee │ ✓          │ ✓      │ ✓        │ ✓ Applied │
 └────────────────────────┴────────────┴────────┴──────────┴───────────┘
-
 ```
 
 And can verify by calling it via docker using psql
 
 ```bash
-% docker exec -it postgres-db psql -U postgres -d postgres -c "select add_fee(12.2)"
+docker exec -it postgres-db psql -U postgres -d postgres -c "select add_fee(12.2)"
+```
 
+```
  add_fee
 ---------
    13.42
@@ -196,8 +218,10 @@ And can verify by calling it via docker using psql
 Now let's make a new migration that updates the component:
 
 ```bash
-% spawn migration new update-add-func
+spawn migration new update-add-func
+```
 
+```
 creating migration with name 20260131080417-update-add-func
 creating migration at spawn/migrations/20260131080417-update-add-func/up.sql
 New migration created: 20260131080417-update-add-func
@@ -234,7 +258,10 @@ $$ LANGUAGE plpgsql;
 If we were to build the old migration again, we would see that it now uses the new component instead of the old, even though we pinned it!
 
 ```bash
-% spawn migration build 20260131075608-add_fee
+spawn migration build 20260131075608-add_fee
+```
+
+```sql
 BEGIN;
 
 CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
@@ -245,15 +272,19 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMIT;
+```
 
-
+```
 ⚠️  This migration has been pinned. Run with --pinned to see how it will be generated when applied to a database.
 ```
 
 However, it does give a warning at the end to tell us that this migration is pinned, and so we should use `--pinned` to see how it will be applied to the database:
 
 ```bash
-% spawn migration build 20260131075608-add_fee --pinned
+spawn migration build 20260131075608-add_fee --pinned
+```
+
+```sql
 BEGIN;
 
 CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
@@ -277,7 +308,10 @@ Perfect. The old migration script is unaffected by our changes to the `functions
 Let's test building our new migration to ensure it shows us the new version of the component, and then pin it:
 
 ```bash
-% spawn migration build 20260131080417-update-add-func
+spawn migration build 20260131080417-update-add-func
+```
+
+```sql
 BEGIN;
 
 CREATE TABLE fee (
@@ -295,21 +329,34 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMIT;
+```
 
-% spawn migration status
+```bash
+spawn migration status
+```
 
+```
 ┌────────────────────────────────┬────────────┬────────┬──────────┬───────────┐
 │ Migration                      │ Filesystem │ Pinned │ Database │ Status    │
 ├────────────────────────────────┼────────────┼────────┼──────────┼───────────┤
 │ 20260131075608-add_fee         │ ✓          │ ✓      │ ✓        │ ✓ Applied │
 │ 20260131080417-update-add-func │ ✓          │ ✗      │ ✗        │ ○ Pending │
 └────────────────────────────────┴────────────┴────────┴──────────┴───────────┘
+```
 
-% spawn migration pin 20260131080417-update-add-func
+```bash
+spawn migration pin 20260131080417-update-add-func
+```
+
+```
 Migration pinned: f12696fd7a68e4102f8c03dd23a774bf
+```
 
-% spawn migration status
+```bash
+spawn migration status
+```
 
+```
 ┌────────────────────────────────┬────────────┬────────┬──────────┬───────────┐
 │ Migration                      │ Filesystem │ Pinned │ Database │ Status    │
 ├────────────────────────────────┼────────────┼────────┼──────────┼───────────┤
@@ -321,24 +368,41 @@ Migration pinned: f12696fd7a68e4102f8c03dd23a774bf
 Let's test our call to fee both before and after applying the new migration:
 
 ```bash
-% docker exec -it postgres-db psql -U postgres -d postgres -c "select add_fee(12.2)"
+docker exec -it postgres-db psql -U postgres -d postgres -c "select add_fee(12.2)"
+```
+
+```
  add_fee
 ---------
    13.42
 (1 row)
+```
 
-% spawn migration apply 20260131080417-update-add-func
+```bash
+spawn migration apply 20260131080417-update-add-func
+```
+
+```
 Migration '20260131080417-update-add-func' applied successfully
 All migrations applied successfully.
+```
 
-% docker exec -it postgres-db psql -U postgres -d postgres -c "select add_fee(12.2)"
+```bash
+docker exec -it postgres-db psql -U postgres -d postgres -c "select add_fee(12.2)"
+```
+
+```
  add_fee
 ---------
   13.664
 (1 row)
+```
 
-% spawn migration status
+```bash
+spawn migration status
+```
 
+```
 ┌────────────────────────────────┬────────────┬────────┬──────────┬───────────┐
 │ Migration                      │ Filesystem │ Pinned │ Database │ Status    │
 ├────────────────────────────────┼────────────┼────────┼──────────┼───────────┤
@@ -354,7 +418,10 @@ Let's create a test for our migration. Spawn's testing works by comparing the ex
 Create a new test:
 
 ```bash
-% spawn test new add-func
+spawn test new add-func
+```
+
+```
 creating test with name add-func
 creating test at spawn/tests/add-func/test.sql
 New test created: add-func
@@ -389,7 +456,10 @@ DROP DATABASE add_fee_test;
 Now run the test, and see the output:
 
 ```bash
-% spawn test run add-func
+spawn test run add-func
+```
+
+```
  add_fee
 ---------
   13.664
@@ -404,8 +474,14 @@ Now run the test, and see the output:
 Those are the fees we expect! Since the test looks good, let's tell spawn that this is the output we expect to see:
 
 ```bash
-% spawn test expect add-func
-% cat spawn/tests/add-func/expected
+spawn test expect add-func
+```
+
+```bash
+cat spawn/tests/add-func/expected
+```
+
+```
  add_fee
 ---------
   13.664
@@ -420,17 +496,28 @@ Those are the fees we expect! Since the test looks good, let's tell spawn that t
 Now we can run the test and confirm success:
 
 ```bash
-% spawn test compare add-func
+spawn test compare add-func
+```
+
+```
 [PASS] add-func
-mark@Marks-MacBook-Air-M2 spmagic % echo $?
+```
+
+```bash
+echo $?
+```
+
+```
 0
 ```
 
 Perfect! Now, let's mess with our test to verify failure. Edit `tests/add-func/expected`, and change one of the numbers. In this case, I have changed the first number to `10.00`:
 
 ```bash
-% spawn test compare add-func
+spawn test compare add-func
+```
 
+```
 [FAIL] add-func
 --- Diff ---
 1   1    |  add_fee
@@ -444,7 +531,13 @@ Perfect! Now, let's mess with our test to verify failure. Edit `tests/add-func/e
 -------------
 
 Error: ! Differences found in one or more tests
-mark@Marks-MacBook-Air-M2 spmagic % echo $?
+```
+
+```bash
+echo $?
+```
+
+```
 1
 ```
 

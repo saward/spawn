@@ -24,7 +24,10 @@ export default defineConfig({
           label: "Getting Started",
           items: [
             { label: "Installing", slug: "getting-started/install" },
-            { label: "The Magic of Spawn", slug: "getting-started/magic" },
+            {
+              label: "The Magic of Spawn (Tutorial)",
+              slug: "getting-started/magic",
+            },
           ],
         },
         {
