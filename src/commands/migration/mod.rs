@@ -16,10 +16,9 @@ pub const DEFAULT_NAMESPACE: &str = "default";
 
 use crate::config::Config;
 use crate::engine::{MigrationDbInfo, MigrationHistoryStatus};
-use anyhow::{Context, Result};
+use crate::store::list_migration_fs_status;
+use anyhow::Result;
 use dialoguer::Confirm;
-use futures::TryStreamExt;
-use regex::Regex;
 use std::collections::{HashMap, HashSet};
 
 /// Combined status of a migration from both filesystem and database
@@ -42,36 +41,9 @@ pub async fn get_combined_migration_status(
     namespace: Option<&str>,
 ) -> Result<Vec<MigrationStatusRow>> {
     let engine = config.new_engine().await?;
-    let op = config.operator();
 
-    // Get all migrations from the filesystem
-    let pather = config.pather();
-    let migrations_folder = pather.migrations_folder();
-    let migrations_prefix = format!("{}/", migrations_folder.trim_start_matches('/'));
-
-    // Recursive listing to get all files within migration folders
-    let mut lister = op
-        .lister_with(&migrations_prefix)
-        .recursive(true)
-        .await
-        .context("listing migrations recursively")?;
-
-    // Track which migrations have up.sql and lock.toml
-    let mut fs_migration_names: HashSet<String> = HashSet::new();
-    let mut pinned_migrations: HashSet<String> = HashSet::new();
-
-    let up_sql_re = Regex::new(r"(?P<name>[^/]+)/up\.sql$").expect("valid regex");
-    let lock_toml_re = Regex::new(r"(?P<name>[^/]+)/lock\.toml$").expect("valid regex");
-
-    while let Some(entry) = lister.try_next().await? {
-        let path = entry.path().to_string();
-        if let Some(caps) = up_sql_re.captures(&path) {
-            fs_migration_names.insert(caps["name"].to_string());
-        }
-        if let Some(caps) = lock_toml_re.captures(&path) {
-            pinned_migrations.insert(caps["name"].to_string());
-        }
-    }
+    // Get filesystem status
+    let fs_status = list_migration_fs_status(config.operator(), &config.pather()).await?;
 
     // Get all migrations from database with their latest history entry
     let db_migrations_list = engine.get_migrations_from_db(namespace).await?;
@@ -83,23 +55,22 @@ pub async fn get_combined_migration_status(
         .collect();
 
     // Combine both sources
-    let all_migration_names: HashSet<String> = fs_migration_names
-        .iter()
+    let all_migration_names: HashSet<String> = fs_status
+        .keys()
         .chain(db_migrations.keys())
-        .chain(pinned_migrations.iter())
         .cloned()
         .collect();
 
     let mut results: Vec<MigrationStatusRow> = all_migration_names
         .into_iter()
         .map(|name| {
-            let exists_in_fs = fs_migration_names.contains(&name);
+            let fs = fs_status.get(&name);
             let db_info = db_migrations.get(&name);
 
             MigrationStatusRow {
                 migration_name: name.clone(),
-                exists_in_filesystem: exists_in_fs,
-                is_pinned: pinned_migrations.contains(&name),
+                exists_in_filesystem: fs.map_or(false, |s| s.has_up_sql),
+                is_pinned: fs.map_or(false, |s| s.has_lock_toml),
                 exists_in_db: db_info.is_some(),
                 last_status: db_info.and_then(|info| info.last_status),
                 last_activity: db_info.and_then(|info| info.last_activity.clone()),

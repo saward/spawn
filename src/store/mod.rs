@@ -4,11 +4,67 @@ use futures::TryStreamExt;
 use include_dir::{Dir, DirEntry};
 use opendal::services::Memory;
 use opendal::Operator;
+use regex::Regex;
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 
 use crate::store::pinner::Pinner;
 
 pub mod pinner;
+
+/// Filesystem-level status of a single migration.
+#[derive(Debug, Clone)]
+pub struct MigrationFileStatus {
+    pub has_up_sql: bool,
+    pub has_lock_toml: bool,
+}
+
+/// Scan the migrations folder and return the filesystem status of each migration,
+/// keyed by migration name. This does not touch the database.
+pub async fn list_migration_fs_status(
+    op: &Operator,
+    pather: &FolderPather,
+) -> Result<BTreeMap<String, MigrationFileStatus>> {
+    let migrations_folder = pather.migrations_folder();
+    let migrations_prefix = format!("{}/", migrations_folder.trim_start_matches('/'));
+
+    let mut lister = op
+        .lister_with(&migrations_prefix)
+        .recursive(true)
+        .await
+        .context("listing migrations")?;
+
+    let up_sql_re = Regex::new(r"(?P<name>[^/]+)/up\.sql$").expect("valid regex");
+    let lock_toml_re = Regex::new(r"(?P<name>[^/]+)/lock\.toml$").expect("valid regex");
+
+    let mut result: BTreeMap<String, MigrationFileStatus> = BTreeMap::new();
+
+    while let Some(entry) = lister.try_next().await? {
+        let path = entry.path().to_string();
+        if let Some(caps) = up_sql_re.captures(&path) {
+            let name = caps["name"].to_string();
+            result
+                .entry(name)
+                .or_insert(MigrationFileStatus {
+                    has_up_sql: false,
+                    has_lock_toml: false,
+                })
+                .has_up_sql = true;
+        }
+        if let Some(caps) = lock_toml_re.captures(&path) {
+            let name = caps["name"].to_string();
+            result
+                .entry(name)
+                .or_insert(MigrationFileStatus {
+                    has_up_sql: false,
+                    has_lock_toml: false,
+                })
+                .has_lock_toml = true;
+        }
+    }
+
+    Ok(result)
+}
 
 pub struct Store {
     pinner: Box<dyn Pinner>,

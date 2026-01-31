@@ -1,10 +1,12 @@
 use crate::config::Config;
 use anyhow::Result;
 
+pub mod check;
 pub mod init;
 pub mod migration;
 pub mod test;
 
+pub use check::Check;
 pub use init::Init;
 pub use migration::{
     AdoptMigration, ApplyMigration, BuildMigration, MigrationStatus, NewMigration, PinMigration,
@@ -54,6 +56,7 @@ pub enum Outcome {
     AdoptedMigration,
     AppliedMigrations,
     BuiltMigration { content: String },
+    CheckFailed,
     NewMigration(String),
     NewTest(String),
     PinnedMigration { hash: String },

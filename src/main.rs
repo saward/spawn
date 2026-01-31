@@ -68,6 +68,9 @@ async fn async_main(cli: Cli) -> Result<()> {
         Outcome::BuiltMigration { content } => {
             println!("{}", content);
         }
+        Outcome::CheckFailed => {
+            std::process::exit(1);
+        }
         Outcome::NewMigration(name) => {
             println!("New migration created: {}", name);
         }
