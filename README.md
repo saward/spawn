@@ -88,13 +88,16 @@ Spawn is currently in **Public Beta**. The core features are stable and producti
 - ✅ Minijinja Templating
 - ✅ Testing Framework (Run, Expect, Compare)
 - ✅ Database Tracking & Advisory Locks
+- ✅ CI/CD Integration
 
-**Future Vision:**
+**What's Next:**
 
+- 🔄 **Rollback Support:** Optional down scripts for reversible migrations.
+- 🔄 **Additional Engines:** Native PostgreSQL driver, MySQL, and more.
 - 🔄 **Multi-Tenancy:** First-class support for schema-per-tenant migrations.
 - 🔄 **Drift Detection:** Compare expected vs actual database state.
-- 🔄 **Schema Flattening:** Export/import schemas with variable substitution.
-- 🔄 **Editor Integration:** Live SQL preview in VSCode/Neovim.
+- 🔄 **External Data Sources:** Better support for data from files, URLs, and scripts in templates.
+- 🔄 **Plugin System:** Custom extensions for engines, data sources, and workflows.
 
 _(See [Roadmap](https://docs.spawn.dev/reference/roadmap) for detailed tracking)_
 
