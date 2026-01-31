@@ -45,44 +45,90 @@ RETURNING id;
 ROLLBACK;
 ```
 
-## Macros with IDs
+## Working with IDs
 
-Capture the returned ID for use in related records:
+When tests need to insert related records, you need a way to reference IDs across statements. Here are three approaches.
+
+### Generate IDs upfront
+
+The simplest approach: generate IDs before inserting, so you always have them available.
 
 ```sql
-{% macro create_user(email, name) %}
-WITH new_user AS (
-  INSERT INTO users (email, name, created_at)
-  VALUES ('{{ email }}', '{{ name }}', NOW())
-  RETURNING id
-)
-SELECT id FROM new_user;
+{% macro create_user(id, email, name="Test User") %}
+INSERT INTO users (id, email, name, created_at)
+VALUES ({{ id }}, {{ email }}, {{ name }}, NOW());
 {% endmacro %}
+
+{% macro create_post(user_id, title) %}
+INSERT INTO posts (user_id, title, created_at)
+VALUES ({{ user_id }}, {{ title }}, NOW());
+{% endmacro -%}
+
+{% set user_1_id = gen_uuid_v4() %}
 
 BEGIN;
 
--- Create user and capture ID
-DO $$
-DECLARE
-  user_id INTEGER;
-BEGIN
-  SELECT id INTO user_id FROM ({{ create_user("alice@example.com", "Alice") }}) AS u;
-
-  -- Create posts for that user
-  INSERT INTO posts (user_id, title, content)
-  VALUES
-    (user_id, 'First Post', 'Hello world'),
-    (user_id, 'Second Post', 'Another post');
-END $$;
-
--- Test
-SELECT u.name, COUNT(p.id) as post_count
-FROM users u
-LEFT JOIN posts p ON u.id = p.user_id
-GROUP BY u.id, u.name;
+{{ create_user(id=user_1_id, email="alice@example.com", name="Alice") }}
+{{ create_post(user_id=user_1_id, title="First Post") }}
+{{ create_post(user_id=user_1_id, title="Second Post") }}
 
 ROLLBACK;
 ```
+
+This works well when your table uses UUIDs as primary keys. The `gen_uuid_v4()` function generates the ID at template render time, so it can be reused across multiple statements.
+
+### Capture IDs with `\gset`
+
+Since Spawn runs SQL through `psql`, you can use [`\gset`](https://www.postgresql.org/docs/current/app-psql.html#APP-PSQL-META-COMMAND-GSET) to capture query results into psql variables:
+
+```sql
+{% macro create_user(email, name="Test User") %}
+INSERT INTO users (email, name, created_at)
+VALUES ({{ email }}, {{ name }}, NOW())
+RETURNING id;
+{% endmacro -%}
+
+BEGIN;
+
+-- Create user and capture the generated ID
+SELECT id AS user_1_id FROM ({{ create_user("alice@example.com", "Alice") }}) AS t \gset
+
+-- Use the captured ID in subsequent statements
+INSERT INTO posts (user_id, title, created_at)
+VALUES (:'user_1_id', 'First Post', NOW());
+
+INSERT INTO posts (user_id, title, created_at)
+VALUES (:'user_1_id', 'Second Post', NOW());
+
+ROLLBACK;
+```
+
+The `\gset` meta-command stores each column of the result row as a psql variable. You then reference it with `:'variable_name'` syntax.
+
+### Use RETURNING with a CTE
+
+For a pure-SQL approach without psql features:
+
+```sql
+{% macro create_user_with_posts(email, name, posts) %}
+WITH new_user AS (
+  INSERT INTO users (email, name, created_at)
+  VALUES ({{ email }}, {{ name }}, NOW())
+  RETURNING id
+)
+INSERT INTO posts (user_id, title, created_at)
+SELECT id, title, NOW()
+FROM new_user, (VALUES {% for post in posts %}({{ post }}){% if not loop.last %}, {% endif %}{% endfor %}) AS t(title);
+{% endmacro -%}
+
+BEGIN;
+
+{{ create_user_with_posts("alice@example.com", "Alice", ["First Post", "Second Post"]) }}
+
+ROLLBACK;
+```
+
+This keeps everything in a single statement, but becomes harder to read with more complex relationships.
 
 ## Parameterized factories
 
@@ -93,8 +139,8 @@ Create factories with optional fields:
 INSERT INTO posts (user_id, title, content, published, created_at)
 VALUES (
   {{ user_id }},
-  '{{ title }}',
-  '{{ content }}',
+  {{ title }},
+  {{ content }},
   {{ published }},
   NOW()
 )
@@ -120,7 +166,7 @@ Use loops to generate test data at scale:
 {% macro create_test_users(count) %}
 {% for i in range(count) %}
 INSERT INTO users (email, name, created_at)
-VALUES ('user{{ i }}@test.com', 'Test User {{ i }}', NOW() - INTERVAL '{{ i }} days');
+VALUES ('user{{ i | safe }}@test.com', 'Test User {{ i | safe }}', NOW() - INTERVAL '{{ i | safe }} days');
 {% endfor %}
 {% endmacro %}
 
@@ -144,14 +190,14 @@ Create related records in one macro:
 {% macro create_organization_with_users(org_name, user_count) %}
 WITH new_org AS (
   INSERT INTO organizations (name)
-  VALUES ('{{ org_name }}')
+  VALUES ({{ org_name }})
   RETURNING id
 )
-{% for i in range(user_count) %}
+{%- for i in range(user_count) %}
 INSERT INTO users (organization_id, email, name)
-SELECT id, '{{ org_name | lower }}-user{{ i }}@test.com', 'User {{ i }}'
+SELECT id, '{{ org_name | lower | replace(" ", "-") | safe }}-user{{ i | safe }}@test.com', 'User {{ i | safe }}'
 FROM new_org;
-{% endfor %}
+{%- endfor %}
 {% endmacro %}
 
 BEGIN;
@@ -168,45 +214,6 @@ GROUP BY o.id, o.name;
 ROLLBACK;
 ```
 
-## Realistic test data
-
-Use variables for more realistic data:
-
-**test-data.json:**
-
-```json
-{
-  "companies": [
-    { "name": "Acme Corp", "industry": "Manufacturing" },
-    { "name": "Globex Inc", "industry": "Technology" },
-    { "name": "Initech", "industry": "Software" }
-  ]
-}
-```
-
-**Test:**
-
-```sql
-{% macro create_company(name, industry) %}
-INSERT INTO companies (name, industry, created_at)
-VALUES ('{{ name }}', '{{ industry }}', NOW())
-RETURNING id;
-{% endmacro %}
-
-BEGIN;
-
-{% for company in variables.companies %}
-{{ create_company(company.name, company.industry) }}
-{% endfor %}
-
--- Test
-SELECT industry, COUNT(*)
-FROM companies
-GROUP BY industry;
-
-ROLLBACK;
-```
-
 ## Shared macro library
 
 Store commonly used macros in a component file:
@@ -216,13 +223,13 @@ Store commonly used macros in a component file:
 ```sql
 {% macro create_user(email, name="Test User") %}
 INSERT INTO users (email, name, created_at)
-VALUES ('{{ email }}', '{{ name }}', NOW())
+VALUES ({{ email }}, {{ name }}, NOW())
 RETURNING id;
 {% endmacro %}
 
 {% macro create_post(user_id, title) %}
 INSERT INTO posts (user_id, title, created_at)
-VALUES ({{ user_id }}, '{{ title }}', NOW())
+VALUES ({{ user_id }}, {{ title }}, NOW())
 RETURNING id;
 {% endmacro %}
 ```
@@ -230,7 +237,7 @@ RETURNING id;
 **tests/user-posts/test.sql:**
 
 ```sql
-{% include "test_macros.sql" %}
+{% from "test_macros.sql" import create_user, create_post %}
 
 BEGIN;
 
