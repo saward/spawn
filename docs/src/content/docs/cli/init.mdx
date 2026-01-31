@@ -7,8 +7,14 @@ import CLICommand from "../../../components/CLICommand.astro";
 import { globalOptions } from "../../../components/cli-options";
 
 <CLICommand
-  usage="spawn init"
-  options={[...globalOptions]}
+  usage="spawn init [--docker [DATABASE_NAME]]"
+  options={[
+    ...globalOptions,
+    {
+      flag: "--docker [DATABASE_NAME]",
+      description: "Generate a docker-compose.yaml file for local PostgreSQL development. Optionally specify a database/project name (defaults to 'postgres').",
+    },
+  ]}
 >
 
 Creates a new Spawn project in the current directory with example configuration and folder structure. Check the [Configuration File](/reference/config/) documentation for more information on how to configure.
@@ -21,16 +27,40 @@ Creates:
 - `migrations/` — Directory for migration scripts
 - `components/` — Directory for reusable SQL components
 - `tests/` — Directory for test scripts
-- Example migration and component files to get started
+- `docker-compose.yaml` — (when using `--docker`) Docker Compose configuration for PostgreSQL
+
+The generated `spawn.toml` includes a pre-configured database connection that works with the Docker setup (when using `--docker`).
 
 If `spawn.toml` already exists, the command will fail to avoid overwriting your configuration.
 
-## Example
+## Examples
+
+### Basic initialization
 
 ```bash
 mkdir my-database-project
 cd my-database-project
 spawn init
 ```
+
+### Initialize with Docker support
+
+```bash
+mkdir my-database-project
+cd my-database-project
+spawn init --docker
+docker compose up -d
+```
+
+This creates a `docker-compose.yaml` configured for a database named "postgres".
+
+### Initialize with custom database name
+
+```bash
+spawn init --docker myapp
+docker compose up -d
+```
+
+This creates a `docker-compose.yaml` configured for a database named "myapp" with container "myapp-db".
 
 </CLICommand>

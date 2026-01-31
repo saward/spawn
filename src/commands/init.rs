@@ -10,6 +10,9 @@ use uuid::Uuid;
 /// because it doesn't require a loaded Config (it creates the config).
 pub struct Init {
     pub config_file: String,
+    /// Optional docker-compose generation. If Some(None), uses default name "myproject".
+    /// If Some(Some(name)), uses the provided name.
+    pub docker: Option<Option<String>>,
 }
 
 impl TelemetryDescribe for Init {
@@ -33,13 +36,27 @@ impl Init {
         // Generate a new project_id
         let project_id = Uuid::new_v4().to_string();
 
+        // Determine database/project name for docker setup
+        let db_name = match &self.docker {
+            Some(Some(name)) => name.clone(),
+            Some(None) => "postgres".to_string(),
+            None => "postgres".to_string(),
+        };
+
+        // Determine container name
+        let container_name = if self.docker.is_some() {
+            format!("{}-db", db_name)
+        } else {
+            "postgres-db".to_string()
+        };
+
         // Create example database config
         let mut databases = HashMap::new();
         databases.insert(
             "postgres_psql".to_string(),
             DatabaseConfig {
                 engine: EngineType::PostgresPSQL,
-                spawn_database: "spawn".to_string(),
+                spawn_database: db_name.clone(),
                 spawn_schema: "_spawn".to_string(),
                 environment: "dev".to_string(),
                 command: Some(CommandSpec::Direct {
@@ -47,11 +64,11 @@ impl Init {
                         "docker".to_string(),
                         "exec".to_string(),
                         "-i".to_string(),
-                        "spawn".to_string(),
+                        container_name.clone(),
                         "psql".to_string(),
                         "-U".to_string(),
-                        "spawn".to_string(),
-                        "spawn".to_string(),
+                        "postgres".to_string(),
+                        db_name.clone(),
                     ],
                 }),
             },
@@ -88,6 +105,36 @@ impl Init {
                     anyhow::Error::from(e).context(format!("Failed to create {} folder", subfolder))
                 })?;
             created_folders.push(format!("  {}/{}/", spawn_folder, subfolder));
+        }
+
+        // Generate docker-compose.yaml if requested
+        if self.docker.is_some() {
+            let docker_compose_content = format!(
+                r#"services:
+  postgres:
+    image: postgres:17
+    container_name: {}
+    ports:
+      - "5432:5432"
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: {}
+"#,
+                container_name, db_name
+            );
+
+            base_op
+                .write("docker-compose.yaml", docker_compose_content)
+                .await
+                .map_err(|e| {
+                    anyhow::Error::from(e).context("Failed to create docker-compose.yaml")
+                })?;
+
+            println!("Created docker-compose.yaml for database '{}'", db_name);
+            println!("Start the database with: docker compose up -d");
+            println!();
         }
 
         // Show telemetry notice

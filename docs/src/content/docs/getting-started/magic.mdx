@@ -10,19 +10,35 @@ Spawn is a Database Build System. It currently supports PostgreSQL via psql, but
 - Reusable components
 - Easy updating of database functions and views while maintaining history
 
+## Getting started
+
+First, initialize a new Spawn project with Docker support:
+
+```bash
+spawn init --docker
+```
+
+This creates a `spawn.toml` configuration file, a `docker-compose.yaml` for local PostgreSQL development, and the necessary project structure. Start your database:
+
+```bash
+docker compose up -d
+```
+
+You're now ready to create migrations!
+
 ## The magic
 
-Spawn solves these pain points:
+Spawn solves a few pain points for database development, including:
 
-- How do I update a database function, but keep the change history visible via git, while ensuring old migrations work?
+- How do I update a database function, keeping the change history visible via git in an easy to review way, all while ensuring old migrations work?
 - How do I run complex tests against my database?
 - How can I use external data in my migrations?
-- How do I create per-migration as well as regression tests?
+- How do I create per-migration (not yet available) as well as regression tests?
 - How can I apply some changes to local but not prod?
 
 Spawn solves these pain points through four mechanisms:
 
-1. Separate components (views, functions, triggers, reusable snippets) from the migrations.
+1. Separate the components (views, functions, triggers, reusable snippets) from the migrations.
 2. Content Addressable Storage (CAS), much like git, for components. Pin migrations to specific versions of components.
 3. Dynamic SQL generation via templating.
 4. Comprehensive testing framework.
@@ -44,9 +60,9 @@ Then you create your new migration:
 
 ```bash
 spawn migration new add_fee
-# creating migration with name 20260124064957-add_fee
-# creating migration at spawn/migrations/20260124064957-add_fee/up.sql
-# New migration created: 20260124064957-add_fee
+# creating migration with name 20260131075608-add_fee
+# creating migration at spawn/migrations/20260131075608-add_fee/up.sql
+# New migration created: 20260131075608-add_fee
 ```
 
 Now, open up that migration script and reference your migration:
@@ -62,7 +78,7 @@ COMMIT;
 Finally, use `build` to see how the final SQL looks:
 
 ```bash
-spawn migration build 20260124064957-add_fee
+spawn migration build 20260131075608-add_fee
 ```
 
 ```sql
@@ -88,40 +104,104 @@ You've realised now that you'd rather your add_fee function pull the fee from a 
 However, if you update the component directly, we hit two problems:
 
 1. Any old migration tests (not yet implemented) that depend on that functionality will break.
-2. If we try running old migrations against a new database, `20260124064957-add_fee` will now pick up the new version of the component instead of the old.
+2. If we try running old migrations against a new database, `20260131075608-add_fee` will now pick up the new version of the component instead of the old.
 
-We can solve both of these problems via pinning. Pinning pins the migration to a specific version of the components folder. Run like so:
+We can solve both of these problems via pinning. Pinning pins the migration to a specific version of the components folder.
+
+If you try and apply your migration now, you'll hit an error:
 
 ```bash
-spawn migration pin 20260124064957-add_fee
+spawn migration apply 20260131075608-add_fee
+Error: Failed to generate migration '20260131075608-add_fee'. Is it pinned? Run `spawn migration pin 20260131075608-add_fee` or use `--no-pin` to apply without pinning.
+
+Caused by:
+    0: could not load pinned files lock file
+    1: NotFound (permanent) at read, context: { service: fs, path: spawn/migrations/20260131075608-add_fee/lock.toml, range: 0- } => entity not found, source: No such file or dir
+ectory (os error 2)
+    2: No such file or directory (os error 2)
+```
+
+The error tells us that we need to either pin the pingration, or use `--no-pin`. Run like so:
+
+```bash
+spawn migration pin 20260131075608-add_fee
 # Migration pinned: 257372323412c39db23080ade53cb9da
 ```
 
 This creates a `lock.toml` file in the migration folder:
 
 ```bash
-ls spawn/migrations/20260124064957-add_fee
-# lock.toml       up.sql
+ls spawn/migrations/20260131075608-add_fee
+lock.toml       up.sql
 
-cat spawn/migrations/20260124064957-add_fee/lock.toml
+cat spawn/migrations/20260131075608-add_fee/lock.toml
 ```
 
 ```toml
 pin = "257372323412c39db23080ade53cb9da"
 ```
 
-This stores a snapshot of the components inside `spawn/pinned` in a manner similar to how git works.
+This stores a snapshot of the components inside `spawn/pinned` in a manner very similar to how git works. The files produced by pin are stored in `/pinned`.
+
+Let's apply this to our locally running database:
+
+```bash
+% spawn migration apply
+
+TARGET: postgres_psql
+ENVIRONMENT: dev
+
+The following 1 migration will be applied:
+  1. 20260131075608-add_fee
+
+Do you want to apply these migrations? [y/N]
+
+Migration '20260131075608-add_fee' applied successfully
+All migrations applied successfully.
+```
+
+Or alternatively, you can target this specific migration to apply:
+
+```bash
+spawn migration apply 20260131075608-add_fee
+```
+
+You can see that it has been applied:
+
+```bash
+% spawn migration status
+
+┌────────────────────────┬────────────┬────────┬──────────┬───────────┐
+│ Migration              │ Filesystem │ Pinned │ Database │ Status    │
+├────────────────────────┼────────────┼────────┼──────────┼───────────┤
+│ 20260131075608-add_fee │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+└────────────────────────┴────────────┴────────┴──────────┴───────────┘
+
+Success.
+```
+
+And can verify by calling it via docker using psql
+
+```bash
+% docker exec -it postgres-db psql -U postgres -d postgres -c "select add_fee(12.2)"
+
+ add_fee
+---------
+   13.42
+(1 row)
+```
 
 Now let's make a new migration that updates the component:
 
 ```bash
-spawn migration new update-add-func
-# creating migration with name 20260124073534-update-add-func
-# creating migration at spawn/migrations/20260124073534-update-add-func/up.sql
-# New migration created: 20260124073534-update-add-func
+% spawn migration new update-add-func
+
+creating migration with name 20260131080417-update-add-func
+creating migration at spawn/migrations/20260131080417-update-add-func/up.sql
+New migration created: 20260131080417-update-add-func
 ```
 
-We can edit the component in place, so that we get proper git history record of changes, and so that PRs are easier to review. We update the migration:
+We can edit the component in place, so that we have a useful git record of changes made over time, and so that PRs are easier to review. We update the migration in place. In this example, we are going to update the function to obtain the base fee multiplier from a table rather than hard coded into the function. Create the migration first, replacing the contents of your new `<timestamp>-update-add-func` migration:
 
 ```sql
 BEGIN;
@@ -147,7 +227,6 @@ BEGIN
     RETURN a * (SELECT amount FROM fee WHERE name = 'base');
 END;
 $$ LANGUAGE plpgsql;
-
 ```
 
 Now if we were to build the old migration, we see the new version, but if we use `--pinned` then it builds with the component as it was originally at the time:
@@ -160,8 +239,14 @@ spawn migration pin 20260124073534-update-add-func
 The pinned version of the old migration uses the old version of the function:
 
 ```bash
-spawn migration build 20260124064957-add_fee --pinned
+spawn migration build 20260131075608-add_fee --pinned
 ```
+
+:::tip[Pinning with `build` and `apply`]
+`migration build` will always use the current version of components, rather than the pinned version, even if a lock file is present. Therefore, you must use --pinned to see how it will render the component when it applies.
+
+`migration apply` will always use the pinned version by default.
+:::
 
 ```sql
 -- Output:
@@ -252,7 +337,7 @@ database = "postgres_psql"
 [databases.postgres_psql]
 ...
 environment = "dev"
-command = ["docker", "exec", "-i", "blhcdb", "psql", "-U", "postgres", "postgres"]
+command = ["docker", "exec", "-i", "postgres-db", "psql", "-U", "postgres", "postgres"]
 ```
 
 Then it includes the extra insert!
