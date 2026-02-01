@@ -38,6 +38,162 @@ Standard migration tools (Flyway, dbmate) are great at running scripts, but bad 
 
 ---
 
+## A Quick Look: Migrations
+
+**1. Setup**
+
+Get a full Postgres environment running in a few seconds:
+
+```bash
+spawn init --docker && docker compose up -d
+```
+
+**2. Define & Pin**
+
+Create a reusable component (your source of truth) and a migration.
+
+_`spawn/components/users/name.sql`_:
+
+```sql
+CREATE OR REPLACE FUNCTION get_name(first text, last text) RETURNS text AS $$
+BEGIN
+    RETURN first || ' ' || last; -- V1 Logic
+END;
+$$ LANGUAGE plpgsql;
+```
+
+_`spawn/migrations/20260101-init/up.sql`_:
+
+```sql
+BEGIN;
+CREATE TABLE users (id serial, first text, last text);
+{% include 'users/name.sql' %} -- Include the component
+COMMIT;
+```
+
+Run `spawn migration pin`. Spawn snapshots the V1 component into a lockfile.
+
+```toml
+# spawn/migrations/20260101-init/lock.toml
+pin = "a1b2c3d4..." # 🔒 Locked to V1 forever
+```
+
+**3. Evolve**
+
+Months later, you update the **same file** to add middle initials, and create a new migration.
+
+_`spawn/components/users/name.sql`_ (Edited in place):
+
+```sql
+...
+    RETURN first || ' ' || substring(last, 1, 1); -- V2 Logic
+...
+```
+
+_`spawn/migrations/20260601-update/up.sql`_ (New Migration):
+
+```sql
+BEGIN;
+-- Re-import the SAME component file, which now contains V2 logic
+{% include 'users/name.sql' %}
+COMMIT;
+```
+
+Pin the new migration:
+
+```bash
+spawn migration pin 20260601-update
+```
+
+**4. The Magic**
+
+You changed the source code, but **you didn't break history.**
+Prove it by building both migrations:
+
+```bash
+spawn migration build 20260101-init --pinned
+```
+
+```sql
+-- Migration 1 (Built from Snapshot)
+CREATE OR REPLACE FUNCTION get_name...
+    RETURN first || ' ' || last; -- ✅ Still V1
+```
+
+```bash
+spawn migration build 20260601-update --pinned
+```
+
+```sql
+-- Migration 2 (Built from Snapshot)
+CREATE OR REPLACE FUNCTION get_name...
+    RETURN first || ' ' || substring(last, 1, 1); -- ✅ Updates to V2
+```
+
+**Zero copy-pasting. Zero broken dependencies.**
+
+> Full tutorial with testing, templating, and more: [docs.spawn.dev/getting-started/magic](https://docs.spawn.dev/getting-started/magic/)
+
+## A Quick Look: Regression Tests
+
+**1. Write the Test**
+
+Use plain SQL to write tests, and run them in a transaction or in a copy of the database via `WITH TEMPLATE`.
+
+_`spawn/tests/fees/test.sql`_
+
+```sql
+-- 1. Spin up a throwaway copy of your schema
+CREATE DATABASE test_fees WITH TEMPLATE postgres;
+\c test_fees
+
+-- 2. Run scenarios
+SELECT add_fee(10.00); -- Should be 11.00
+
+-- 3. Cleanup
+\c postgres
+DROP DATABASE test_fees;
+```
+
+**2. Capture the Baseline**
+Run the test and save the output as the "Source of Truth."
+
+```bash
+spawn test expect fees
+```
+
+_`spawn/tests/fees/expected`_
+
+```text
+ add_fee
+---------
+   11.00
+(1 row)
+```
+
+**3. Catch Regressions (CI/CD)**
+Later, someone breaks the logic to add 50% instead of 10%. `spawn test compare` catches it immediately with a diff.
+
+```bash
+spawn test compare fees
+```
+
+```diff
+[FAIL] fees
+--- Diff ---
+   add_fee
+ ---------
+-   11.00
++   15.00
+ (1 row)
+
+Error: ! Differences found in one or more tests
+```
+
+**No manual assertions. Run in GitHub Actions using the [Spawn Action](https://docs.spawn.dev/reference/ci-cd/).**
+
+---
+
 ## Key Features
 
 ### 📦 Component System (CAS)
@@ -82,48 +238,6 @@ command = {
 ```
 
 > Docs: [Manage Databases](https://docs.spawn.dev/guides/manage-databases/) | [Configuration](https://docs.spawn.dev/reference/config/)
-
----
-
-## A Quick Look
-
-Here is how you handle a changing database function in Spawn without breaking history.
-
-**1. Create a Component** (Your Source of Truth)
-_`components/users/full_name.sql`_
-
-```sql
-CREATE OR REPLACE FUNCTION get_full_name(first text, last text)
-RETURNS text AS $$
-BEGIN
-    -- V1 Logic: Simple concatenation
-    RETURN first || ' ' || last;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-```
-
-**2. Write a Migration** (Import, don't Copy)
-_`migrations/20260101-add-users/up.sql`_
-
-```sql
-BEGIN;
-CREATE TABLE users (id serial, first text, last text);
-
--- Import the logic to generate names
-{% include 'users/full_name.sql' %}
-COMMIT;
-```
-
-**3. Pin It** (The Magic)
-Run `spawn migration pin`. Spawn calculates the hash of `full_name.sql` and locks this migration to that specific version.
-
-```toml
-# migrations/20260101-add-users/lock.toml
-pin = "a1b2c3d4..." # 🔒 This migration will ALWAYS use the V1 logic.
-```
-
-**4. Evolve It**
-Next year, when you decide to include **Middle Initials**, you simply update `components/users/full_name.sql` and create a _new_ migration. The old migration remains locked to the V1 logic forever. **Zero copy-pasting.**
 
 ## Roadmap
 
