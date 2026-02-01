@@ -45,6 +45,10 @@ export default defineConfig({
           items: [
             { label: "Introduction", slug: "recipes/introduction" },
             { label: "Test Macros", slug: "recipes/test-macros" },
+            {
+              label: "Timestamps in Tests",
+              slug: "recipes/timestamps-in-tests",
+            },
           ],
         },
         {
