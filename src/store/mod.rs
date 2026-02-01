@@ -49,12 +49,18 @@ pub async fn list_migration_fs_status(
     migration_name: Option<&str>,
 ) -> Result<BTreeMap<String, MigrationFileStatus>> {
     let migrations_folder = pather.migrations_folder();
+    // Normalize the prefix to match opendal's path normalization:
+    // opendal strips leading "./" and "/" from entry.path() results,
+    // so we must do the same for strip_prefix to work correctly.
+    let normalized_folder = migrations_folder
+        .trim_start_matches("./")
+        .trim_start_matches('/');
     let migrations_prefix = if let Some(name) = migration_name {
         // List only the specific migration folder
-        format!("{}/{}/", migrations_folder.trim_start_matches('/'), name)
+        format!("{}/{}/", normalized_folder, name)
     } else {
         // List all migrations
-        format!("{}/", migrations_folder.trim_start_matches('/'))
+        format!("{}/", normalized_folder)
     };
 
     // Single recursive list - efficient for remote storage like S3
@@ -423,89 +429,73 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_migration_fs_status_single() {
-        // Create an in-memory operator with multiple migrations
-        let mem_service = Memory::default();
-        let op = Operator::new(mem_service).unwrap().finish();
+    async fn test_list_migration_fs_status() {
+        // Test listing works for different spawn_folder formats, including
+        // "./" prefix which opendal normalizes away from entry.path().
+        for spawn_folder in [
+            "",
+            "./database/spawn",
+            "/database/spawn",
+            "./spawn",
+            "/spawn",
+        ] {
+            let mem_service = Memory::default();
+            let op = Operator::new(mem_service).unwrap().finish();
 
-        // Create two migrations
-        op.write("/migrations/20240101-first/up.sql", "SELECT 1;")
+            let prefix = spawn_folder
+                .trim_start_matches("./")
+                .trim_start_matches('/');
+            let migrations = if prefix.is_empty() {
+                "migrations".to_string()
+            } else {
+                format!("{}/migrations", prefix)
+            };
+
+            op.write(
+                &format!("{}/20240101-first/up.sql", migrations),
+                "SELECT 1;",
+            )
             .await
-            .expect("Failed to write first up.sql");
-        op.write("/migrations/20240101-first/lock.toml", "pin = \"abc\"")
+            .unwrap();
+            op.write(
+                &format!("{}/20240101-first/lock.toml", migrations),
+                "pin = \"abc\"",
+            )
             .await
-            .expect("Failed to write first lock.toml");
-
-        op.write("/migrations/20240102-second/up.sql", "SELECT 2;")
+            .unwrap();
+            op.write(
+                &format!("{}/20240102-second/up.sql", migrations),
+                "SELECT 2;",
+            )
             .await
-            .expect("Failed to write second up.sql");
+            .unwrap();
 
-        let pather = FolderPather {
-            spawn_folder: "".to_string(),
-        };
+            let pather = FolderPather {
+                spawn_folder: spawn_folder.to_string(),
+            };
 
-        // List only the first migration
-        let statuses = list_migration_fs_status(&op, &pather, Some("20240101-first"))
-            .await
-            .expect("Failed to list migration status");
+            for filter in [None, Some("20240101-first")] {
+                let statuses = list_migration_fs_status(&op, &pather, filter)
+                    .await
+                    .expect("Failed to list migration statuses");
 
-        // Should only return one migration
-        assert_eq!(statuses.len(), 1, "Should return exactly one migration");
+                let first = statuses
+                    .get("20240101-first")
+                    .expect("Should have first migration");
+                assert!(first.has_up_sql);
+                assert!(first.has_lock_toml);
 
-        let status = statuses
-            .get("20240101-first")
-            .expect("Should have first migration");
-        assert!(status.has_up_sql, "First migration should have up.sql");
-        assert!(
-            status.has_lock_toml,
-            "First migration should have lock.toml"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_list_migration_fs_status_all() {
-        // Create an in-memory operator with multiple migrations
-        let mem_service = Memory::default();
-        let op = Operator::new(mem_service).unwrap().finish();
-
-        // Create two migrations
-        op.write("/migrations/20240101-first/up.sql", "SELECT 1;")
-            .await
-            .expect("Failed to write first up.sql");
-        op.write("/migrations/20240101-first/lock.toml", "pin = \"abc\"")
-            .await
-            .expect("Failed to write first lock.toml");
-
-        op.write("/migrations/20240102-second/up.sql", "SELECT 2;")
-            .await
-            .expect("Failed to write second up.sql");
-        // Note: second migration has no lock.toml
-
-        let pather = FolderPather {
-            spawn_folder: "".to_string(),
-        };
-
-        // List all migrations
-        let statuses = list_migration_fs_status(&op, &pather, None)
-            .await
-            .expect("Failed to list migration status");
-
-        // Should return both migrations
-        assert_eq!(statuses.len(), 2, "Should return two migrations");
-
-        let first = statuses
-            .get("20240101-first")
-            .expect("Should have first migration");
-        assert!(first.has_up_sql, "First migration should have up.sql");
-        assert!(first.has_lock_toml, "First migration should have lock.toml");
-
-        let second = statuses
-            .get("20240102-second")
-            .expect("Should have second migration");
-        assert!(second.has_up_sql, "Second migration should have up.sql");
-        assert!(
-            !second.has_lock_toml,
-            "Second migration should not have lock.toml"
-        );
+                if filter.is_none() {
+                    assert_eq!(statuses.len(), 2);
+                    let second = statuses
+                        .get("20240102-second")
+                        .expect("Should have second migration");
+                    assert!(second.has_up_sql);
+                    assert!(!second.has_lock_toml);
+                } else {
+                    assert_eq!(statuses.len(), 1);
+                }
+            }
+        }
     }
 }
