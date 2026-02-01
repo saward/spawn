@@ -237,7 +237,7 @@ CREATE TABLE fee (
     amount NUMERIC(3, 2)
 );
 
-INSERT INTO fee (name, amount) VALUES ('base', 0.12);
+INSERT INTO fee (name, amount) VALUES ('base', 1.12);
 
 {% include 'functions/add_fee.sql' %}
 
@@ -427,7 +427,7 @@ creating test at spawn/tests/add-func/test.sql
 New test created: add-func
 ```
 
-Edit the file in `tests/add-func/test-sql, and let's create it like so:
+Edit the file in `tests/add-func/test.sql, and let's create it like so:
 
 ```sql
 -- In case a previous attempt for this test ran, let's make sure the old db is
@@ -569,8 +569,8 @@ CREATE TABLE fee (
     amount NUMERIC(3, 2)
 );
 
-INSERT INTO fee (name, amount) VALUES ('base', 0.12);
-INSERT INTO fee (name, amount) VALUES ('high-test', 0.98);
+INSERT INTO fee (name, amount) VALUES ('base', 1.12);
+INSERT INTO fee (name, amount) VALUES ('high-test', 1.98);
 
 CREATE OR REPLACE FUNCTION add_fee(a NUMERIC)
 RETURNS NUMERIC AS $$
