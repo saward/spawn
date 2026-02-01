@@ -80,7 +80,7 @@ pin = "a1b2c3d4..." # 🔒 Locked to V1 forever
 
 **3. Evolve**
 
-Months later, you update the **same file** to add middle initials, and create a new migration.
+Months later, you update the **same file** to change the business logic around displaying names, and create a new migration.
 
 _`spawn/components/users/name.sql`_ (Edited in place):
 
