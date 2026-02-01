@@ -9,7 +9,7 @@
 
 I like to lean heavily on the database. I don't like tools that abstract away the raw power of databases like PostgreSQL. Spawn is designed for developers who want to use the full breadth of modern database features: Functions, Views, Triggers, RLS -- while keeping the maintenance nightmares to a minimum.
 
-Spawn introduces **Components**, **Compilation**, and **Reproducibility** to SQL migrations.
+Spawn introduces **Components**, **Compilation**, **Reproducibility**, and **Testing** to SQL migrations.
 
 ## Installing
 
@@ -26,13 +26,21 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/saward/spawn/releases/l
 
 ## The Philosophy
 
-Standard migration tools (Flyway, dbmate) are great at running scripts, but bad at managing code. When you update a complex function, you have to copy-paste the code into a new file, which is cumbersome, makes your Git history messy, and makes code reviews more challenging.
+Standard migration tools (Flyway, dbmate) are great at running scripts, but bad at managing code. When you update a complex function, the solutions are usually one of these:
+
+- Create a new migration, copy the old view/function into the new, and edit in the new.
+- Repeatable migrations, which break migrations when running through them from the beginning.
+- Complex solutions like with Sqitch, where a copy of your original migration is made, old scripts updated to point at old, and you edit old as the new.
+
+These solutions can be cumbersome, make tracking changes over time and reviewing PRs challenging, and can break older migrations when running on a fresh database.
 
 **Spawn works differently:**
 
 1.  **Edit in Place:** Keep your functions in `components/`. Edit them there. Get perfect Git diffs.
 2.  **Pin in Time:** When you create a migration, Spawn **snapshots** your components in an efficient git-like storage, referenced per-migration via their `lock.toml`.
 3.  **Compile to SQL:** Spawn compiles your templates and pinned components into standard SQL transactions.
+
+Old migrations work exactly as they did the first time they were created.
 
 > See it in action in the [Tutorial](https://docs.spawn.dev/getting-started/magic/).
 
@@ -71,7 +79,7 @@ CREATE TABLE users (id serial, first text, last text);
 COMMIT;
 ```
 
-Run `spawn migration pin`. Spawn snapshots the V1 component into a lockfile.
+Run `spawn migration pin`. Spawn snapshots the V1 components and references them in a lockfile.
 
 ```toml
 # spawn/migrations/20260101-init/lock.toml
@@ -140,51 +148,51 @@ CREATE OR REPLACE FUNCTION get_name...
 
 Use plain SQL to write tests, and run them in a transaction or in a copy of the database via `WITH TEMPLATE`.
 
-_`spawn/tests/fees/test.sql`_
+_`spawn/tests/users/test.sql`_
 
 ```sql
 -- 1. Spin up a throwaway copy of your schema
-CREATE DATABASE test_fees WITH TEMPLATE postgres;
-\c test_fees
+CREATE DATABASE test_users WITH TEMPLATE postgres;
+\c test_users
 
 -- 2. Run scenarios
-SELECT add_fee(10.00); -- Should be 11.00
+SELECT get_name('John', 'Doe'); -- Expecting full name
 
 -- 3. Cleanup
 \c postgres
-DROP DATABASE test_fees;
+DROP DATABASE test_users;
 ```
 
 **2. Capture the Baseline**
 Run the test and save the output as the "Source of Truth."
 
 ```bash
-spawn test expect fees
+spawn test expect users
 ```
 
-_`spawn/tests/fees/expected`_
+_`spawn/tests/users/expected`_
 
 ```text
- add_fee
----------
-   11.00
+ get_name
+----------
+ John Doe
 (1 row)
 ```
 
 **3. Catch Regressions (CI/CD)**
-Later, someone breaks the logic to add 50% instead of 10%. `spawn test compare` catches it immediately with a diff.
+Later, you apply the V2 update (abbreviated last name), but the test still expects the full name. `spawn test compare` catches the behavioral change immediately.
 
 ```bash
-spawn test compare fees
+spawn test compare users
 ```
 
 ```diff
-[FAIL] fees
+[FAIL] users
 --- Diff ---
-   add_fee
- ---------
--   11.00
-+   15.00
+   get_name
+ ----------
+-   John Doe
++   John D
  (1 row)
 
 Error: ! Differences found in one or more tests
@@ -209,7 +217,7 @@ Store reusable SQL snippets (views, functions, triggers) in a dedicated folder. 
 Spawn includes a native testing harness designed for SQL.
 
 - **Macros:** Use [Minijinja](https://github.com/mitsuhiko/minijinja) macros to create reusable data factories (`{{ create_user('alice') }}`).
-- **Ephemeral DBs:** Tests can run against temporary database copies (`WITH TEMPLATE`) for speed.
+- **Ephemeral Tests:** Tests can run against temporary database copies (`WITH TEMPLATE`) for speed, or within transactionsi when possible.
 - **Diff-Based Assertions:** Tests pass if the output matches your `expected` file.
 
 > Docs: [Tutorial: Testing](https://docs.spawn.dev/getting-started/magic/) | [Test Macros](https://docs.spawn.dev/recipes/test-macros/)
@@ -241,10 +249,11 @@ command = {
 
 ## Roadmap
 
-Spawn is currently in **Public Beta**. The core features are stable and production-ready.
+Spawn is currently in **Public Beta**. It is fully functional and has test suites to help prevent regressions, but should be considered experimental software. We recommend testing thoroughly before adopting it for critical production workloads.
 
 **Currently Supported:**
 
+- ✅ PostgreSQL via psql support
 - ✅ Core Migration Management (Init, New, Apply)
 - ✅ Component Pinning & CAS
 - ✅ Minijinja Templating
@@ -271,6 +280,10 @@ Full documentation, recipes, and configuration guides are available at:
 
 ### [👉 docs.spawn.dev](https://docs.spawn.dev)
 
+## Telemetry
+
+Spawn collects anonymous usage data, to help us improve Spawn. Set `"telemetry = false"` in `spawn.toml` or use `DO_NOT_TRACK=1` to opt-out.
+
 ## Contributing
 
-We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. Note that this project requires signing a CLA.
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. Note that this project requires signing a CLA.
