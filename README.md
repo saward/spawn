@@ -7,7 +7,7 @@
 
 **Stop treating your database like a script runner. Start treating it like a codebase.**
 
-I like to lean heavily on the database. I don't like tools that abstract away the raw power of databases like PostgreSQL. Spawn is designed for developers who want to use the full breadth of modern database features: Functions, Views, Triggers, RLS -- while keeping the maintenance nightmares to a minimum.
+I like to lean heavily on the database. I don't like tools that abstract away the raw power of databases like PostgreSQL. Spawn is designed for developers who want to use the full breadth of modern database features: Functions, Views, Triggers, RLS – while keeping the maintenance nightmares to a minimum.
 
 Spawn introduces **Components**, **Compilation**, **Reproducibility**, and **Testing** to SQL migrations.
 
@@ -233,7 +233,7 @@ Spawn wraps `psql`. If you can do it in Postgres, you can do it in Spawn.
 ### ☁️ Cloud Native
 
 Connecting to production databases can be configured to use all your standard commands. You just need to provide it with a valid psql pipe.
-Spawn supports **Provider Commands** -- configure it to use `gcloud`, `aws`, or `az` CLIs to resolve the connection or SSH tunnel automatically.
+Spawn supports **Provider Commands** – configure it to use `gcloud`, `aws`, or `az` CLIs to resolve the connection or SSH tunnel automatically.
 
 ```toml
 # spawn.toml
