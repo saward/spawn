@@ -24,8 +24,6 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/saward/spawn/releases/l
 
 ---
 
-![Spawn in action](docs/src/assets/spawn_in_action.png)
-
 ## The Philosophy
 
 Standard migration tools (Flyway, dbmate) are great at running scripts, but bad at managing code. When you update a complex function, the solutions are usually one of these:
@@ -47,6 +45,10 @@ Old migrations work exactly as they did the first time they were created.
 > See it in action in the [Tutorial](https://docs.spawn.dev/getting-started/magic/).
 
 ---
+
+## Simple example
+
+<img src="docs/src/assets/spawn_in_action.png" width="600" alt="Spawn in action">
 
 ## A Quick Look: Migrations
 
@@ -247,6 +249,8 @@ command = {
 }
 ```
 
+> Docs: [Manage Databases](https://docs.spawn.dev/guides/manage-databases/) | [Configuration](https://docs.spawn.dev/reference/config/)
+
 ## Comparison
 
 | Feature              | **Spawn**                                                                            | **Sqitch**                                                                           | **Flyway**                                                                    | **dbmate**                                                     |
@@ -260,8 +264,6 @@ command = {
 | **DB Support**       | **PostgreSQL** (Focus on depth).                                                     | **Massive.** Postgres, MySQL, Oracle, SQLite, Vertica, etc.                          | **Massive.** Every DB known to man.                                           | **Broad.** Postgres, MySQL, SQLite, ClickHouse.                |
 | **Execution Engine** | **Native CLI Wrapper.** Full parity with `psql` (supports `\copy`, `\gset`, `\set`). | **Native Drivers.**                                                                  | **JDBC.** (Java Database Connectivity).                                       | **Native Drivers.** (Go drivers).                              |
 | **License**          | **AGPL-3.0**                                                                         | **MIT**                                                                              | **Apache 2.0** (Community) / Proprietary (Teams).                             | **MIT**                                                        |
-
-> Docs: [Manage Databases](https://docs.spawn.dev/guides/manage-databases/) | [Configuration](https://docs.spawn.dev/reference/config/)
 
 ## Roadmap
 
