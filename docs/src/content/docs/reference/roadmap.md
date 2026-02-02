@@ -54,6 +54,7 @@ This is a high-level overview of where Spawn is headed. Items here are subject t
 - 🔄 **Migration dependencies** - Apply migrations out of order based on dependencies
 - 🔄 **Draft migrations** - Mark migrations to exclude from database application
 - 🔄 **Advanced scripting** - Run arbitrary commands during migration execution
+- 🔄 **Custom commands/callbacks** - Run arbitrary commands before or after migrations or tests
 
 ## Enhanced Pinning & Component Management
 
