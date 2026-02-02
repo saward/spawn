@@ -17,7 +17,7 @@ import {
     { flag: "--no-pin", description: "Allow unpinned migrations (use current components)" },
     ...variablesOption,
     { flag: "--yes", description: "Skip confirmation prompt" },
-    { flag: "--retry", description: "Retry a previously failed migration" },
+    { flag: "--retry", description: "Retry a previous migration" },
     ...environmentOption,
     ...databaseOption,
     ...globalOptions
@@ -54,7 +54,7 @@ By default, `apply` requires migrations to have a `lock.toml`. This ensures the 
 
 ## Retry logic
 
-If a migration previously failed, `apply` will refuse to run it again unless you pass `--retry`. This prevents accidental re-execution of partially applied migrations.
+If a migration previously failed, `apply` will refuse to run it again unless you pass `--retry`. This prevents accidental re-execution of partially applied migrations. Retrying a successful migration will run the same migration again.
 
 ## Examples
 
@@ -70,7 +70,7 @@ Apply a specific migration without confirmation:
 spawn migration apply 20260131120000-add-users-table --yes
 ```
 
-Retry a failed migration:
+Retry a previously successful or failed migration:
 
 ```bash
 spawn migration apply 20260131120000-add-users-table --retry

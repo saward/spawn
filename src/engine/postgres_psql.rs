@@ -757,19 +757,19 @@ impl PSQL {
         };
 
         if let Some(info) = existing_status {
-            let name = migration_name.to_string();
-            let ns = namespace.raw_value().to_string();
+            if !retry {
+                let name = migration_name.to_string();
+                let ns = namespace.raw_value().to_string();
 
-            match info.last_status {
-                MigrationHistoryStatus::Success => {
-                    return Err(MigrationError::AlreadyApplied {
-                        name,
-                        namespace: ns,
-                        info,
-                    });
-                }
-                MigrationHistoryStatus::Attempted | MigrationHistoryStatus::Failure => {
-                    if !retry {
+                match info.last_status {
+                    MigrationHistoryStatus::Success => {
+                        return Err(MigrationError::AlreadyApplied {
+                            name,
+                            namespace: ns,
+                            info,
+                        });
+                    }
+                    MigrationHistoryStatus::Attempted | MigrationHistoryStatus::Failure => {
                         return Err(MigrationError::PreviousAttemptFailed {
                             name,
                             namespace: ns,
