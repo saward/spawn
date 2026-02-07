@@ -161,35 +161,39 @@ Encodes bytes or a string as a base64 string. Accepts both bytes (e.g. from `rea
 {{ "binary.dat"|read_file|base64_encode }}
 ```
 
-### `parse_json`
+### `read_json`, `read_toml`, `read_yaml`
 
-Parses a JSON string into a template value (object, array, string, number, etc.) that can be used in expressions, loops, and conditionals.
+Convenience filters that read a file from `components/` and parse it in one step. These combine `read_file|to_string_lossy` with the corresponding parse filter.
 
 ```sql
-{%- set data = "config.json"|read_file|to_string_lossy|parse_json %}
+{%- set data = "config.json"|read_json %}
 CREATE TABLE {{ data.table_name | escape_identifier }} (id SERIAL PRIMARY KEY);
+
+{%- set settings = "config.toml"|read_toml %}
+SELECT * FROM {{ settings.table_name | escape_identifier }} LIMIT {{ settings.limit }};
+
+{%- set users = "users.yaml"|read_yaml %}
+{% for user in users -%}
+INSERT INTO "users" (name) VALUES ({{ user.name }});
+{% endfor %}
 ```
 
-### `parse_toml`
+### `parse_json`, `parse_toml`, `parse_yaml`
 
-Parses a TOML string into a template value.
-
-```sql
-{%- set data = "config.toml"|read_file|to_string_lossy|parse_toml %}
-SELECT * FROM {{ data.table_name | escape_identifier }} LIMIT {{ data.limit }};
-```
-
-### `parse_yaml`
-
-Parses a YAML string into a template value.
+Parse a string into a template value (object, array, string, number, etc.) that can be used in expressions, loops, and conditionals. These are the lower-level filters used by `read_json`/`read_toml`/`read_yaml` above, and can also be used directly on any string:
 
 ```sql
-{%- set data = "config.yaml"|read_file|to_string_lossy|parse_yaml %}
-SELECT * FROM {{ data.table_name | escape_identifier }} LIMIT {{ data.limit }};
+{%- set inline = '{"enabled": true}'|parse_json %}
+{% if inline.enabled -%}
+SELECT 1;
+{% endif %}
+
+{# Or with read_file for more control: #}
+{%- set data = "config.json"|read_file|to_string_lossy|parse_json %}
 ```
 
 :::note
-These parse filters complement the `--variables` CLI flag. Use `--variables` to pass a single variables file into the `variables` context. This is intended for situations where you want to provide data that is specific to a particular database. Use `read_file` with a parse filter when you need to load additional structured data from `components/`, either for tests or data that is applicable to all database targets.
+These parse filters complement the `--variables` CLI flag. Use `--variables` to pass a single variables file into the `variables` context. This is intended for situations where you want to provide data that is specific to a particular database target, or contains information that should not be committed to your repo. Use `read_file` with a parse filter when you need to load additional structured data from `components/`, either for tests or data that is applicable to all database targets.
 :::
 
 ### `escape_identifier`

@@ -57,6 +57,34 @@ pub fn template_env(store: Store, engine: &EngineType) -> Result<Environment<'st
     env.add_filter("parse_toml", parse_toml_filter);
     env.add_filter("parse_yaml", parse_yaml_filter);
 
+    let read_json_store = Arc::clone(&store);
+    env.add_filter(
+        "read_json",
+        move |path: &str| -> Result<Value, minijinja::Error> {
+            let bytes = read_file_bytes(path, &read_json_store)?;
+            let s = string_from_bytes(&bytes)?;
+            parse_json_filter(&s)
+        },
+    );
+    let read_toml_store = Arc::clone(&store);
+    env.add_filter(
+        "read_toml",
+        move |path: &str| -> Result<Value, minijinja::Error> {
+            let bytes = read_file_bytes(path, &read_toml_store)?;
+            let s = string_from_bytes(&bytes)?;
+            parse_toml_filter(&s)
+        },
+    );
+    let read_yaml_store = Arc::clone(&store);
+    env.add_filter(
+        "read_yaml",
+        move |path: &str| -> Result<Value, minijinja::Error> {
+            let bytes = read_file_bytes(path, &read_yaml_store)?;
+            let s = string_from_bytes(&bytes)?;
+            parse_yaml_filter(&s)
+        },
+    );
+
     // Get the appropriate dialect for this engine
     let dialect = engine_to_dialect(engine);
 
@@ -110,25 +138,37 @@ fn escape_identifier_filter(value: &Value) -> Result<Value, minijinja::Error> {
     Ok(Value::from_safe_string(escaped.to_string()))
 }
 
-/// Filter to read a file from the project and return its contents as raw bytes.
-///
-/// Uses the Store's operator to read files relative to the project root.
-/// Returns a bytes Value that can be further processed with `base64_encode` or `to_string_lossy`.
-///
-/// Usage in templates: `{{ "path/to/file"|read_file|to_string_lossy }}`
-fn read_file_filter(path: &str, store: &Arc<Store>) -> Result<Value, minijinja::Error> {
+/// Reads raw bytes from a file in the components folder via the Store.
+fn read_file_bytes(path: &str, store: &Arc<Store>) -> Result<Vec<u8>, minijinja::Error> {
     let bytes = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(async { store.read_file_bytes(path).await })
     });
 
-    let bytes = bytes.map_err(|e| {
+    bytes.map_err(|e| {
         minijinja::Error::new(
             minijinja::ErrorKind::InvalidOperation,
             format!("Failed to read file '{}': {}", path, e),
         )
-    })?;
+    })
+}
 
-    Ok(Value::from_bytes(bytes))
+/// Converts raw bytes to a UTF-8 string, returning an error on invalid UTF-8.
+fn string_from_bytes(bytes: &[u8]) -> Result<String, minijinja::Error> {
+    String::from_utf8(bytes.to_vec()).map_err(|e| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("File is not valid UTF-8: {}", e),
+        )
+    })
+}
+
+/// Filter to read a file from the components folder and return its contents as raw bytes.
+///
+/// Returns a bytes Value that can be further processed with `base64_encode` or `to_string_lossy`.
+///
+/// Usage in templates: `{{ "path/to/file"|read_file|to_string_lossy }}`
+fn read_file_filter(path: &str, store: &Arc<Store>) -> Result<Value, minijinja::Error> {
+    Ok(Value::from_bytes(read_file_bytes(path, store)?))
 }
 
 /// Filter to encode a value as a base64 string.
