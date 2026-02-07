@@ -53,6 +53,9 @@ pub fn template_env(store: Store, engine: &EngineType) -> Result<Environment<'st
     );
     env.add_filter("base64_encode", base64_encode_filter);
     env.add_filter("to_string_lossy", to_string_lossy_filter);
+    env.add_filter("parse_json", parse_json_filter);
+    env.add_filter("parse_toml", parse_toml_filter);
+    env.add_filter("parse_yaml", parse_yaml_filter);
 
     // Get the appropriate dialect for this engine
     let dialect = engine_to_dialect(engine);
@@ -165,6 +168,45 @@ fn to_string_lossy_filter(value: &Value) -> Result<Value, minijinja::Error> {
             "to_string_lossy filter expects bytes or string input",
         )),
     }
+}
+
+/// Filter to parse a JSON string into a template value.
+///
+/// Usage in templates: `{{ "data.json"|read_file|to_string_lossy|parse_json }}`
+fn parse_json_filter(value: &str) -> Result<Value, minijinja::Error> {
+    let vars = Variables::from_str("json", value).map_err(|e| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("parse_json: {}", e),
+        )
+    })?;
+    Ok(Value::from_serialize(&vars))
+}
+
+/// Filter to parse a TOML string into a template value.
+///
+/// Usage in templates: `{{ "config.toml"|read_file|to_string_lossy|parse_toml }}`
+fn parse_toml_filter(value: &str) -> Result<Value, minijinja::Error> {
+    let vars = Variables::from_str("toml", value).map_err(|e| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("parse_toml: {}", e),
+        )
+    })?;
+    Ok(Value::from_serialize(&vars))
+}
+
+/// Filter to parse a YAML string into a template value.
+///
+/// Usage in templates: `{{ "data.yaml"|read_file|to_string_lossy|parse_yaml }}`
+fn parse_yaml_filter(value: &str) -> Result<Value, minijinja::Error> {
+    let vars = Variables::from_str("yaml", value).map_err(|e| {
+        minijinja::Error::new(
+            minijinja::ErrorKind::InvalidOperation,
+            format!("parse_yaml: {}", e),
+        )
+    })?;
+    Ok(Value::from_serialize(&vars))
 }
 
 pub struct Generation {

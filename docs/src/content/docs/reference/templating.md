@@ -161,6 +161,37 @@ Encodes bytes or a string as a base64 string. Accepts both bytes (e.g. from `rea
 {{ "binary.dat"|read_file|base64_encode }}
 ```
 
+### `parse_json`
+
+Parses a JSON string into a template value (object, array, string, number, etc.) that can be used in expressions, loops, and conditionals.
+
+```sql
+{%- set data = "config.json"|read_file|to_string_lossy|parse_json %}
+CREATE TABLE {{ data.table_name | escape_identifier }} (id SERIAL PRIMARY KEY);
+```
+
+### `parse_toml`
+
+Parses a TOML string into a template value.
+
+```sql
+{%- set data = "config.toml"|read_file|to_string_lossy|parse_toml %}
+SELECT * FROM {{ data.table_name | escape_identifier }} LIMIT {{ data.limit }};
+```
+
+### `parse_yaml`
+
+Parses a YAML string into a template value.
+
+```sql
+{%- set data = "config.yaml"|read_file|to_string_lossy|parse_yaml %}
+SELECT * FROM {{ data.table_name | escape_identifier }} LIMIT {{ data.limit }};
+```
+
+:::note
+These parse filters complement the `--variables` CLI flag. Use `--variables` to pass a single variables file into the `variables` context. This is intended for situations where you want to provide data that is specific to a particular database. Use `read_file` with a parse filter when you need to load additional structured data from `components/`, either for tests or data that is applicable to all database targets.
+:::
+
 ### `escape_identifier`
 
 Escapes a value for use as a SQL identifier (table name, column name, etc.) by wrapping it in double quotes. See [Identifier escaping](#identifier-escaping) for details and usage guidance.
