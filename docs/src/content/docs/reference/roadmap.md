@@ -92,6 +92,7 @@ This is a high-level overview of where Spawn is headed. Items here are subject t
 
 ## Data & I/O Integration
 
+- 🔄 **Support remote storage** - Run migrations from another source (S3, etc)
 - 🔄 **CSV/data file support** - Import and loop over data files in templates
 - 🔄 **External data sources** - Import from URLs and external scripts
 - 🔄 **Secret management** - Secure handling of sensitive data
