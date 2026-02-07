@@ -114,7 +114,7 @@ CREATE TABLE {{ tenant }}.users (
 
 ## Filters
 
-Minijinja provides filters for transforming values:
+Filters transform values in template expressions. Minijinja provides many built-in filters like `upper`, `default`, and `length` — see the [Minijinja filters documentation](https://docs.rs/minijinja/latest/minijinja/filters/index.html) for the complete list.
 
 ```sql
 -- Upper case
@@ -129,7 +129,45 @@ SELECT * FROM {{ variables.table | default(value="users") }};
 {% endif %}
 ```
 
-See [Minijinja filters documentation](https://docs.rs/minijinja/latest/minijinja/filters/index.html) for the complete list.
+Spawn also provides the following custom filters:
+
+### `read_file`
+
+Reads a file from the `components/` directory and returns its raw bytes. The path is relative to `components/`. This is useful for embedding file contents directly into your SQL.
+
+Since `read_file` returns raw bytes, you may need to chain it with `to_string_lossy` or `base64_encode` to get a usable value when the file contains non-UTF-8 characters or binary data:
+
+```sql
+-- Embed a text file's contents as a SQL string
+INSERT INTO seed_data (content) VALUES ({{ "seed.csv"|read_file|to_string_lossy }});
+
+-- Embed binary data as base64
+INSERT INTO images (data) VALUES ({{ "images/logo.png"|read_file|base64_encode }});
+```
+
+### `to_string_lossy`
+
+Converts bytes to a UTF-8 string, replacing any invalid byte sequences with the Unicode replacement character. If the value is already a string, it is returned as-is.
+
+```sql
+{{ "data.txt"|read_file|to_string_lossy }}
+```
+
+### `base64_encode`
+
+Encodes bytes or a string as a base64 string. Accepts both bytes (e.g. from `read_file`) and string values.
+
+```sql
+{{ "binary.dat"|read_file|base64_encode }}
+```
+
+### `escape_identifier`
+
+Escapes a value for use as a SQL identifier (table name, column name, etc.) by wrapping it in double quotes. See [Identifier escaping](#identifier-escaping) for details and usage guidance.
+
+### `safe`
+
+Outputs a value without any SQL escaping. Use this for trusted SQL fragments only. See [Bypassing escaping with `safe`](#bypassing-escaping-with-safe) for details and important security considerations.
 
 ## SQL escaping and security
 
