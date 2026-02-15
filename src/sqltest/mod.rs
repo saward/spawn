@@ -86,6 +86,7 @@ impl Tester {
                     Ok(())
                 }),
                 Some(Box::new(SharedBufWriter(stdout_buf_clone))),
+                true, // Merge stderr into stdout for tests
             )
             .await
             .context("failed to write content to test db")?;
