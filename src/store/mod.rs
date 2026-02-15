@@ -125,6 +125,12 @@ impl Store {
         Ok(res)
     }
 
+    pub async fn read_file_bytes(&self, path: &str) -> Result<Vec<u8>> {
+        let full_path = format!("{}/{}", self.pather.components_folder(), path);
+        let result = self.fs.read(&full_path).await?;
+        Ok(result.to_bytes().to_vec())
+    }
+
     pub async fn load_migration(&self, name: &str) -> Result<String> {
         let result = self.fs.read(&name).await?;
         let bytes = result.to_bytes();

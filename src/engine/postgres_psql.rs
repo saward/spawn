@@ -85,48 +85,89 @@ impl Engine for PSQL {
         &self,
         write_fn: WriterFn,
         stdout_writer: StdoutWriter,
+        merge_stderr: bool,
     ) -> Result<(), EngineError> {
         // 1. Create the pipe for stdin
         let (reader, mut writer) = std::io::pipe()?;
 
-        // 2. Configure stdout based on whether we have a writer
-        let stdout_config = if stdout_writer.is_some() {
-            Stdio::piped()
+        // 2. Configure stdout/stderr and spawn psql
+        //
+        // When merge_stderr is true, we create our own pipe and give the
+        // write end to both stdout and stderr so the OS interleaves them.
+        // Otherwise, stdout is piped (or null) and stderr is piped separately.
+        let merge = merge_stderr && stdout_writer.is_some();
+
+        let (mut child, combined_read) = if merge {
+            let (out_read, out_write) = std::io::pipe()?;
+            let out_write_dup = out_write.try_clone()?;
+            let child = Command::new(&self.psql_command[0])
+                .args(&self.psql_command[1..])
+                .stdin(Stdio::from(reader))
+                .stdout(Stdio::from(out_write))
+                .stderr(Stdio::from(out_write_dup))
+                .spawn()
+                .map_err(EngineError::Io)?;
+            (child, Some(out_read))
         } else {
-            Stdio::null()
+            let stdout_config = if stdout_writer.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            };
+            let child = Command::new(&self.psql_command[0])
+                .args(&self.psql_command[1..])
+                .stdin(Stdio::from(reader))
+                .stdout(stdout_config)
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(EngineError::Io)?;
+            (child, None)
         };
 
-        // 3. Spawn psql reading from the pipe
-        let mut child = Command::new(&self.psql_command[0])
-            .args(&self.psql_command[1..])
-            .stdin(Stdio::from(reader))
-            .stdout(stdout_config)
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(EngineError::Io)?;
-
-        // 4. If we have a stdout writer, spawn task to copy stdout to it
+        // 3. Copy output to stdout_writer if provided
         let stdout_handle = if let Some(mut stdout_dest) = stdout_writer {
-            let mut stdout = child.stdout.take().expect("stdout should be piped");
+            if let Some(mut combined_read) = combined_read {
+                // Merged mode: read from our combined pipe in a blocking
+                // thread (it's a std::io::PipeReader, not a tokio type),
+                // then write to the async destination.
+                Some(tokio::task::spawn(async move {
+                    let buf = tokio::task::spawn_blocking(move || {
+                        use std::io::Read;
+                        let mut buf = Vec::new();
+                        let _ = combined_read.read_to_end(&mut buf);
+                        buf
+                    })
+                    .await
+                    .unwrap_or_default();
+                    use tokio::io::AsyncWriteExt;
+                    let _ = stdout_dest.write_all(&buf).await;
+                }))
+            } else {
+                let mut stdout = child.stdout.take().expect("stdout should be piped");
+                Some(tokio::task::spawn(async move {
+                    use tokio::io::AsyncWriteExt;
+                    let mut buf = Vec::new();
+                    let _ = stdout.read_to_end(&mut buf).await;
+                    let _ = stdout_dest.write_all(&buf).await;
+                }))
+            }
+        } else {
+            None
+        };
+
+        // 4. Drain stderr in background (prevents deadlock).
+        //    When merged, child.stderr is None (it shares the stdout pipe).
+        let stderr_handle = if let Some(mut stderr) = child.stderr.take() {
             Some(tokio::spawn(async move {
-                use tokio::io::AsyncWriteExt;
                 let mut buf = Vec::new();
-                let _ = stdout.read_to_end(&mut buf).await;
-                let _ = stdout_dest.write_all(&buf).await;
+                let _ = stderr.read_to_end(&mut buf).await;
+                buf
             }))
         } else {
             None
         };
 
-        // 5. Drain stderr in background (always, prevents deadlock)
-        let mut stderr = child.stderr.take().expect("stderr should be piped");
-        let stderr_handle = tokio::spawn(async move {
-            let mut buf = Vec::new();
-            let _ = stderr.read_to_end(&mut buf).await;
-            buf
-        });
-
-        // 6. Run the writer function in a blocking thread
+        // 5. Run the writer function in a blocking thread
         let writer_handle = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
             // PSQL-specific setup - QUIET must be first to suppress output from other settings
             writer.write_all(b"\\set QUIET on\n")?;
@@ -140,20 +181,22 @@ impl Engine for PSQL {
             Ok(())
         });
 
-        // 7. Wait for writing to complete
+        // 6. Wait for writing to complete
         writer_handle
             .await
             .map_err(|e| EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))??;
 
-        // 8. Wait for stdout copy if applicable (must complete before we read the buffer)
+        // 7. Wait for stdout copy if applicable (must complete before we read the buffer)
         if let Some(handle) = stdout_handle {
-            // Wait for both the async read and the blocking write to complete
             let _ = handle.await;
         }
 
-        // 9. Wait for psql and check result
+        // 8. Wait for psql and check result
         let status = child.wait().await?;
-        let stderr_bytes = stderr_handle.await.unwrap_or_default();
+        let stderr_bytes = match stderr_handle {
+            Some(handle) => handle.await.unwrap_or_default(),
+            None => Vec::new(),
+        };
 
         if !status.success() {
             return Err(EngineError::ExecutionFailed {
@@ -571,6 +614,7 @@ impl PSQL {
                 Ok(())
             }),
             Some(Box::new(SharedBufWriter(stdout_buf_clone))),
+            false, // Don't merge stderr for internal queries
         )
         .await
         .map_err(|e| anyhow!("SQL execution failed: {}", e))?;
@@ -716,6 +760,7 @@ impl PSQL {
                 Ok(())
             }),
             None,
+            false, // Don't merge stderr for recording migrations
         )
         .await
         .map_err(|e| match e {
@@ -815,6 +860,7 @@ impl PSQL {
                     Ok(())
                 }),
                 None,
+                false, // Don't merge stderr for migration apply
             )
             .await;
 

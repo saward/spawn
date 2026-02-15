@@ -114,7 +114,7 @@ CREATE TABLE {{ tenant }}.users (
 
 ## Filters
 
-Minijinja provides filters for transforming values:
+Filters transform values in template expressions. Minijinja provides many built-in filters like `upper`, `default`, and `length` — see the [Minijinja filters documentation](https://docs.rs/minijinja/latest/minijinja/filters/index.html) for the complete list.
 
 ```sql
 -- Upper case
@@ -129,7 +129,80 @@ SELECT * FROM {{ variables.table | default(value="users") }};
 {% endif %}
 ```
 
-See [Minijinja filters documentation](https://docs.rs/minijinja/latest/minijinja/filters/index.html) for the complete list.
+Spawn also provides the following custom filters:
+
+### `read_file`
+
+Reads a file from the `components/` directory and returns its raw bytes. The path is relative to `components/`. This is useful for embedding file contents directly into your SQL.
+
+Since `read_file` returns raw bytes, you may need to chain it with `to_string_lossy` or `base64_encode` to get a usable value when the file contains non-UTF-8 characters or binary data:
+
+```sql
+-- Embed a text file's contents as a SQL string
+INSERT INTO seed_data (content) VALUES ({{ "seed.csv"|read_file|to_string_lossy }});
+
+-- Embed binary data as base64
+INSERT INTO images (data) VALUES (decode({{ "images/logo.png"|read_file|base64_encode }}, 'base64'));
+```
+
+### `to_string_lossy`
+
+Converts bytes to a UTF-8 string, replacing any invalid byte sequences with the Unicode replacement character. If the value is already a string, it is returned as-is.
+
+```sql
+{{ "data.txt"|read_file|to_string_lossy }}
+```
+
+### `base64_encode`
+
+Encodes bytes or a string as a base64 string. Accepts both bytes (e.g. from `read_file`) and string values.
+
+```sql
+{{ "binary.dat"|read_file|base64_encode }}
+```
+
+### `read_json`, `read_toml`, `read_yaml`
+
+Convenience filters that read a file from `components/` and parse it in one step. These combine `read_file|to_string_lossy` with the corresponding parse filter.
+
+```sql
+{%- set data = "config.json"|read_json %}
+CREATE TABLE {{ data.table_name | escape_identifier }} (id SERIAL PRIMARY KEY);
+
+{%- set settings = "config.toml"|read_toml %}
+SELECT * FROM {{ settings.table_name | escape_identifier }} LIMIT {{ settings.limit }};
+
+{%- set users = "users.yaml"|read_yaml %}
+{% for user in users -%}
+INSERT INTO "users" (name) VALUES ({{ user.name }});
+{% endfor %}
+```
+
+### `parse_json`, `parse_toml`, `parse_yaml`
+
+Parse a string into a template value (object, array, string, number, etc.) that can be used in expressions, loops, and conditionals. These are the lower-level filters used by `read_json`/`read_toml`/`read_yaml` above, and can also be used directly on any string:
+
+```sql
+{%- set inline = '{"enabled": true}'|parse_json %}
+{% if inline.enabled -%}
+SELECT 1;
+{% endif %}
+
+{# Or with read_file for more control: #}
+{%- set data = "config.json"|read_file|to_string_lossy|parse_json %}
+```
+
+:::note
+These parse filters complement the `--variables` CLI flag. Use `--variables` to pass a single variables file into the `variables` context. This is intended for situations where you want to provide data that is specific to a particular database target, or contains information that should not be committed to your repo. Use `read_file` with a parse filter when you need to load additional structured data from `components/`, either for tests or data that is applicable to all database targets.
+:::
+
+### `escape_identifier`
+
+Escapes a value for use as a SQL identifier (table name, column name, etc.) by wrapping it in double quotes. See [Identifier escaping](#identifier-escaping) for details and usage guidance.
+
+### `safe`
+
+Outputs a value without any SQL escaping. Use this for trusted SQL fragments only. See [Bypassing escaping with `safe`](#bypassing-escaping-with-safe) for details and important security considerations.
 
 ## SQL escaping and security
 
@@ -143,11 +216,9 @@ When you use `{{ }}` to output a value, Spawn:
 2. Applies PostgreSQL escaping rules appropriate for that type
 3. Wraps strings in single quotes with proper escaping
 
-This happens **automatically** for all template output, unlike plain Minijinja where you control escaping.
-
 ### Automatic literal escaping
 
-By default, all values are escaped as **SQL literals** (values):
+By default, string type values are escaped as **SQL literals** (values):
 
 ```sql
 -- Automatically escaped and quoted
@@ -242,7 +313,7 @@ Spawn's auto-escaper handles different types appropriately:
 
 -- null/undefined → NULL
 {{ none }}                 -- Output: NULL
-{{ undefined_var }}        -- Output: NULL
+{{ undefined_var }}        -- Output:
 
 -- Array → PostgreSQL array literal
 {{ [1, 2, 3] }}            -- Output: ARRAY[1, 2, 3]

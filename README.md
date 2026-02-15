@@ -1,5 +1,7 @@
 # Spawn
 
+LLM disclaimer: I (Mark) estimate that 90% of the code/design/architecture has been done by myself (2026-02-12), but I do use LLM's for filling in tedious gaps. All LLM changes are reviewed to ensure they fit with the current design and future vision.
+
 ### The Database Build System.
 
 [![License](https://img.shields.io/badge/license-AGPL-blue.svg)](LICENSE)

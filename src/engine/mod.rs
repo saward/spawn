@@ -313,12 +313,16 @@ pub trait Engine: Send + Sync {
     /// Execute SQL by running the provided writer function.
     /// - `write_fn`: Closure that writes SQL to the provided Write handle
     /// - `stdout_writer`: Optional writer to capture stdout. If None, stdout is discarded.
+    /// - `merge_stderr`: If true and stdout_writer is Some, stderr is merged into stdout
+    ///                   at the OS level for true interleaving. Useful for tests.
+    ///                   Note: when merged, stderr is not separately available in errors.
     /// Engine-specific setup (like psql flags) is handled internally.
     /// Returns stderr content on failure.
     async fn execute_with_writer(
         &self,
         write_fn: WriterFn,
         stdout_writer: StdoutWriter,
+        merge_stderr: bool,
     ) -> Result<(), EngineError>;
 
     async fn migration_apply(

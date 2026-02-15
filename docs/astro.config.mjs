@@ -2,6 +2,7 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
+import starlightBlog from "starlight-blog";
 import cloudflare from "@astrojs/cloudflare";
 
 // https://astro.build/config
@@ -11,6 +12,7 @@ export default defineConfig({
 
   integrations: [
     starlight({
+      plugins: [starlightBlog()],
       title: "Spawn",
       social: [
         {
@@ -46,8 +48,8 @@ export default defineConfig({
             { label: "Introduction", slug: "recipes/introduction" },
             { label: "Test Macros", slug: "recipes/test-macros" },
             {
-              label: "Timestamps in Tests",
-              slug: "recipes/timestamps-in-tests",
+              label: "Non-determinism in Tests",
+              slug: "recipes/non-determinism-tests",
             },
           ],
         },

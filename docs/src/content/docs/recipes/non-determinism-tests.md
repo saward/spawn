@@ -1,5 +1,5 @@
 ---
-title: Timestamps in Tests
+title: Non-determinism in Tests
 description: Handling timestamps and other non-deterministic values in test output.
 ---
 
@@ -67,6 +67,30 @@ SELECT id, name FROM users WHERE id = 1;
 ```
 
 This only works reliably when the test has full control over the data (e.g. using a fresh database copy via `WITH TEMPLATE`).
+
+## Errors
+
+Sometimes errors with psql will output information that includes timestamps. In some situations, using `\set VERBOSITY terse` will reduce the output from:
+
+```
+ERROR:  new row for relation "item" violates check constraint "item_quantity_on_hand_check"
+DETAIL:  Failing row contains (1, Apple, 23.12, -1, 2026-02-15 10:04:32.199307+00, 2026-02-15 10:04:32.199307+00).
+CONTEXT:  SQL statement "UPDATE item
+    SET quantity_on_hand = quantity_on_hand + COALESCE(OLD.quantity, 0) - COALESCE(NEW.quantity, 0)
+    WHERE item_id = COALESCE(NEW.item_id_item, OLD.item_id_item)"
+PL/pgSQL function update_item_quantity_on_order_item_change() line 3 at SQL statement
+SQL statement "INSERT INTO order_item (order_id_order, item_id_item, quantity, price_per_unit)
+    SELECT v_order_id, items.item_id, items.quantity, i.price
+    FROM UNNEST(p_items) AS items
+    LEFT JOIN item i ON i.item_id = items.item_id"
+PL/pgSQL function create_order(text,order_item_input[]) line 11 at SQL statement
+```
+
+To:
+
+```
+ERROR:  new row for relation "item" violates check constraint "item_quantity_on_hand_check"
+```
 
 ## Other non-deterministic values
 

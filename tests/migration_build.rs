@@ -383,6 +383,37 @@ COMMIT;"#;
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_migration_build_with_read_file_and_parse() -> Result<(), Box<dyn std::error::Error>> {
+    let helper =
+        MigrationTestHelper::new_from_local_folder("./static/tests/build_with_read_file").await?;
+
+    let migration_name = "20240907212659-initial";
+    let built = helper.build_migration(migration_name, false).await?;
+
+    let expected = r#"BEGIN;
+
+-- from json
+CREATE TABLE "users" (id SERIAL PRIMARY KEY);
+SELECT * FROM "users" LIMIT 100;
+
+-- from toml
+SELECT * FROM "users" LIMIT 100;
+
+-- from yaml
+SELECT * FROM "users" LIMIT 100;
+
+-- from json array
+INSERT INTO "users" (name, email) VALUES ('alice', 'alice@example.com');
+INSERT INTO "users" (name, email) VALUES ('bob', 'bob@example.com');
+
+COMMIT;"#;
+
+    assert_eq!(expected, built);
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_check_passes_with_no_migrations() -> Result<(), Box<dyn std::error::Error>> {
     let helper = MigrationTestHelper::new_empty().await?;
