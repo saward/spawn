@@ -142,7 +142,7 @@ Since `read_file` returns raw bytes, you may need to chain it with `to_string_lo
 INSERT INTO seed_data (content) VALUES ({{ "seed.csv"|read_file|to_string_lossy }});
 
 -- Embed binary data as base64
-INSERT INTO images (data) VALUES ({{ "images/logo.png"|read_file|base64_encode }});
+INSERT INTO images (data) VALUES (decode({{ "images/logo.png"|read_file|base64_encode }}, 'base64'));
 ```
 
 ### `to_string_lossy`
@@ -216,11 +216,9 @@ When you use `{{ }}` to output a value, Spawn:
 2. Applies PostgreSQL escaping rules appropriate for that type
 3. Wraps strings in single quotes with proper escaping
 
-This happens **automatically** for all template output, unlike plain Minijinja where you control escaping.
-
 ### Automatic literal escaping
 
-By default, all values are escaped as **SQL literals** (values):
+By default, string type values are escaped as **SQL literals** (values):
 
 ```sql
 -- Automatically escaped and quoted
@@ -315,7 +313,7 @@ Spawn's auto-escaper handles different types appropriately:
 
 -- null/undefined → NULL
 {{ none }}                 -- Output: NULL
-{{ undefined_var }}        -- Output: NULL
+{{ undefined_var }}        -- Output:
 
 -- Array → PostgreSQL array literal
 {{ [1, 2, 3] }}            -- Output: ARRAY[1, 2, 3]

@@ -1,0 +1,397 @@
+---
+title: Test your postgres database like a sorcerer
+date: 2026-02-11
+---
+
+import { Aside } from "@astrojs/starlight/components";
+import { LinkButton } from "@astrojs/starlight/components";
+
+<Aside type="tip" title="Human written" icon="pencil">
+  Lovingly hand-crafted blog post, with occasional use of LLM's to speed up
+  creation of SQL examples.
+</Aside>
+
+Mark (aka Winsaucerer) here to show you how you can test your postgres database like a sorcerer. We are going to be using Spawn (surprise!), but you do _not_ need to be using Spawn for migrations in order to use it for testing.
+
+Spawn was built to solve some migration pains I've experienced, but I happily discovered that when used for testing, it is _very_ powerful. To show you some of that power, we're going to use a contrived database example.
+
+To get started, follow the Spawn install instructions:
+
+<LinkButton href="/getting-started/install/">Install Spawn</LinkButton>
+
+And then create a new folder on your system, and initialise a new project with a docker compose config ready for us to play with:
+
+```sh
+# inside your new folder:
+spawn init --docker
+docker compose up -d
+```
+
+You now have a running docker based postgres database and a `spawn.toml` file configured to connect to it. To run the below commands, you can connect directly to this database:
+
+```sh
+docker exec -ti postgres-db psql -U postgres
+```
+
+## Create the database
+
+<Aside type="caution">
+  This post is not intended as an example of how to build an orders database.
+  The design of this database is aimed at demonstrating how to test features,
+  and not how best to create an orders database. There are some design choices
+  made here that I would _not_ use for a serious orders database design.
+</Aside>
+
+Create the initial tables in postgres like so:
+
+```sql
+CREATE DATABASE regression;
+\c regression
+```
+
+```sql
+CREATE TABLE item (
+    item_id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    price DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+    quantity_on_hand INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE "order" (
+    order_id SERIAL PRIMARY KEY,
+    status TEXT DEFAULT 'PENDING',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE order_item (
+    order_item_id SERIAL PRIMARY KEY,
+    order_id_order INTEGER NOT NULL REFERENCES "order"(order_id),
+    item_id_item INTEGER NOT NULL REFERENCES item(item_id),
+    quantity INTEGER NOT NULL CHECK (quantity > 0),
+    price_per_unit DECIMAL(10, 2) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+## Build our first test
+
+Let's create our first test:
+
+```sh
+spawn test new check-order-creation
+```
+
+This will have created a very basic test inside `tests/check-order-creation/test.sql`, with content similar to the following:
+
+```sql
+-- Test file
+SELECT 1;
+```
+
+Spawn runs tests similar to how the postgres project itself does. It runs the SQL, and then compares the generated output to some expected output. To see what output this test would produce:
+
+```sh
+spawn test run check-order-creation
+```
+
+You should see output similar to the following:
+
+```
+?column?
+----------
+       1
+(1 row)
+```
+
+Imagine we were satisfied with this as our test. We can then tell Spawn that the output it currently generates is the expected output, and then we can run the actual test comparison:
+
+```sh
+# Creates a file `tests/check-order-creation/expected`
+spawn test expect check-order-creation
+# Compares the output from running the test with the expected output:
+spawn test compare check-order-creation
+```
+
+Now, change the test from `SELECT 1` to `SELECT 2` and run compare again:
+
+```
+spawn test compare check-order-creation
+```
+
+The test will fail, because the `expected` file differs from the actual output. We see a report like this (which may be nicely coloured in your terminal):
+
+```
+[FAIL] check-order-creation
+--- Diff ---
+1   1    |  ?column?
+2   2    | ----------
+3        |-        1
+    3    |+        2
+4   4    | (1 row)
+5   5    |
+
+-------------
+
+Error: ! Differences found in one or more tests
+```
+
+From the diff, we can see we expected a result of `1`, but got `2`.
+
+<Aside type="tip">
+  For ideas on how to handle non-deterministic output in tests, visit
+  [Non-determinism in Tests](/recipes/non-determinism-tests).
+</Aside>
+
+Let's make a real test. First order of business, we want to create a copy of the database so that we can rerun the test multiple times without making permanent changes to our database. We _could_ run the test in a transaction, but some things we may wish to test cannot be done inside transactions. For example, we may wish to check the results of a trigger that updates per statement, or deferred foreign key constraints don't throw an error before commit.
+
+Using the following pattern, we take the base database, create a copy of it using `WITH TEMPLATE`, and freely make changes. As soon as the test is done, it cleans up the temporary test database and our changes are gone.
+
+```sql
+-- Protects from previous failed test
+DROP DATABASE IF EXISTS check_order_creation_test;
+-- Create new database using our base database as the template
+CREATE DATABASE check_order_creation_test WITH TEMPLATE regression;
+-- Connect to the new test database using the psql \c command
+\c check_order_creation_test;
+
+-- Insert an item and list what we have
+INSERT INTO item (name, quantity_on_hand, price) VALUES ('Apple', 1, 23.12);
+
+SELECT item_id, name, price FROM item ORDER BY item_id;
+
+-- Connect back to postgres, so we can delete the test db
+\c postgres;
+-- Clean up!
+DROP DATABASE IF EXISTS check_order_creation_test;
+```
+
+Now if we run the test multiple times (`spawn test run check-order-creation`), the count doesn't change, despite adding a row each time!
+
+<Aside type="caution">
+  You can only use `WITH TEMPLATE` if there are no connections to the base
+  database that you are copying.
+</Aside>
+
+But it's just a little tedious to create items by hand, so let's create a macro to simplify adding items to the database. Create a file in `spawn/components/testing/create-item.sql` like so:
+
+```sql
+{% macro create_item(
+  name,
+  item_id="default" | safe,
+  quantity_on_hand=1,
+  price=1.23,
+) %}
+
+INSERT INTO item (item_id, name, quantity_on_hand, price)
+VALUES
+    ({{item_id}}, {{name}}, {{quantity_on_hand}}, {{price}});
+
+{%- endmacro %}
+```
+
+This macro creates the insert, with default values for everything except name. Note that for the primary key we have `item_id="default" | safe`. This is because Spawn defaults to escaping any input values as literals, but we want `default` to appear without quote marks. Using the `safe` filter tells Spawn to display this as it is. If an id is provided, the insert uses that id. Without it, it uses `default` and therefore generates the id automatically.
+
+Now in our original script, we can replace the insert with a single call to the macro:
+
+```sql
+{% from "testing/create-item.sql" import create_item -%}
+...
+{{ create_item('Apple', price=23.12) }}
+{{ create_item('Banana', price=44.00, quantity_on_hand=5) }}
+{{ create_item('Orange', price=12.99, quantity_on_hand=3) }}
+{{ create_item('Dragon''s Eye', price=2.99, quantity_on_hand=3) }}
+...
+SELECT item_id, name, price FROM item ORDER BY item_id;
+```
+
+Spawn replaces that with the insert, which you can see by running `spawn test build check-order-creation`:
+
+```sql
+DROP DATABASE IF EXISTS check_order_creation_test;
+CREATE DATABASE check_order_creation_test WITH TEMPLATE regression;
+\c check_order_creation_test;
+
+
+
+INSERT INTO item (item_id, name, quantity_on_hand, price)
+VALUES
+    (default, 'Apple', 1, 23.12);
+
+
+INSERT INTO item (item_id, name, quantity_on_hand, price)
+VALUES
+    (default, 'Banana', 5, 44.0);
+
+
+INSERT INTO item (item_id, name, quantity_on_hand, price)
+VALUES
+    (default, 'Orange', 3, 12.99);
+
+
+INSERT INTO item (item_id, name, quantity_on_hand, price)
+VALUES
+    (default, 'Dragon''s Eye', 3, 2.99);
+
+SELECT item_id, name, price FROM item ORDER BY item_id;
+
+\c postgres;
+DROP DATABASE IF EXISTS check_order_creation_test;
+mark@Mac regtest %
+```
+
+And `spawn test run check-order-creation`:
+
+```
+ item_id |     name     | price
+---------+--------------+-------
+       1 | Apple        | 23.12
+       2 | Banana       | 44.00
+       3 | Orange       | 12.99
+       4 | Dragon's Eye |  2.99
+(4 rows)
+```
+
+Now, we might find ourselves wanting to use this same dataset across multiple tests, so let's do two things:
+
+1. Create this list based on a json input
+2. Create a macro that fills out this table for us in one go
+
+In a real project, you might already have test data in the database you used as the base for `WITH TEMPLATE`, but we'll use this as an example to show how you could have some data that's used by some tests but not all.
+
+Create a json file in `spawn/components/testing/fixtures/items.json`:
+
+```json
+[
+  {
+    "item_id": 1,
+    "name": "Apple",
+    "quantity_on_hand": 1,
+    "price": 23.12
+  },
+  {
+    "item_id": 2,
+    "name": "Banana",
+    "quantity_on_hand": 5,
+    "price": 44.0
+  },
+  {
+    "item_id": 3,
+    "name": "Orange",
+    "quantity_on_hand": 3,
+    "price": 12.99
+  },
+  {
+    "item_id": 4,
+    "name": "Dragon's Eye",
+    "quantity_on_hand": 3,
+    "price": 2.99
+  }
+]
+```
+
+<Aside type="tip">
+  Spawn escapes values like strings automatically as literals. Visit [SQL
+  escaping and security](/reference/templating/#sql-escaping-and-security) for
+  more information.
+</Aside>
+
+Let's also create a new macro which is going to read this json, and loop over the items to create all our rows! Let's put it in `spawn/components/testing/fixtures/items.sql` (we don't have to use the `.sql` extension here):
+
+```sql
+{% from "testing/create-item.sql" import create_item -%}
+
+{% macro create_items() %}
+{% set items = "testing/fixtures/items.json" | read_json %}
+{% for item in items %}
+{{ create_item(item.name, item_id=item.item_id, quantity_on_hand=item.quantity_on_hand, price=item.price) }}
+{% endfor %}
+{% endmacro %}
+```
+
+This macro loads the array from `items.json`, loops over each, and calls our earlier `create_item` macro to create the insert statement for each!
+
+Update our test file `test.sql` to use the new macro, like so:
+
+```sql
+{% from "testing/fixtures/items.sql" import create_items -%}
+
+DROP DATABASE IF EXISTS check_order_creation_test;
+CREATE DATABASE check_order_creation_test WITH TEMPLATE regression;
+\c check_order_creation_test;
+
+{{ create_items() }}
+
+SELECT item_id, name, price FROM item ORDER BY item_id;
+
+\c postgres;
+DROP DATABASE IF EXISTS check_order_creation_test;
+```
+
+And let's build and then run. First, build shows us that the apostophe in `Dragon's Eye` is properly escaped:
+
+```sql
+DROP DATABASE IF EXISTS check_order_creation_test;
+CREATE DATABASE check_order_creation_test WITH TEMPLATE regression;
+\c check_order_creation_test;
+
+
+
+
+
+
+INSERT INTO item (item_id, name, quantity_on_hand, price)
+VALUES
+    (1, 'Apple', 1, 23.12);
+
+
+
+INSERT INTO item (item_id, name, quantity_on_hand, price)
+VALUES
+    (2, 'Banana', 5, 44.0);
+
+
+
+INSERT INTO item (item_id, name, quantity_on_hand, price)
+VALUES
+    (3, 'Orange', 3, 12.99);
+
+
+
+INSERT INTO item (item_id, name, quantity_on_hand, price)
+VALUES
+    (4, 'Dragon''s Eye', 3, 2.99);
+
+
+
+SELECT item_id, name, price FROM item ORDER BY item_id;
+
+\c postgres;
+DROP DATABASE IF EXISTS check_order_creation_test;
+```
+
+And the output for the test shows the four items:
+
+```
+ item_id |     name     | price
+---------+--------------+-------
+       1 | Apple        | 23.12
+       2 | Banana       | 44.00
+       3 | Orange       | 12.99
+       4 | Dragon's Eye |  2.99
+(4 rows)
+
+```
+
+Now we have an easy to include test fixture of items!
+
+## Creating an order
+
+## GitHub Actions
+
+```
+
+```

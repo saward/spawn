@@ -1,5 +1,5 @@
 ---
-title: Timestamps in Tests
+title: Non-determinism in Tests
 description: Handling timestamps and other non-deterministic values in test output.
 ---
 
