@@ -5,6 +5,8 @@ date: 2026-02-16
 
 import { Aside } from "@astrojs/starlight/components";
 import { LinkButton } from "@astrojs/starlight/components";
+import { Image } from "astro:assets";
+import exampleDiff from "../../../assets/blog/regression-tests/example_diff.png";
 
 <Aside type="tip" title="Human written" icon="pencil">
   Lovingly hand-crafted blog post, with occasional use of LLM's to speed up
@@ -630,7 +632,10 @@ Error: ! Differences found in one or more tests
 
 Here it is in glorious colour:
 
-![Diff image](/src/assets/blog/regression-tests/example_diff.png)
+<Image
+  src={exampleDiff}
+  alt="Diff showing test failure with quantity differences highlighted"
+/>
 
 Perfect! If the trigger is ever removed, our regression test will pick that up! It validates that the database behaves in the way we require.
 
