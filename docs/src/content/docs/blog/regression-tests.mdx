@@ -639,6 +639,8 @@ Here it is in glorious colour:
 
 Perfect! If the trigger is ever removed, our regression test will pick that up! It validates that the database behaves in the way we require.
 
-As your tests grow, you may want to explore using `json` sources to loop over multiple test cases to create data driven tests. Hopefully this shows you a little idea of the possibilities for testing your PostgreSQL database using Spawn. There's a short introduction covering both Spawn's migration and testing capabilities in [The Magic of Spawn](/getting-started/magic/), if you'd like to learn more about its migration features.
+As your tests grow, you may want to explore using `json` sources to loop over multiple test cases to create data driven tests. The ability to include external structured data (including binary data via `read_file` and `base64_encode`) opens up new possibilities for streamlining tests, and I'm sure there are many clever things that will be achievable that creative users will think of. Spawn is far from complete and as it is used more, new features will be added to support robust testing of your database.
+
+Hopefully this shows you a little idea of the possibilities for testing your PostgreSQL database using Spawn. There's a short introduction covering both Spawn's migration and testing capabilities in [The Magic of Spawn](/getting-started/magic/), if you'd like to learn more about its migration features.
 
 Spawn is also able to be used as a GitHub action, which is documented at [CI/CD](/reference/ci-cd/).
