@@ -89,7 +89,7 @@ impl Spawn {
 #[async_trait]
 impl Pinner for Spawn {
     /// Returns the file from the store if it exists.
-    async fn load(&self, name: &str, object_store: &Operator) -> Result<Option<String>> {
+    async fn load_bytes(&self, name: &str, object_store: &Operator) -> Result<Option<Vec<u8>>> {
         // Borrow files from inside self.files, if not none:
         let files = self
             .files
@@ -100,8 +100,7 @@ impl Pinner for Spawn {
             match object_store.read(path).await {
                 Ok(get_result) => {
                     let bytes = get_result.to_bytes();
-                    let contents = String::from_utf8(bytes.to_vec())?;
-                    Ok(Some(contents))
+                    Ok(Some(bytes.to_vec()))
                 }
                 Err(_) => Ok(None),
             }
