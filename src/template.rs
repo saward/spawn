@@ -608,4 +608,50 @@ mod tests {
         let result = tmpl.render(context!());
         assert!(result.is_err());
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_read_file_filter_uses_pinned_store() {
+        use crate::config::FolderPather;
+        use crate::store::pinner::snapshot;
+        use crate::store::pinner::spawn::Spawn;
+        use opendal::services::Memory;
+        use opendal::Operator;
+
+        let mem_service = Memory::default();
+        let op = Operator::new(mem_service).unwrap().finish();
+
+        // Write a file into the components folder and snapshot it into the pinned store
+        op.write("components/test.txt", "pinned content")
+            .await
+            .unwrap();
+        let root_hash = snapshot(&op, "pinned/", "components/").await.unwrap();
+
+        // Delete the original file so it only exists in the pinned CAS store
+        op.delete("components/test.txt").await.unwrap();
+
+        // Create a Spawn pinner using the snapshot hash
+        let pinner = Spawn::new_with_root_hash(
+            "pinned/".to_string(),
+            "components/".to_string(),
+            &root_hash,
+            &op,
+        )
+        .await
+        .unwrap();
+
+        let pather = FolderPather {
+            spawn_folder: "".to_string(),
+        };
+        let store = Store::new(Box::new(pinner), op, pather).unwrap();
+
+        let mut env = template_env(store, &EngineType::PostgresPSQL).unwrap();
+        env.add_template(
+            "test.sql",
+            r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
+        )
+        .unwrap();
+        let tmpl = env.get_template("test.sql").unwrap();
+        let result = tmpl.render(context!()).unwrap();
+        assert_eq!(result, "pinned content");
+    }
 }

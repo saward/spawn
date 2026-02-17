@@ -13,7 +13,15 @@ pub mod spawn;
 
 #[async_trait]
 pub trait Pinner: Debug + Send + Sync {
-    async fn load(&self, name: &str, fs: &Operator) -> Result<Option<String>>;
+    async fn load_bytes(&self, name: &str, fs: &Operator) -> Result<Option<Vec<u8>>>;
+
+    async fn load(&self, name: &str, fs: &Operator) -> Result<Option<String>> {
+        match self.load_bytes(name, fs).await? {
+            Some(bytes) => Ok(Some(String::from_utf8(bytes)?)),
+            None => Ok(None),
+        }
+    }
+
     async fn snapshot(&mut self, fs: &Operator) -> Result<String>;
 }
 

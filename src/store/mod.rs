@@ -125,10 +125,14 @@ impl Store {
         Ok(res)
     }
 
+    pub async fn load_component_bytes(&self, name: &str) -> Result<Option<Vec<u8>>> {
+        self.pinner.load_bytes(name, &self.fs).await
+    }
+
     pub async fn read_file_bytes(&self, path: &str) -> Result<Vec<u8>> {
-        let full_path = format!("{}/{}", self.pather.components_folder(), path);
-        let result = self.fs.read(&full_path).await?;
-        Ok(result.to_bytes().to_vec())
+        self.load_component_bytes(path)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("file not found in components: {}", path))
     }
 
     pub async fn load_migration(&self, name: &str) -> Result<String> {

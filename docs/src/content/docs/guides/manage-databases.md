@@ -158,6 +158,21 @@ command = {
 
 4. **Reuse**: This final command is cached and reused for all SQL operations in that spawn session.
 
+### Avoiding Repeated SSH Passphrase Prompts
+
+When using SSH keys with a passphrase, each connection to the database will prompt for the passphrase. Since spawn opens multiple SSH sessions during a single `apply` run, this gets tedious quickly.
+
+To avoid this, add your key to the SSH agent before running spawn:
+
+```bash
+# macOS
+ssh-add ~/.ssh/your_key
+
+# Linux
+eval "$(ssh-agent -s)"
+ssh-add ~/.ssh/your_key
+```
+
 ### Complete Example: Multiple Environments
 
 ```toml
