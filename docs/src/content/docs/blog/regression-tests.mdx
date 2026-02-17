@@ -221,7 +221,7 @@ Now in our original script, we can replace the insert with a single call to the 
 {{ create_item('Apple', price=23.12) }}
 {{ create_item('Banana', price=44.00, quantity_on_hand=5) }}
 {{ create_item('Orange', price=12.99, quantity_on_hand=3) }}
-{{ create_item('Dragon''s Eye', price=2.99, quantity_on_hand=3) }}
+{{ create_item("Dragon's Eye", price=2.99, quantity_on_hand=3) }}
 ...
 SELECT item_id, name, price FROM item ORDER BY item_id;
 ```
