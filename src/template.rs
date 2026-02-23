@@ -1,6 +1,6 @@
 use crate::config;
 use crate::engine::EngineType;
-use crate::escape::EscapedIdentifier;
+use crate::escape::{EscapedIdentifier, EscapedLiteral};
 use crate::store::pinner::latest::Latest;
 use crate::store::pinner::spawn::Spawn;
 use crate::store::pinner::Pinner;
@@ -42,7 +42,9 @@ pub fn template_env(store: Store, engine: &EngineType) -> Result<Environment<'st
     env.set_loader(move |name: &str| mj_store.load(name));
     env.add_function("gen_uuid_v4", gen_uuid_v4);
     env.add_function("gen_uuid_v5", gen_uuid_v5);
+    env.add_function("gen_uuid_v7", gen_uuid_v7);
     env.add_filter("escape_identifier", escape_identifier_filter);
+    env.add_filter("escape_literal", escape_literal_filter);
 
     let read_file_store = Arc::clone(&store);
     env.add_filter(
@@ -125,6 +127,10 @@ fn gen_uuid_v5(seed: &str) -> Result<String, minijinja::Error> {
     Ok(Uuid::new_v5(&Uuid::NAMESPACE_DNS, seed.as_bytes()).to_string())
 }
 
+fn gen_uuid_v7() -> Result<String, minijinja::Error> {
+    Ok(Uuid::now_v7().to_string())
+}
+
 /// Filter to escape a value as a PostgreSQL identifier (e.g., database name, table name).
 ///
 /// This wraps the value in double quotes and escapes any embedded double quotes,
@@ -134,6 +140,20 @@ fn gen_uuid_v5(seed: &str) -> Result<String, minijinja::Error> {
 fn escape_identifier_filter(value: &Value) -> Result<Value, minijinja::Error> {
     let s = value.to_string();
     let escaped = EscapedIdentifier::new(&s);
+    // Return as a safe string so it won't be further escaped by the SQL formatter
+    Ok(Value::from_safe_string(escaped.to_string()))
+}
+
+/// Filter to explicitly escape a value as a PostgreSQL literal (single-quoted string).
+///
+/// While Spawn auto-escapes template output as literals by default, this filter
+/// is useful when you need to ensure a value is treated as a literal in contexts
+/// where auto-escaping might not apply (e.g., after `safe` or inside macros).
+///
+/// Usage in templates: `{{ value|escape_literal }}`
+fn escape_literal_filter(value: &Value) -> Result<Value, minijinja::Error> {
+    let s = value.to_string();
+    let escaped = EscapedLiteral::new(&s);
     // Return as a safe string so it won't be further escaped by the SQL formatter
     Ok(Value::from_safe_string(escaped.to_string()))
 }

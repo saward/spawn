@@ -112,6 +112,36 @@ CREATE TABLE {{ tenant }}.users (
 {% endfor %}
 ```
 
+## Built-in functions
+
+Spawn provides custom template functions that can be called directly in expressions.
+
+### `gen_uuid_v4`
+
+Generates a random UUID v4 string.
+
+```sql
+INSERT INTO users (id, name) VALUES ({{ gen_uuid_v4() }}, {{ user_name }});
+```
+
+Each call produces a different random UUID, e.g. `'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d'`.
+
+### `gen_uuid_v5`
+
+Generates a deterministic UUID v5 string from a seed, using the DNS namespace. The same seed always produces the same UUID.
+
+```sql
+INSERT INTO tenants (id, name) VALUES ({{ gen_uuid_v5("acme-corp") }}, 'Acme Corp');
+```
+
+### `gen_uuid_v7`
+
+Generates a time-ordered UUID v7 string.
+
+```sql
+INSERT INTO events (id, type) VALUES ({{ gen_uuid_v7() }}, 'user_created');
+```
+
 ## Filters
 
 Filters transform values in template expressions. Minijinja provides many built-in filters like `upper`, `default`, and `length` — see the [Minijinja filters documentation](https://docs.rs/minijinja/latest/minijinja/filters/index.html) for the complete list.
@@ -199,6 +229,21 @@ These parse filters complement the `--variables` CLI flag. Use `--variables` to 
 ### `escape_identifier`
 
 Escapes a value for use as a SQL identifier (table name, column name, etc.) by wrapping it in double quotes. See [Identifier escaping](#identifier-escaping) for details and usage guidance.
+
+### `escape_literal`
+
+Explicitly escapes a value as a SQL literal (single-quoted string). While Spawn auto-escapes template output as literals by default, this filter is useful when you need to ensure a value is treated as a literal in contexts where auto-escaping might not apply (e.g., after `safe`).
+
+```sql
+-- Explicitly escape as a literal
+{{ some_value | escape_literal }}
+```
+
+If `some_value` is `O'Reilly`:
+
+```sql
+'O''Reilly'
+```
 
 ### `safe`
 

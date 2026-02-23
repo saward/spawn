@@ -39,7 +39,7 @@ twox-hash = { version = "2", features = ["xxhash3_64", "xxhash3_128"] }
 
 anyhow = "1.0"
 
-uuid = { version = "1.17", features = ["v4", "v5"] }
+uuid = { version = "1.21", features = ["v4", "v5", "v7"] }
 base64 = "0.22"
 
 similar = { version = "2.7.0", features = ["inline"] }
