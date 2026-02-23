@@ -1,4 +1,5 @@
 use crate::config;
+use crate::engine::EngineError;
 use crate::template;
 use console::{style, Style};
 
@@ -79,7 +80,7 @@ impl Tester {
         let stdout_buf = Arc::new(Mutex::new(Vec::new()));
         let stdout_buf_clone = stdout_buf.clone();
 
-        engine
+        match engine
             .execute_with_writer(
                 Box::new(move |writer| {
                     writer.write_all(content.as_bytes())?;
@@ -89,7 +90,15 @@ impl Tester {
                 true, // Merge stderr into stdout for tests
             )
             .await
-            .context("failed to write content to test db")?;
+        {
+            Ok(()) => {}
+            Err(EngineError::ExecutionFailed { .. }) => {
+                // psql exited non-zero (e.g. ON_ERROR_STOP triggered).
+                // The combined output buffer already has the error output,
+                // so we just continue and return it.
+            }
+            Err(e) => return Err(e).context("failed to write content to test db"),
+        }
 
         let buf = stdout_buf.lock().unwrap();
         let generated = String::from_utf8_lossy(&buf).to_string();
