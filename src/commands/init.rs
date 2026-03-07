@@ -56,7 +56,7 @@ impl Init {
             "postgres_psql".to_string(),
             DatabaseConfig {
                 engine: EngineType::PostgresPSQL,
-                spawn_database: db_name.clone(),
+                spawn_database: Some(db_name.clone()),
                 spawn_schema: "_spawn".to_string(),
                 environment: "dev".to_string(),
                 command: Some(CommandSpec::Direct {

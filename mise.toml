@@ -9,6 +9,10 @@ pnpm = "10"  # Pinned to major version
 # Ensure pnpm uses local node_modules
 _.path = ["./node_modules/.bin"]
 
+[tasks.test]
+description = "Run unit tests then integration tests"
+run = ["cargo test", "cargo test -- --ignored"]
+
 [tasks.docs]
 description = "Run the documentation dev server"
 dir = "docs"

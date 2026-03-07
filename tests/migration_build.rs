@@ -76,7 +76,7 @@ impl MigrationTestHelper {
             "postgres_psql".to_string(),
             DatabaseConfig {
                 engine: EngineType::PostgresPSQL,
-                spawn_database: "spawn".to_string(),
+                spawn_database: Some("spawn".to_string()),
                 spawn_schema: "public".to_string(),
                 environment: "dev".to_string(),
                 command: Some(CommandSpec::Direct {

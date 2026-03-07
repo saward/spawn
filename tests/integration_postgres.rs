@@ -225,7 +225,7 @@ impl IntegrationTestHelper {
             "postgres_psql".to_string(),
             DatabaseConfig {
                 engine: EngineType::PostgresPSQL,
-                spawn_database: db_name.to_string(),
+                spawn_database: Some(db_name.to_string()),
                 spawn_schema: "_spawn".to_string(),
                 environment: "test".to_string(),
                 command: Some(CommandSpec::Direct {

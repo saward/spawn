@@ -35,8 +35,6 @@ pub fn migration_lock_key() -> i64 {
 #[derive(Debug)]
 pub struct PSQL {
     psql_command: Vec<String>,
-    /// Schema name as an escaped identifier (for use as schema.table)
-    spawn_schema: String,
     db_config: DatabaseConfig,
 }
 
@@ -54,7 +52,6 @@ impl PSQL {
 
         let eng = Box::new(Self {
             psql_command,
-            spawn_schema: config.spawn_schema.clone(),
             db_config: config.clone(),
         });
 
@@ -67,15 +64,94 @@ impl PSQL {
     }
 
     fn spawn_schema_literal(&self) -> EscapedLiteral {
-        EscapedLiteral::new(&self.spawn_schema)
+        EscapedLiteral::new(&self.db_config.spawn_schema)
     }
 
     fn spawn_schema_ident(&self) -> EscapedIdentifier {
-        EscapedIdentifier::new(&self.spawn_schema)
+        EscapedIdentifier::new(&self.db_config.spawn_schema)
     }
 
     fn safe_spawn_namespace(&self) -> EscapedLiteral {
         EscapedLiteral::new(SPAWN_NAMESPACE)
+    }
+
+    fn build_record_migration_sql(
+        &self,
+        migration_name: &str,
+        namespace: &EscapedLiteral,
+        status: MigrationStatus,
+        activity: MigrationActivity,
+        checksum: Option<&str>,
+        execution_time: Option<f32>,
+        pin_hash: Option<&str>,
+        description: Option<&str>,
+    ) -> EscapedQuery {
+        let safe_migration_name = EscapedLiteral::new(migration_name);
+        let safe_status = EscapedLiteral::new(status.as_str());
+        let safe_activity = EscapedLiteral::new(activity.as_str());
+        let safe_description = EscapedLiteral::new(description.unwrap_or(""));
+        // If no checksum provided, use empty bytea (decode returns empty bytea for empty string)
+        let checksum_expr = checksum
+            .map(|c| format!("decode('{}', 'hex')", c))
+            .unwrap_or_else(|| "decode('', 'hex')".to_string());
+        let checksum_raw = InsecureRawSql::new(&checksum_expr);
+        let safe_pin_hash = pin_hash.map(|h| EscapedLiteral::new(h));
+
+        let db_connect = if let Some(spawn_db) = &self.db_config.spawn_database {
+            InsecureRawSql::new(&format!("\\c {}", EscapedIdentifier::new(spawn_db)))
+        } else {
+            InsecureRawSql::new("")
+        };
+
+        let duration_interval = execution_time
+            .map(|d| InsecureRawSql::new(&format!("INTERVAL '{} second'", d)))
+            .unwrap_or_else(|| InsecureRawSql::new("INTERVAL '0 second'"));
+
+        sql_query!(
+            r#"
+    BEGIN;
+    {}
+    WITH inserted_migration AS (
+        INSERT INTO {}.migration (name, namespace) VALUES ({}, {})
+        ON CONFLICT (name, namespace) DO UPDATE SET name = EXCLUDED.name
+        RETURNING migration_id
+    )
+    INSERT INTO {}.migration_history (
+        migration_id_migration,
+        activity_id_activity,
+        created_by,
+        description,
+        status_note,
+        status_id_status,
+        checksum,
+        execution_time,
+        pin_hash
+    )
+    SELECT
+        migration_id,
+        {},
+        'unused',
+        {},
+        '',
+        {},
+        {},
+        {},
+        {}
+    FROM inserted_migration;
+    COMMIT;
+    "#,
+            db_connect,
+            self.spawn_schema_ident(),
+            safe_migration_name,
+            namespace,
+            self.spawn_schema_ident(),
+            safe_activity,
+            safe_description,
+            safe_status,
+            checksum_raw,
+            duration_interval,
+            safe_pin_hash,
+        )
     }
 }
 
@@ -420,80 +496,6 @@ impl<W: Write> Write for TeeWriter<W> {
     }
 }
 
-/// Free function to build the SQL query for recording a migration.
-/// This can be used from both async and sync contexts.
-fn build_record_migration_sql(
-    spawn_schema: &str,
-    migration_name: &str,
-    namespace: &EscapedLiteral,
-    status: MigrationStatus,
-    activity: MigrationActivity,
-    checksum: Option<&str>,
-    execution_time: Option<f32>,
-    pin_hash: Option<&str>,
-    description: Option<&str>,
-) -> EscapedQuery {
-    let schema_ident = EscapedIdentifier::new(spawn_schema);
-    let safe_migration_name = EscapedLiteral::new(migration_name);
-    let safe_status = EscapedLiteral::new(status.as_str());
-    let safe_activity = EscapedLiteral::new(activity.as_str());
-    let safe_description = EscapedLiteral::new(description.unwrap_or(""));
-    // If no checksum provided, use empty bytea (decode returns empty bytea for empty string)
-    let checksum_expr = checksum
-        .map(|c| format!("decode('{}', 'hex')", c))
-        .unwrap_or_else(|| "decode('', 'hex')".to_string());
-    let checksum_raw = InsecureRawSql::new(&checksum_expr);
-    let safe_pin_hash = pin_hash.map(|h| EscapedLiteral::new(h));
-
-    let duration_interval = execution_time
-        .map(|d| InsecureRawSql::new(&format!("INTERVAL '{} second'", d)))
-        .unwrap_or_else(|| InsecureRawSql::new("INTERVAL '0 second'"));
-
-    sql_query!(
-        r#"
-BEGIN;
-WITH inserted_migration AS (
-    INSERT INTO {}.migration (name, namespace) VALUES ({}, {})
-    ON CONFLICT (name, namespace) DO UPDATE SET name = EXCLUDED.name
-    RETURNING migration_id
-)
-INSERT INTO {}.migration_history (
-    migration_id_migration,
-    activity_id_activity,
-    created_by,
-    description,
-    status_note,
-    status_id_status,
-    checksum,
-    execution_time,
-    pin_hash
-)
-SELECT
-    migration_id,
-    {},
-    'unused',
-    {},
-    '',
-    {},
-    {},
-    {},
-    {}
-FROM inserted_migration;
-COMMIT;
-"#,
-        schema_ident,
-        safe_migration_name,
-        namespace,
-        schema_ident,
-        safe_activity,
-        safe_description,
-        safe_status,
-        checksum_raw,
-        duration_interval,
-        safe_pin_hash,
-    )
-}
-
 impl PSQL {
     pub async fn update_schema(&self) -> Result<()> {
         // Create a memory operator from the included directory containing
@@ -559,7 +561,7 @@ impl PSQL {
             // Load and render the migration
             let variables = crate::variables::Variables::from_str(
                 "json",
-                &serde_json::json!({"schema": &self.spawn_schema}).to_string(),
+                &serde_json::json!({"schema": &self.db_config.spawn_schema}).to_string(),
             )?;
             let gen = migrator.generate_streaming(Some(variables)).await?;
             let mut buffer = Vec::new();
@@ -742,8 +744,7 @@ impl PSQL {
         pin_hash: Option<&str>,
         description: Option<&str>,
     ) -> MigrationResult<()> {
-        let record_query = build_record_migration_sql(
-            &self.spawn_schema,
+        let record_query = self.build_record_migration_sql(
             migration_name,
             namespace,
             status,
