@@ -10,8 +10,8 @@ Spawn requires a database connection to apply migrations and run tests. Database
 Each database configuration requires:
 
 - `engine`: The database engine type (currently only `"postgres-psql"`)
-- `spawn_database`: The database where spawn stores migration tracking (defaults to using whichever database your command connects to by default)
-- `spawn_schema`: The schema where spawn stores migration tracking (default: `"_spawn"`)
+- `spawn_database`: The database where spawn stores migration tracking (defaults to using whichever database your command connects to by default). This database must already exist.
+- `spawn_schema`: The schema where spawn stores migration tracking (default: `"_spawn"`). This schema will be created if it does not exist.
 - `environment`: Environment name (e.g., `"dev"`, `"prod"`)
 - `command`: How to execute SQL commands (see below)
 

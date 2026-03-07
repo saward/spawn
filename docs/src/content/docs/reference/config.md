@@ -113,7 +113,7 @@ engine = "postgres-psql"
 **Type:** String  
 **Required:** No
 
-The database name where Spawn stores migration tracking tables (in the `spawn_schema`). If not provided, defaults to using the same database that your connection command uses.
+The database name where Spawn stores migration tracking tables (in the `spawn_schema`). If not provided, defaults to using the same database that your connection command uses. This database must already exist.
 
 ```toml
 spawn_database = "spawn"
@@ -125,7 +125,7 @@ spawn_database = "spawn"
 **Required:** No  
 **Default:** `"_spawn"`
 
-The schema where Spawn creates its internal tracking tables (`migration_history`, etc.).
+The schema where Spawn creates its internal tracking tables (`migration_history`, etc.). This schema will be created if it does not yet exist.
 
 ```toml
 spawn_schema = "_spawn"

@@ -75,6 +75,16 @@ impl PSQL {
         EscapedLiteral::new(SPAWN_NAMESPACE)
     }
 
+    /// Returns a psql `\c` command to switch to the spawn_database, if configured.
+    /// Used to ensure internal queries and schema migrations target the correct database.
+    fn spawn_db_connect_command(&self) -> InsecureRawSql {
+        if let Some(spawn_db) = &self.db_config.spawn_database {
+            InsecureRawSql::new(&format!("\\c {}\n", EscapedIdentifier::new(spawn_db)))
+        } else {
+            InsecureRawSql::new("")
+        }
+    }
+
     fn build_record_migration_sql(
         &self,
         migration_name: &str,
@@ -97,17 +107,11 @@ impl PSQL {
         let checksum_raw = InsecureRawSql::new(&checksum_expr);
         let safe_pin_hash = pin_hash.map(|h| EscapedLiteral::new(h));
 
-        let db_connect = if let Some(spawn_db) = &self.db_config.spawn_database {
-            InsecureRawSql::new(&format!("\\c {}", EscapedIdentifier::new(spawn_db)))
-        } else {
-            InsecureRawSql::new("")
-        };
-
         let duration_interval = execution_time
             .map(|d| InsecureRawSql::new(&format!("INTERVAL '{} second'", d)))
             .unwrap_or_else(|| InsecureRawSql::new("INTERVAL '0 second'"));
 
-        sql_query!(
+        let qry = sql_query!(
             r#"
     BEGIN;
     {}
@@ -140,7 +144,7 @@ impl PSQL {
     FROM inserted_migration;
     COMMIT;
     "#,
-            db_connect,
+            self.spawn_db_connect_command(),
             self.spawn_schema_ident(),
             safe_migration_name,
             namespace,
@@ -151,7 +155,9 @@ impl PSQL {
             checksum_raw,
             duration_interval,
             safe_pin_hash,
-        )
+        );
+        println!("{}", qry);
+        qry
     }
 }
 
@@ -572,8 +578,13 @@ impl PSQL {
             // Apply the migration and record it
             // Note: even for bootstrap, the first migration creates the tables,
             // so they exist by the time we record the migration.
-            let write_fn: WriterFn =
-                Box::new(move |writer: &mut dyn Write| writer.write_all(content.as_bytes()));
+            // Prefix with \c to spawn_database if configured, so the internal
+            // schema is created in the correct database.
+            let db_connect = self.spawn_db_connect_command();
+            let write_fn: WriterFn = Box::new(move |writer: &mut dyn Write| {
+                writer.write_all(db_connect.as_str().as_bytes())?;
+                writer.write_all(content.as_bytes())
+            });
             match self
                 .apply_and_record_migration_v1(
                     migration_name,
