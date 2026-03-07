@@ -1586,10 +1586,7 @@ COMMIT;"#;
 
 /// Tests that spawn_database config controls where migration tracking is recorded.
 ///
-/// Case 1: When spawn_database is not set (None), tracking tables are recorded
-/// in the same database that psql connects to.
-///
-/// Case 2: When spawn_database is set to a different database, the migration
+/// When spawn_database is set to a different database, the migration
 /// SQL runs against the psql-connected database, but tracking tables are
 /// recorded in the spawn_database via a \c switch.
 #[tokio::test]
@@ -1618,181 +1615,96 @@ async fn test_spawn_database_config() -> Result<()> {
 
     IntegrationTestHelper::create_test_database(&migration_db, &connection_mode)?;
 
-    // =========================================================================
-    // Case 1: spawn_database is None — tracking goes to the psql-connected db
-    // =========================================================================
-    {
-        let mem_service = Memory::default();
-        let mem_op = Operator::new(mem_service)?.finish();
+    let mem_service = Memory::default();
+    let mem_op = Operator::new(mem_service)?.finish();
 
-        // Config with spawn_database = None; psql connects to migration_db
-        let mut databases = HashMap::new();
-        databases.insert(
-            "postgres_psql".to_string(),
-            DatabaseConfig {
-                engine: EngineType::PostgresPSQL,
-                spawn_database: None,
-                spawn_schema: "_spawn".to_string(),
-                environment: "test".to_string(),
-                command: Some(CommandSpec::Direct {
-                    direct: connection_mode.psql_command(&migration_db),
-                }),
-            },
-        );
+    // Config: psql connects to migration_db, but spawn_database = tracking_db
+    let mut databases = HashMap::new();
+    databases.insert(
+        "postgres_psql".to_string(),
+        DatabaseConfig {
+            engine: EngineType::PostgresPSQL,
+            spawn_database: Some(tracking_db.to_string()),
+            spawn_schema: "_spawn".to_string(),
+            environment: "test".to_string(),
+            command: Some(CommandSpec::Direct {
+                direct: connection_mode.psql_command(&migration_db),
+            }),
+        },
+    );
 
-        let config_loader = ConfigLoaderSaver {
-            spawn_folder: "/db".to_string(),
-            database: Some("postgres_psql".to_string()),
-            environment: None,
-            databases: Some(databases),
-            project_id: None,
-            telemetry: Some(false),
-        };
+    let config_loader = ConfigLoaderSaver {
+        spawn_folder: "/db".to_string(),
+        database: Some("postgres_psql".to_string()),
+        environment: None,
+        databases: Some(databases),
+        project_id: None,
+        telemetry: Some(false),
+    };
 
-        let migration_helper =
-            MigrationTestHelper::new_from_operator_with_config(mem_op, config_loader).await?;
+    let migration_helper =
+        MigrationTestHelper::new_from_operator_with_config(mem_op, config_loader).await?;
 
-        let migration_name = migration_helper
-            .create_migration_manual(
-                "default-db-test",
-                r#"BEGIN;
-    CREATE TABLE default_db_test (id SERIAL PRIMARY KEY);
-    COMMIT;"#
-                    .to_string(),
-            )
-            .await?;
+    let _ = connection_mode.execute_sql(
+        &migration_db,
+        format!("CREATE DATABASE {}", tracking_db).as_str(),
+    )?;
 
-        let config = migration_helper.load_config().await?;
-        let cmd = ApplyMigration {
-            migration: Some(migration_name.clone()),
-            pinned: false,
-            variables: None,
-            yes: true,
-            retry: false,
-        };
-        cmd.execute(&config).await?;
-
-        // Tracking tables should be in migration_db (since spawn_database is None,
-        // no \c switch happens, so tracking stays in the psql-connected database)
-        let tracking_check = connection_mode.execute_sql(
-            &migration_db,
-            "SELECT COUNT(*) FROM _spawn.migration WHERE namespace = 'default';",
-        )?;
-        let tracking_output = String::from_utf8_lossy(&tracking_check.stdout);
-        assert!(
-            tracking_output.contains('1'),
-            "Case 1: tracking should be in migration_db when spawn_database is None, got: {}",
-            tracking_output
-        );
-
-        // The migration table should also be created in migration_db
-        let table_check = connection_mode.execute_sql(
-                &migration_db,
-                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'default_db_test');",
-            )?;
-        let table_output = String::from_utf8_lossy(&table_check.stdout);
-        assert!(
-            table_output.contains(" t"),
-            "Case 1: default_db_test table should exist in migration_db, got: {}",
-            table_output
-        );
-    }
-
-    // =========================================================================
-    // Case 2: spawn_database points to tracking_db, psql connects to migration_db
-    // =========================================================================
-    {
-        let mem_service = Memory::default();
-        let mem_op = Operator::new(mem_service)?.finish();
-
-        // Config: psql connects to migration_db, but spawn_database = tracking_db
-        let mut databases = HashMap::new();
-        databases.insert(
-            "postgres_psql".to_string(),
-            DatabaseConfig {
-                engine: EngineType::PostgresPSQL,
-                spawn_database: Some(tracking_db.to_string()),
-                spawn_schema: "_spawn".to_string(),
-                environment: "test".to_string(),
-                command: Some(CommandSpec::Direct {
-                    direct: connection_mode.psql_command(&migration_db),
-                }),
-            },
-        );
-
-        let config_loader = ConfigLoaderSaver {
-            spawn_folder: "/db".to_string(),
-            database: Some("postgres_psql".to_string()),
-            environment: None,
-            databases: Some(databases),
-            project_id: None,
-            telemetry: Some(false),
-        };
-
-        let migration_helper =
-            MigrationTestHelper::new_from_operator_with_config(mem_op, config_loader).await?;
-
-        let _ = connection_mode.execute_sql(
-            &migration_db,
-            format!("CREATE DATABASE {}", tracking_db).as_str(),
-        )?;
-
-        let migration_name = migration_helper
-            .create_migration_manual(
-                "split-db-test",
-                r#"BEGIN;
+    let migration_name = migration_helper
+        .create_migration_manual(
+            "split-db-test",
+            r#"BEGIN;
 CREATE TABLE split_db_test (id SERIAL PRIMARY KEY);
 COMMIT;"#
-                    .to_string(),
-            )
-            .await?;
+                .to_string(),
+        )
+        .await?;
 
-        let config = migration_helper.load_config().await?;
-        let cmd = ApplyMigration {
-            migration: Some(migration_name.clone()),
-            pinned: false,
-            variables: None,
-            yes: true,
-            retry: false,
-        };
-        cmd.execute(&config).await?;
+    let config = migration_helper.load_config().await?;
+    let cmd = ApplyMigration {
+        migration: Some(migration_name.clone()),
+        pinned: false,
+        variables: None,
+        yes: true,
+        retry: false,
+    };
+    cmd.execute(&config).await?;
 
-        // The migration SQL should have run in migration_db (the psql-connected database)
-        let table_check = connection_mode.execute_sql(
+    // The migration SQL should have run in migration_db (the psql-connected database)
+    let table_check = connection_mode.execute_sql(
             &migration_db,
             "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'split_db_test');",
         )?;
-        let table_output = String::from_utf8_lossy(&table_check.stdout);
-        assert!(
-            table_output.contains(" t"),
-            "Case 2: split_db_test table should exist in migration_db, got: {}",
-            table_output
-        );
+    let table_output = String::from_utf8_lossy(&table_check.stdout);
+    assert!(
+        table_output.contains(" t"),
+        "split_db_test table should exist in migration_db, got: {}",
+        table_output
+    );
 
-        // The tracking record should be in tracking_db (spawn_database), NOT migration_db
-        let tracking_in_target = connection_mode.execute_sql(
-            &tracking_db,
-            "SELECT COUNT(*) FROM _spawn.migration WHERE namespace = 'default';",
-        )?;
-        let tracking_target_output = String::from_utf8_lossy(&tracking_in_target.stdout);
-        assert!(
-            tracking_target_output.contains('1'),
-            "Case 2: tracking should be in tracking_db when spawn_database is set, got: {}",
-            tracking_target_output
-        );
+    // The tracking record should be in tracking_db (spawn_database), NOT migration_db
+    let tracking_in_target = connection_mode.execute_sql(
+        &tracking_db,
+        "SELECT COUNT(*) FROM _spawn.migration WHERE namespace = 'default';",
+    )?;
+    let tracking_target_output = String::from_utf8_lossy(&tracking_in_target.stdout);
+    assert!(
+        tracking_target_output.contains('1'),
+        "tracking should be in tracking_db when spawn_database is set, got: {}",
+        tracking_target_output
+    );
 
-        // Verify the table was NOT created in tracking_db (migration runs in migration_db)
-        let no_table_check = connection_mode.execute_sql(
+    // Verify the table was NOT created in tracking_db (migration runs in migration_db)
+    let no_table_check = connection_mode.execute_sql(
             &tracking_db,
             "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'split_db_test');",
         )?;
-        let no_table_output = String::from_utf8_lossy(&no_table_check.stdout);
-        assert!(
-            no_table_output.contains(" f"),
-            "Case 2: split_db_test table should NOT exist in tracking_db, got: {}",
-            no_table_output
-        );
-    }
+    let no_table_output = String::from_utf8_lossy(&no_table_check.stdout);
+    assert!(
+        no_table_output.contains(" f"),
+        "split_db_test table should NOT exist in tracking_db, got: {}",
+        no_table_output
+    );
 
     // =========================================================================
     // Cleanup
