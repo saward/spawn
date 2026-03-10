@@ -20,7 +20,7 @@ pub struct Cli {
     pub config_file: String,
 
     #[arg(global = true, long)]
-    pub database: Option<String>,
+    pub target: Option<String>,
 
     /// Internal flag for telemetry child process (hidden)
     #[arg(long, hide = true)]
@@ -256,8 +256,7 @@ pub async fn run_cli(cli: Cli, base_op: &Operator) -> CliResult {
     let config_exists = base_op.exists(&cli.config_file).await.unwrap_or(false);
 
     // Load config from file (required for all other commands)
-    let mut main_config = match Config::load(&cli.config_file, base_op, cli.database.clone()).await
-    {
+    let mut main_config = match Config::load(&cli.config_file, base_op, cli.target.clone()).await {
         Ok(cfg) => cfg,
         Err(e) => {
             // If config doesn't exist, show helpful message

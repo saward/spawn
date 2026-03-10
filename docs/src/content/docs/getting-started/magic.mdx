@@ -582,11 +582,11 @@ $$ LANGUAGE plpgsql;
 COMMIT;
 ```
 
-But if we edit the database in `spawn.toml` to specify that it is a dev environment, like so:
+But if we edit the target in `spawn.toml` to specify that it is a dev environment, like so:
 
 ```toml {6}
 ...
-[databases.postgres_psql]
+[targets.postgres_psql]
 engine = "postgres-psql"
 spawn_database = "postgres"
 spawn_schema = "_spawn"

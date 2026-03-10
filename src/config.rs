@@ -1,4 +1,4 @@
-use crate::engine::{postgres_psql::PSQL, DatabaseConfig, Engine, EngineType};
+use crate::engine::{postgres_psql::PSQL, Engine, EngineType, TargetConfig};
 use crate::pinfile::LockData;
 use crate::variables::Variables;
 use anyhow::{anyhow, Context, Result};
@@ -13,9 +13,9 @@ static PINFILE_LOCK_NAME: &str = "lock.toml";
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ConfigLoaderSaver {
     pub spawn_folder: String,
-    pub database: Option<String>,
+    pub target: Option<String>,
     pub environment: Option<String>,
-    pub databases: Option<HashMap<String, DatabaseConfig>>,
+    pub targets: Option<HashMap<String, TargetConfig>>,
     /// Unique project identifier for telemetry (UUID string)
     pub project_id: Option<String>,
     /// Set to false to disable telemetry
@@ -32,9 +32,9 @@ impl ConfigLoaderSaver {
     pub fn build(self, base_fs: Operator, spawn_fs: Option<Operator>) -> Config {
         Config {
             spawn_folder: self.spawn_folder,
-            database: self.database,
+            target: self.target,
             environment: self.environment,
-            databases: self.databases.unwrap_or_default(),
+            targets: self.targets.unwrap_or_default(),
             project_id: self.project_id,
             telemetry: self.telemetry.unwrap_or(true),
             base_fs,
@@ -45,7 +45,7 @@ impl ConfigLoaderSaver {
     pub async fn load(
         path: &str,
         op: &Operator,
-        database: Option<String>,
+        target: Option<String>,
     ) -> Result<ConfigLoaderSaver> {
         let bytes = op
             .read(path)
@@ -76,7 +76,7 @@ impl ConfigLoaderSaver {
             // Add in settings from the environment (with a prefix of APP)
             // Eg.. `APP_DEBUG=1 ./target/app` would set the `debug` key
             .add_source(config::Environment::with_prefix("SPAWN"))
-            .set_override_option("database", database)?
+            .set_override_option("target", target)?
             .set_default("environment", "prod")
             .context("could not set default environment")?
             .build()?
@@ -165,9 +165,9 @@ impl FolderPather {
 #[derive(Debug, Clone)]
 pub struct Config {
     spawn_folder: String,
-    pub database: Option<String>,
-    pub environment: Option<String>, // Override the environment for the db config
-    pub databases: HashMap<String, DatabaseConfig>,
+    pub target: Option<String>,
+    pub environment: Option<String>, // Override the environment for the target config
+    pub targets: HashMap<String, TargetConfig>,
     /// Unique project identifier for telemetry (UUID string)
     pub project_id: Option<String>,
     /// Whether telemetry is enabled in config
@@ -190,22 +190,19 @@ impl Config {
     }
 
     pub async fn new_engine(&self) -> Result<Box<dyn Engine>> {
-        let db_config = self.db_config()?;
+        let target_config = self.target_config()?;
 
-        match db_config.engine {
-            EngineType::PostgresPSQL => Ok(PSQL::new(&db_config).await?),
+        match target_config.engine {
+            EngineType::PostgresPSQL => Ok(PSQL::new(&target_config).await?),
         }
     }
 
-    pub fn db_config(&self) -> Result<DatabaseConfig> {
-        let db_name = self
-            .database
-            .as_ref()
-            .ok_or(anyhow!("no database selected"))?;
+    pub fn target_config(&self) -> Result<TargetConfig> {
+        let target_name = self.target.as_ref().ok_or(anyhow!("no target selected"))?;
         let mut conf = self
-            .databases
-            .get(db_name)
-            .ok_or(anyhow!("no database defined with name '{}'", db_name,))?
+            .targets
+            .get(target_name)
+            .ok_or(anyhow!("no target defined with name '{}'", target_name,))?
             .clone();
 
         if let Some(env) = &self.environment {
@@ -215,8 +212,8 @@ impl Config {
         Ok(conf)
     }
 
-    pub async fn load(path: &str, op: &Operator, database: Option<String>) -> Result<Config> {
-        let config_loader = ConfigLoaderSaver::load(path, op, database).await?;
+    pub async fn load(path: &str, op: &Operator, target: Option<String>) -> Result<Config> {
+        let config_loader = ConfigLoaderSaver::load(path, op, target).await?;
         Ok(config_loader.build(op.clone(), None))
     }
 

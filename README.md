@@ -7,7 +7,7 @@ LLM disclaimer: I (Mark) estimate that 90% of the code/design/architecture has b
 [![License](https://img.shields.io/badge/license-AGPL-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-spawn.dev-green)](https://docs.spawn.dev)
 
-**Stop treating your database like a script runner. Start treating it like a codebase.**
+**Treat your database code like a codebase.**
 
 I like to lean heavily on the database. I don't like tools that abstract away the raw power of databases like PostgreSQL. Spawn is designed for developers who want to use the full breadth of modern database features: Functions, Views, Triggers, RLS – while keeping the maintenance nightmares to a minimum.
 
@@ -243,7 +243,7 @@ Spawn supports **Provider Commands** – configure it to use `gcloud`, `aws`, or
 
 ```toml
 # spawn.toml
-[databases.prod]
+[targets.prod]
 command = {
     kind = "provider",
     provider = ["gcloud", "compute", "ssh", "--dry-run", ...],

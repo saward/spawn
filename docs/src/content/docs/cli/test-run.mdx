@@ -4,11 +4,11 @@ description: Run tests against the database.
 ---
 
 import CLICommand from "../../../components/CLICommand.astro";
-import { globalOptions, databaseOption } from "../../../components/cli-options";
+import { globalOptions, targetOption } from "../../../components/cli-options";
 
 <CLICommand
   usage="spawn test run <name>"
-  options={[...databaseOption, ...globalOptions]}
+  options={[...targetOption, ...globalOptions]}
 >
 
 Executes one or all tests against the configured database and displays the results.

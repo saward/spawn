@@ -231,7 +231,7 @@ pub enum CommandSpec {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct DatabaseConfig {
+pub struct TargetConfig {
     pub engine: EngineType,
     pub spawn_database: Option<String>,
     #[serde(default = "default_schema")]

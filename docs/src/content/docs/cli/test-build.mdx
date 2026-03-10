@@ -4,11 +4,11 @@ description: Build a test into final SQL.
 ---
 
 import CLICommand from "../../../components/CLICommand.astro";
-import { globalOptions, databaseOption } from "../../../components/cli-options";
+import { globalOptions, targetOption } from "../../../components/cli-options";
 
 <CLICommand
   usage="spawn test build <name>"
-  options={[...databaseOption, ...globalOptions]}
+  options={[...targetOption, ...globalOptions]}
 >
 
 Renders a test's `test.sql` template into final SQL, resolving component includes and template variables. Outputs to stdout.

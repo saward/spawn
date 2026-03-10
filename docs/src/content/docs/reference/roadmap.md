@@ -34,7 +34,7 @@ This is a high-level overview of where Spawn is headed. Items here are subject t
 
 - ✅ **TOML configuration** - `spawn.toml` for project settings
 - ✅ **Organized folder structure** - `/components`, `/migrations`, `/tests`, `/pinned`
-- ✅ **Database targeting** - `--database` flag for multiple database configurations
+- ✅ **Target selection** - `--target` flag for multiple target configurations
 - ✅ **PostgreSQL focus** - Optimized for PostgreSQL features and workflows
 
 ## Roadmap

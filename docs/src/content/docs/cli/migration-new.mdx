@@ -4,11 +4,15 @@ description: Create a new migration.
 ---
 
 import CLICommand from "../../../components/CLICommand.astro";
-import { globalOptions, databaseOption, environmentOption } from "../../../components/cli-options";
+import {
+  globalOptions,
+  targetOption,
+  environmentOption,
+} from "../../../components/cli-options";
 
 <CLICommand
   usage="spawn migration new <name>"
-  options={[...environmentOption, ...databaseOption, ...globalOptions]}
+  options={[...environmentOption, ...targetOption, ...globalOptions]}
 >
 
 Creates a new timestamped migration directory with a template `up.sql` file.

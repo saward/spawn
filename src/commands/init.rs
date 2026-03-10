@@ -1,6 +1,6 @@
 use crate::commands::{Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::ConfigLoaderSaver;
-use crate::engine::{CommandSpec, DatabaseConfig, EngineType};
+use crate::engine::{CommandSpec, EngineType, TargetConfig};
 use anyhow::{anyhow, Result};
 use opendal::Operator;
 use std::collections::HashMap;
@@ -50,11 +50,11 @@ impl Init {
             "postgres-db".to_string()
         };
 
-        // Create example database config
-        let mut databases = HashMap::new();
-        databases.insert(
+        // Create example target config
+        let mut targets = HashMap::new();
+        targets.insert(
             "postgres_psql".to_string(),
-            DatabaseConfig {
+            TargetConfig {
                 engine: EngineType::PostgresPSQL,
                 spawn_database: Some(db_name.clone()),
                 spawn_schema: "_spawn".to_string(),
@@ -77,9 +77,9 @@ impl Init {
         // Create default config
         let config = ConfigLoaderSaver {
             spawn_folder: "spawn".to_string(),
-            database: Some("postgres_psql".to_string()),
+            target: Some("postgres_psql".to_string()),
             environment: None,
-            databases: Some(databases),
+            targets: Some(targets),
             project_id: Some(project_id.clone()),
             telemetry: None,
         };

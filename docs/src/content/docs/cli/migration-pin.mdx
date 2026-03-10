@@ -4,11 +4,15 @@ description: Pin a migration to current component versions.
 ---
 
 import CLICommand from "../../../components/CLICommand.astro";
-import { globalOptions, databaseOption, environmentOption } from "../../../components/cli-options";
+import {
+  globalOptions,
+  targetOption,
+  environmentOption,
+} from "../../../components/cli-options";
 
 <CLICommand
   usage="spawn migration pin <migration>"
-  options={[...environmentOption, ...databaseOption, ...globalOptions]}
+  options={[...environmentOption, ...targetOption, ...globalOptions]}
 >
 
 Creates a snapshot of all components referenced by the migration and stores them in the content-addressable `pinned/` directory. Writes a `lock.toml` file in the migration folder with the snapshot hash.

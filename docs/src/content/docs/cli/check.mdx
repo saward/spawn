@@ -4,11 +4,11 @@ description: Check your project for potential issues.
 ---
 
 import CLICommand from "../../../components/CLICommand.astro";
-import { globalOptions, databaseOption } from "../../../components/cli-options";
+import { globalOptions, targetOption } from "../../../components/cli-options";
 
 <CLICommand
   usage="spawn check"
-  options={[...databaseOption, ...globalOptions]}
+  options={[...targetOption, ...globalOptions]}
   exitCodes={[
     { code: "0", description: "No warnings found." },
     { code: "1", description: "One or more warnings found." },

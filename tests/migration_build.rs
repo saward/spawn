@@ -6,7 +6,7 @@ use pretty_assertions::assert_eq;
 use spawn_db::{
     commands::{BuildMigration, Check, Command, NewMigration, Outcome, PinMigration},
     config::{Config, ConfigLoaderSaver},
-    engine::{CommandSpec, DatabaseConfig, EngineType},
+    engine::{CommandSpec, EngineType, TargetConfig},
     store,
 };
 use std::collections::HashMap;
@@ -71,10 +71,10 @@ impl MigrationTestHelper {
     }
 
     fn default_config_loadersaver() -> ConfigLoaderSaver {
-        let mut databases = HashMap::new();
-        databases.insert(
+        let mut targets = HashMap::new();
+        targets.insert(
             "postgres_psql".to_string(),
-            DatabaseConfig {
+            TargetConfig {
                 engine: EngineType::PostgresPSQL,
                 spawn_database: Some("spawn".to_string()),
                 spawn_schema: "public".to_string(),
@@ -96,9 +96,9 @@ impl MigrationTestHelper {
 
         ConfigLoaderSaver {
             spawn_folder: "/db".to_string(),
-            database: Some("postgres_psql".to_string()),
+            target: Some("postgres_psql".to_string()),
             environment: Some("dev".to_string()),
-            databases: Some(databases),
+            targets: Some(targets),
             project_id: None,
             telemetry: Some(false),
         }

@@ -335,15 +335,15 @@ pub async fn generate_streaming(
 
     let store = Store::new(pinner, cfg.operator().clone(), cfg.pather())
         .context("could not create new store for generate")?;
-    let db_config = cfg
-        .db_config()
-        .context("could not get db config for generate")?;
+    let target_config = cfg
+        .target_config()
+        .context("could not get target config for generate")?;
 
     generate_streaming_with_store(
         name,
         variables,
-        &db_config.environment,
-        &db_config.engine,
+        &target_config.environment,
+        &target_config.engine,
         store,
     )
     .await

@@ -4,11 +4,11 @@ description: Update expected test output.
 ---
 
 import CLICommand from "../../../components/CLICommand.astro";
-import { globalOptions, databaseOption } from "../../../components/cli-options";
+import { globalOptions, targetOption } from "../../../components/cli-options";
 
 <CLICommand
   usage="spawn test expect <name>"
-  options={[...databaseOption, ...globalOptions]}
+  options={[...targetOption, ...globalOptions]}
 >
 
 Runs a test and saves its output as the new expected result for future comparisons.

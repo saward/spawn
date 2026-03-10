@@ -33,22 +33,22 @@ This would expect the following directory layout:
 - `./database/spawn/tests/`
 - `./database/spawn/pinned/`
 
-### `database`
+### `target`
 
 **Type:** String  
 **Required:** No  
 **Default:** None
 
-The default database to use for commands. Must match a key in `[databases]`.
+The default target to use for commands. Must match a key in `[targets]`.
 
 ```toml
-database = "local"
+target = "local"
 ```
 
-Override per-command with `--database`:
+Override per-command with `--target`:
 
 ```bash
-spawn --database production migration status
+spawn --target production migration status
 ```
 
 ### `environment`
@@ -57,13 +57,13 @@ spawn --database production migration status
 **Required:** No  
 **Default:** None
 
-Global environment override. Overrides the `environment` field in database configs.
+Global environment override. Overrides the `environment` field in target configs.
 
 ```toml
 environment = "dev"
 ```
 
-This is rarely set at the top level. Usually each database defines its own environment.
+This is rarely set at the top level. Usually each target defines its own environment.
 
 ### `project_id`
 
@@ -91,9 +91,9 @@ telemetry = false
 
 Set the `DO_NOT_TRACK` environment variable to disable telemetry globally.
 
-## Database configurations
+## Target configurations
 
-The `[databases]` section defines one or more database connections. Each database is a table with the following fields. For practical setup examples including Docker and Google Cloud SQL, see the [Database Connections guide](/guides/manage-databases/).
+The `[targets]` section defines one or more database connections. Each target is a table with the following fields. For practical setup examples including Docker and Google Cloud SQL, see the [Database Connections guide](/guides/manage-databases/).
 
 ### `engine`
 
@@ -104,7 +104,7 @@ The `[databases]` section defines one or more database connections. Each databas
 The database engine type. Currently only PostgreSQL via psql is supported.
 
 ```toml
-[databases.local]
+[targets.local]
 engine = "postgres-psql"
 ```
 
@@ -156,7 +156,7 @@ environment = "dev"
 **Type:** Table (CommandSpec)  
 **Required:** Yes
 
-Specifies how to execute SQL against the database. Two modes: `direct` and `provider`. For now, only connection via PostgreSQL psql is supported, so this should be the command that allows piping changes to the database. See the [Database Connections guide](/guides/manage-databases/#command-configuration) for detailed examples of both modes.
+Specifies how to execute SQL against the target. Two modes: `direct` and `provider`. For now, only connection via PostgreSQL psql is supported, so this should be the command that allows piping changes to the database. See the [Database Connections guide](/guides/manage-databases/#command-configuration) for detailed examples of both modes.
 
 #### Direct command
 
@@ -204,10 +204,10 @@ The `--dry-run` flag makes `gcloud` output the SSH command as a string instead o
 
 ```toml
 spawn_folder = "./database/spawn"
-database = "local"
+target = "local"
 project_id = <replace with random uuid>
 
-[databases.local]
+[targets.local]
 spawn_database = "spawn"
 spawn_schema = "_spawn"
 environment = "dev"
@@ -217,7 +217,7 @@ command = {
   direct = ["docker", "exec", "-i", "mydb", "psql", "-U", "postgres", "postgres"]
 }
 
-[databases.staging]
+[targets.staging]
 spawn_database = "spawn"
 spawn_schema = "_spawn"
 engine = "postgres-psql"
@@ -233,7 +233,7 @@ command = {
   append = ["-T", "sudo", "-u", "postgres", "psql", "mydb"]
 }
 
-[databases.production]
+[targets.production]
 spawn_database = "spawn"
 spawn_schema = "_spawn"
 engine = "postgres-psql"
@@ -255,8 +255,8 @@ command = {
 Spawn supports environment variable overrides with the `SPAWN_` prefix:
 
 ```bash
-export SPAWN_DATABASE=production
+export SPAWN_TARGET=production
 spawn migration status
 ```
 
-This is equivalent to `spawn --database production migration status`.
+This is equivalent to `spawn --target production migration status`.

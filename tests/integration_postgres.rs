@@ -43,7 +43,7 @@ use opendal::Operator;
 use spawn_db::{
     commands::{AdoptMigration, ApplyMigration, Command, CompareTests, ExpectTest, Outcome},
     config::ConfigLoaderSaver,
-    engine::{CommandSpec, DatabaseConfig, EngineType},
+    engine::{CommandSpec, EngineType, TargetConfig},
 };
 use std::collections::HashMap;
 use std::env;
@@ -200,7 +200,7 @@ impl IntegrationTestHelper {
             }
         };
 
-        // Create the database config for this test
+        // Create the target config for this test
         let config_loader = Self::create_config(&db_name, &connection_mode);
 
         // Use MigrationTestHelper for filesystem and config management
@@ -218,12 +218,12 @@ impl IntegrationTestHelper {
         Ok(helper)
     }
 
-    /// Creates a database config that points to our isolated test database
+    /// Creates a target config that points to our isolated test database
     fn create_config(db_name: &str, connection_mode: &ConnectionMode) -> ConfigLoaderSaver {
-        let mut databases = HashMap::new();
-        databases.insert(
+        let mut targets = HashMap::new();
+        targets.insert(
             "postgres_psql".to_string(),
-            DatabaseConfig {
+            TargetConfig {
                 engine: EngineType::PostgresPSQL,
                 spawn_database: Some(db_name.to_string()),
                 spawn_schema: "_spawn".to_string(),
@@ -236,9 +236,9 @@ impl IntegrationTestHelper {
 
         ConfigLoaderSaver {
             spawn_folder: "/db".to_string(),
-            database: Some("postgres_psql".to_string()),
+            target: Some("postgres_psql".to_string()),
             environment: None,
-            databases: Some(databases),
+            targets: Some(targets),
             project_id: None,
             telemetry: Some(false),
         }
@@ -1619,10 +1619,10 @@ async fn test_spawn_database_config() -> Result<()> {
     let mem_op = Operator::new(mem_service)?.finish();
 
     // Config: psql connects to migration_db, but spawn_database = tracking_db
-    let mut databases = HashMap::new();
-    databases.insert(
+    let mut targets = HashMap::new();
+    targets.insert(
         "postgres_psql".to_string(),
-        DatabaseConfig {
+        TargetConfig {
             engine: EngineType::PostgresPSQL,
             spawn_database: Some(tracking_db.to_string()),
             spawn_schema: "_spawn".to_string(),
@@ -1635,9 +1635,9 @@ async fn test_spawn_database_config() -> Result<()> {
 
     let config_loader = ConfigLoaderSaver {
         spawn_folder: "/db".to_string(),
-        database: Some("postgres_psql".to_string()),
+        target: Some("postgres_psql".to_string()),
         environment: None,
-        databases: Some(databases),
+        targets: Some(targets),
         project_id: None,
         telemetry: Some(false),
     };

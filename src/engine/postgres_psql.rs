@@ -4,9 +4,9 @@
 
 use crate::config::FolderPather;
 use crate::engine::{
-    resolve_command_spec, DatabaseConfig, Engine, EngineError, ExistingMigrationInfo,
-    MigrationActivity, MigrationError, MigrationHistoryStatus, MigrationResult, MigrationStatus,
-    StdoutWriter, WriterFn,
+    resolve_command_spec, Engine, EngineError, ExistingMigrationInfo, MigrationActivity,
+    MigrationError, MigrationHistoryStatus, MigrationResult, MigrationStatus, StdoutWriter,
+    TargetConfig, WriterFn,
 };
 use crate::escape::{EscapedIdentifier, EscapedLiteral, EscapedQuery, InsecureRawSql};
 use crate::sql_query;
@@ -35,18 +35,18 @@ pub fn migration_lock_key() -> i64 {
 #[derive(Debug)]
 pub struct PSQL {
     psql_command: Vec<String>,
-    db_config: DatabaseConfig,
+    db_config: TargetConfig,
 }
 
 static PROJECT_DIR: Dir<'_> = include_dir!("./static/engine-migrations/postgres-psql");
 static SPAWN_NAMESPACE: &str = "spawn";
 
 impl PSQL {
-    pub async fn new(config: &DatabaseConfig) -> Result<Box<dyn Engine>> {
+    pub async fn new(config: &TargetConfig) -> Result<Box<dyn Engine>> {
         let command_spec = config
             .command
             .clone()
-            .ok_or(anyhow!("Command for database config must be defined"))?;
+            .ok_or(anyhow!("Command for target config must be defined"))?;
 
         let psql_command = resolve_command_spec(command_spec).await?;
 
@@ -545,8 +545,8 @@ impl PSQL {
             .await
             .context("Failed to load config for postgres psql")?;
         let dbengtype = "psql".to_string();
-        cfg.database = Some(dbengtype.clone());
-        cfg.databases = HashMap::from([(dbengtype, self.db_config.clone())]);
+        cfg.target = Some(dbengtype.clone());
+        cfg.targets = HashMap::from([(dbengtype, self.db_config.clone())]);
 
         // Apply each migration that hasn't been applied yet
         for migration_path in available_migrations {
