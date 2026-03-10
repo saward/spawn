@@ -35,7 +35,7 @@ pub fn migration_lock_key() -> i64 {
 #[derive(Debug)]
 pub struct PSQL {
     psql_command: Vec<String>,
-    db_config: TargetConfig,
+    target_config: TargetConfig,
 }
 
 static PROJECT_DIR: Dir<'_> = include_dir!("./static/engine-migrations/postgres-psql");
@@ -52,7 +52,7 @@ impl PSQL {
 
         let eng = Box::new(Self {
             psql_command,
-            db_config: config.clone(),
+            target_config: config.clone(),
         });
 
         // Ensure we have latest schema:
@@ -64,11 +64,11 @@ impl PSQL {
     }
 
     fn spawn_schema_literal(&self) -> EscapedLiteral {
-        EscapedLiteral::new(&self.db_config.spawn_schema)
+        EscapedLiteral::new(&self.target_config.spawn_schema)
     }
 
     fn spawn_schema_ident(&self) -> EscapedIdentifier {
-        EscapedIdentifier::new(&self.db_config.spawn_schema)
+        EscapedIdentifier::new(&self.target_config.spawn_schema)
     }
 
     fn safe_spawn_namespace(&self) -> EscapedLiteral {
@@ -78,7 +78,7 @@ impl PSQL {
     /// Returns a psql `\c` command to switch to the spawn_database, if configured.
     /// Used to ensure internal queries and schema migrations target the correct database.
     fn spawn_db_connect_command(&self) -> InsecureRawSql {
-        if let Some(spawn_db) = &self.db_config.spawn_database {
+        if let Some(spawn_db) = &self.target_config.spawn_database {
             InsecureRawSql::new(&format!("\\c {}\n", EscapedIdentifier::new(spawn_db)))
         } else {
             InsecureRawSql::new("")
@@ -156,7 +156,6 @@ impl PSQL {
             duration_interval,
             safe_pin_hash,
         );
-        println!("{}", qry);
         qry
     }
 }
@@ -546,7 +545,7 @@ impl PSQL {
             .context("Failed to load config for postgres psql")?;
         let dbengtype = "psql".to_string();
         cfg.target = Some(dbengtype.clone());
-        cfg.targets = HashMap::from([(dbengtype, self.db_config.clone())]);
+        cfg.targets = HashMap::from([(dbengtype, self.target_config.clone())]);
 
         // Apply each migration that hasn't been applied yet
         for migration_path in available_migrations {
@@ -567,7 +566,7 @@ impl PSQL {
             // Load and render the migration
             let variables = crate::variables::Variables::from_str(
                 "json",
-                &serde_json::json!({"schema": &self.db_config.spawn_schema}).to_string(),
+                &serde_json::json!({"schema": &self.target_config.spawn_schema}).to_string(),
             )?;
             let gen = migrator.generate_streaming(Some(variables)).await?;
             let mut buffer = Vec::new();
