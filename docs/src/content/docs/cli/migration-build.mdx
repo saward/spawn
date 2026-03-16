@@ -6,7 +6,7 @@ description: Build a migration into final SQL.
 import CLICommand from "../../../components/CLICommand.astro";
 import {
   globalOptions,
-  databaseOption,
+  targetOption,
   environmentOption,
   variablesOption,
 } from "../../../components/cli-options";
@@ -17,7 +17,7 @@ import {
     { flag: "--pinned", description: "Use pinned component versions from lock.toml" },
     ...variablesOption,
     ...environmentOption,
-    ...databaseOption,
+    ...targetOption,
     ...globalOptions
   ]}
 >

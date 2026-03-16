@@ -21,7 +21,7 @@ Templates are used in:
 
 ### `env`
 
-The environment from the database config (e.g., `"dev"`, `"prod"`).
+The environment from the target config (e.g., `"dev"`, `"prod"`).
 
 ```sql
 {% if env == "dev" %}
@@ -223,7 +223,7 @@ SELECT 1;
 ```
 
 :::note
-These parse filters complement the `--variables` CLI flag. Use `--variables` to pass a single variables file into the `variables` context. This is intended for situations where you want to provide data that is specific to a particular database target, or contains information that should not be committed to your repo. Use `read_file` with a parse filter when you need to load additional structured data from `components/`, either for tests or data that is applicable to all database targets.
+These parse filters complement the `--variables` CLI flag. Use `--variables` to pass a single variables file into the `variables` context. This is intended for situations where you want to provide data that is specific to a particular target, or contains information that should not be committed to your repo. Use `read_file` with a parse filter when you need to load additional structured data from `components/`, either for tests or data that is applicable to all targets.
 :::
 
 ### `escape_identifier`

@@ -106,9 +106,9 @@ pub async fn get_pending_and_confirm(
         return Ok(None);
     }
 
-    let db_config = config.db_config()?;
-    let target = config.database.as_deref().unwrap_or("unknown");
-    let env = &db_config.environment;
+    let target_config = config.target_config()?;
+    let target = config.target.as_deref().unwrap_or("unknown");
+    let env = &target_config.environment;
 
     println!();
     println!("TARGET: {}", target);

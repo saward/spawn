@@ -14,9 +14,9 @@ impl TelemetryDescribe for Check {
 
 impl Command for Check {
     async fn execute(&self, config: &Config) -> Result<Outcome> {
-        // Validate the database reference if one was provided
-        if config.database.is_some() {
-            config.db_config()?;
+        // Validate the target reference if one was provided
+        if config.target.is_some() {
+            config.target_config()?;
         }
 
         let mut warnings: Vec<String> = Vec::new();

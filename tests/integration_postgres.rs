@@ -43,7 +43,7 @@ use opendal::Operator;
 use spawn_db::{
     commands::{AdoptMigration, ApplyMigration, Command, CompareTests, ExpectTest, Outcome},
     config::ConfigLoaderSaver,
-    engine::{CommandSpec, DatabaseConfig, EngineType},
+    engine::{CommandSpec, EngineType, TargetConfig},
 };
 use std::collections::HashMap;
 use std::env;
@@ -200,7 +200,7 @@ impl IntegrationTestHelper {
             }
         };
 
-        // Create the database config for this test
+        // Create the target config for this test
         let config_loader = Self::create_config(&db_name, &connection_mode);
 
         // Use MigrationTestHelper for filesystem and config management
@@ -218,14 +218,14 @@ impl IntegrationTestHelper {
         Ok(helper)
     }
 
-    /// Creates a database config that points to our isolated test database
+    /// Creates a target config that points to our isolated test database
     fn create_config(db_name: &str, connection_mode: &ConnectionMode) -> ConfigLoaderSaver {
-        let mut databases = HashMap::new();
-        databases.insert(
+        let mut targets = HashMap::new();
+        targets.insert(
             "postgres_psql".to_string(),
-            DatabaseConfig {
+            TargetConfig {
                 engine: EngineType::PostgresPSQL,
-                spawn_database: db_name.to_string(),
+                spawn_database: Some(db_name.to_string()),
                 spawn_schema: "_spawn".to_string(),
                 environment: "test".to_string(),
                 command: Some(CommandSpec::Direct {
@@ -236,9 +236,9 @@ impl IntegrationTestHelper {
 
         ConfigLoaderSaver {
             spawn_folder: "/db".to_string(),
-            database: Some("postgres_psql".to_string()),
+            target: Some("postgres_psql".to_string()),
             environment: None,
-            databases: Some(databases),
+            targets: Some(targets),
             project_id: None,
             telemetry: Some(false),
         }
@@ -1580,6 +1580,173 @@ COMMIT;"#;
         helper.table_exists("public", "pin_test")?,
         "pin_test table should exist after migration"
     );
+
+    Ok(())
+}
+
+/// Tests that spawn_database config controls where migration tracking is recorded.
+///
+/// When spawn_database is set to a different database, the migration
+/// SQL runs against the psql-connected database, but tracking tables are
+/// recorded in the spawn_database via a \c switch.
+#[tokio::test]
+#[ignore]
+async fn test_spawn_database_config() -> Result<()> {
+    require_postgres()?;
+
+    let connection_mode = ConnectionMode::from_env();
+    let keep_db = should_keep_db();
+
+    // We need two databases:
+    // - migration_db: where the migration SQL runs (psql connects here)
+    // - tracking_db: where spawn records migration history (spawn_database config)
+    let migration_db = format!("spawn_test_{}", Uuid::new_v4().simple());
+    let tracking_db = format!("spawn_test_{}", Uuid::new_v4().simple());
+
+    println!();
+    println!("=======================================================");
+    println!("Test: test_spawn_database_config");
+    println!("Migration DB: {}", migration_db);
+    println!("Tracking DB:  {}", tracking_db);
+    if keep_db {
+        println!("SPAWN_TEST_KEEP_DB is set - databases will be preserved");
+    }
+    println!("=======================================================");
+
+    IntegrationTestHelper::create_test_database(&migration_db, &connection_mode)?;
+
+    let mem_service = Memory::default();
+    let mem_op = Operator::new(mem_service)?.finish();
+
+    // Config: psql connects to migration_db, but spawn_database = tracking_db
+    let mut targets = HashMap::new();
+    targets.insert(
+        "postgres_psql".to_string(),
+        TargetConfig {
+            engine: EngineType::PostgresPSQL,
+            spawn_database: Some(tracking_db.to_string()),
+            spawn_schema: "_spawn".to_string(),
+            environment: "test".to_string(),
+            command: Some(CommandSpec::Direct {
+                direct: connection_mode.psql_command(&migration_db),
+            }),
+        },
+    );
+
+    let config_loader = ConfigLoaderSaver {
+        spawn_folder: "/db".to_string(),
+        target: Some("postgres_psql".to_string()),
+        environment: None,
+        targets: Some(targets),
+        project_id: None,
+        telemetry: Some(false),
+    };
+
+    let migration_helper =
+        MigrationTestHelper::new_from_operator_with_config(mem_op, config_loader).await?;
+
+    let _ = connection_mode.execute_sql(
+        &migration_db,
+        format!("CREATE DATABASE {}", tracking_db).as_str(),
+    )?;
+
+    let migration_name = migration_helper
+        .create_migration_manual(
+            "split-db-test",
+            r#"BEGIN;
+CREATE TABLE split_db_test (id SERIAL PRIMARY KEY);
+COMMIT;"#
+                .to_string(),
+        )
+        .await?;
+
+    let config = migration_helper.load_config().await?;
+    let cmd = ApplyMigration {
+        migration: Some(migration_name.clone()),
+        pinned: false,
+        variables: None,
+        yes: true,
+        retry: false,
+    };
+    cmd.execute(&config).await?;
+
+    // The migration SQL should have run in migration_db (the psql-connected database)
+    let table_check = connection_mode.execute_sql(
+            &migration_db,
+            "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'split_db_test');",
+        )?;
+    let table_output = String::from_utf8_lossy(&table_check.stdout);
+    assert!(
+        table_output.contains(" t"),
+        "split_db_test table should exist in migration_db, got: {}",
+        table_output
+    );
+
+    // The tracking record should be in tracking_db (spawn_database), NOT migration_db
+    let tracking_in_target = connection_mode.execute_sql(
+        &tracking_db,
+        "SELECT COUNT(*) FROM _spawn.migration WHERE namespace = 'default';",
+    )?;
+    let tracking_target_output = String::from_utf8_lossy(&tracking_in_target.stdout);
+    assert!(
+        tracking_target_output.contains('1'),
+        "tracking should be in tracking_db when spawn_database is set, got: {}",
+        tracking_target_output
+    );
+
+    // Verify the table was NOT created in tracking_db (migration runs in migration_db)
+    let no_table_check = connection_mode.execute_sql(
+            &tracking_db,
+            "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'split_db_test');",
+        )?;
+    let no_table_output = String::from_utf8_lossy(&no_table_check.stdout);
+    assert!(
+        no_table_output.contains(" f"),
+        "split_db_test table should NOT exist in tracking_db, got: {}",
+        no_table_output
+    );
+
+    // Re-apply the same migration. Because tracking is in tracking_db,
+    // the engine must read from tracking_db to detect it's already applied.
+    // If execute_sql doesn't prepend \c to the tracking database, the read
+    // queries hit migration_db (where _spawn tables don't exist), the
+    // engine won't find the prior apply, and it will re-run the SQL —
+    // which fails because split_db_test already exists.
+    let config2 = migration_helper.load_config().await?;
+    let cmd2 = ApplyMigration {
+        migration: Some(migration_name.clone()),
+        pinned: false,
+        variables: None,
+        yes: true,
+        retry: false,
+    };
+    cmd2.execute(&config2).await.expect(
+        "Re-applying the same migration should succeed (detected as already applied), \
+         but it failed — likely because execute_sql reads from the wrong database \
+         when spawn_database is configured",
+    );
+
+    // =========================================================================
+    // Cleanup
+    // =========================================================================
+    if keep_db {
+        println!("KEEPING databases: {} and {}", migration_db, tracking_db);
+    } else {
+        // Terminate connections and drop both databases
+        for db in [&migration_db, &tracking_db] {
+            let _ = connection_mode.execute_sql(
+                DEFAULT_NEUTRAL_DATABASE,
+                &format!(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{}'",
+                    db
+                ),
+            );
+            let _ = connection_mode.execute_sql(
+                DEFAULT_NEUTRAL_DATABASE,
+                &format!("DROP DATABASE IF EXISTS \"{}\"", db),
+            );
+        }
+    }
 
     Ok(())
 }

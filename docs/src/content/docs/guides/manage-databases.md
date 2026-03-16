@@ -3,15 +3,15 @@ title: Database Connections
 description: How to configure database connections in spawn.toml
 ---
 
-Spawn requires a database connection to apply migrations and run tests. Database connections are configured in your `spawn.toml` file under the `[databases]` section. See the [configuration reference](/reference/config/#database-configurations) for the full list of database fields.
+Spawn requires a database connection to apply migrations and run tests. Database connections are configured in your `spawn.toml` file under the `[targets]` section. See the [configuration reference](/reference/config/#target-configurations) for the full list of target fields.
 
 ## Basic Configuration
 
-Each database configuration requires:
+Each target configuration requires:
 
 - `engine`: The database engine type (currently only `"postgres-psql"`)
-- `spawn_database`: The database name to connect to
-- `spawn_schema`: The schema where spawn stores migration tracking (default: `"_spawn"`)
+- `spawn_database`: The database where spawn stores migration tracking (defaults to using whichever database your command connects to by default). This database must already exist.
+- `spawn_schema`: The schema where spawn stores migration tracking (default: `"_spawn"`). This schema will be created if it does not exist.
 - `environment`: Environment name (e.g., `"dev"`, `"prod"`)
 - `command`: How to execute SQL commands (see below)
 
@@ -24,7 +24,7 @@ The `command` field specifies how spawn should execute SQL against your database
 Use a direct command when you have a straightforward way to connect to your database.
 
 ```toml
-[databases.local]
+[targets.local]
 engine = "postgres-psql"
 spawn_database = "myapp"
 spawn_schema = "_spawn"
@@ -37,7 +37,7 @@ command = { kind = "direct", direct = ["psql", "-U", "postgres", "myapp"] }
 For databases running in Docker:
 
 ```toml
-[databases.docker_local]
+[targets.docker_local]
 engine = "postgres-psql"
 spawn_database = "myapp"
 spawn_schema = "_spawn"
@@ -56,7 +56,7 @@ command = {
 Provider commands are useful when the connection details need to be resolved dynamically, such as with cloud providers where connection setup is slow but the underlying connection is fast.
 
 ```toml
-[databases.staging]
+[targets.staging]
 engine = "postgres-psql"
 spawn_database = "myapp"
 spawn_schema = "_spawn"
@@ -93,7 +93,7 @@ The provider pattern resolves the SSH command once using `gcloud compute ssh --d
 You can use the gcloud command directly, but this will be called multiple times during a single `spawn migration apply` command.
 
 ```toml
-[databases.staging_slow]
+[targets.staging_slow]
 engine = "postgres-psql"
 spawn_database = "myapp"
 spawn_schema = "_spawn"
@@ -118,7 +118,7 @@ command = {
 You can also use gcloud to provide the underlying ssh command needed to connect, which will be resolved just once, and then every connection to the database will use the provided ssh command directly.
 
 ```toml
-[databases.staging]
+[targets.staging]
 engine = "postgres-psql"
 spawn_database = "myapp"
 spawn_schema = "_spawn"
@@ -178,10 +178,10 @@ ssh-add ~/.ssh/your_key
 ```toml
 # spawn.toml
 spawn_folder = "spawn"
-database = "local"  # Default database
+target = "local"  # Default target
 
 # Local development (Docker)
-[databases.local]
+[targets.local]
 engine = "postgres-psql"
 spawn_database = "myapp"
 spawn_schema = "_spawn"
@@ -192,7 +192,7 @@ command = {
 }
 
 # Staging (Google Cloud via provider - fast!)
-[databases.staging]
+[targets.staging]
 engine = "postgres-psql"
 spawn_database = "myapp"
 spawn_schema = "_spawn"
@@ -210,7 +210,7 @@ command = {
 }
 
 # Production (Google Cloud via provider - fast!)
-[databases.production]
+[targets.production]
 engine = "postgres-psql"
 spawn_database = "myapp"
 spawn_schema = "_spawn"
@@ -231,28 +231,28 @@ command = {
 Usage:
 
 ```bash
-# Use local database (default)
+# Use local target (default)
 spawn migration apply <migration name>
 
-# Use staging database
-spawn --database staging migration apply <migration name>
+# Use staging target
+spawn --target staging migration apply <migration name>
 
-# Use production database
-spawn --database production migration apply <migration name>
+# Use production target
+spawn --target production migration apply <migration name>
 ```
 
 ## Advanced Configuration
 
-### Multiple Databases
+### Multiple Targets
 
-You can configure multiple databases and switch between them:
+You can configure multiple targets and switch between them:
 
 ```bash
-# Use specific database
-spawn --database staging migration build my-migration
+# Use specific target
+spawn --target staging migration build my-migration
 
 # Override in environment variable
-export SPAWN_DATABASE=production
+export SPAWN_TARGET=production
 spawn migration apply
 ```
 

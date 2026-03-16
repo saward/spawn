@@ -6,7 +6,7 @@ description: Apply migrations to the database.
 import CLICommand from "../../../components/CLICommand.astro";
 import {
   globalOptions,
-  databaseOption,
+  targetOption,
   environmentOption,
   variablesOption,
 } from "../../../components/cli-options";
@@ -19,7 +19,7 @@ import {
     { flag: "--yes", description: "Skip confirmation prompt" },
     { flag: "--retry", description: "Retry a previous migration" },
     ...environmentOption,
-    ...databaseOption,
+    ...targetOption,
     ...globalOptions
   ]}
 >

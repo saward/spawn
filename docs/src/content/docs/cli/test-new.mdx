@@ -4,11 +4,11 @@ description: Create a new test.
 ---
 
 import CLICommand from "../../../components/CLICommand.astro";
-import { globalOptions, databaseOption } from "../../../components/cli-options";
+import { globalOptions, targetOption } from "../../../components/cli-options";
 
 <CLICommand
   usage="spawn test new <name>"
-  options={[...databaseOption, ...globalOptions]}
+  options={[...targetOption, ...globalOptions]}
 >
 
 Creates a new test directory with a template `test.sql` file.

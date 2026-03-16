@@ -4,11 +4,15 @@ description: Show migration status across filesystem and database.
 ---
 
 import CLICommand from "../../../components/CLICommand.astro";
-import { globalOptions, databaseOption, environmentOption } from "../../../components/cli-options";
+import {
+  globalOptions,
+  targetOption,
+  environmentOption,
+} from "../../../components/cli-options";
 
 <CLICommand
   usage="spawn migration status"
-  options={[...environmentOption, ...databaseOption, ...globalOptions]}
+  options={[...environmentOption, ...targetOption, ...globalOptions]}
 >
 
 Displays a table showing the status of all migrations from both the filesystem and database.

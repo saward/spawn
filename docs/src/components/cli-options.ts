@@ -12,11 +12,11 @@ export const globalOptions: CLIOption[] = [
   { flag: "-d, --debug", description: "Turn on debug output." },
 ];
 
-/** The --database flag. Relevant to commands that read or validate the database config. */
-export const databaseOption: CLIOption[] = [
+/** The --target flag. Relevant to commands that read or validate the target config. */
+export const targetOption: CLIOption[] = [
   {
-    flag: "--database <name>",
-    description: "Select which database from spawn.toml to use.",
+    flag: "--target <name>",
+    description: "Select which target from spawn.toml to use.",
   },
 ];
 
@@ -24,7 +24,7 @@ export const databaseOption: CLIOption[] = [
 export const environmentOption: CLIOption[] = [
   {
     flag: "-e, --environment <name>",
-    description: "Override the environment for the database config.",
+    description: "Override the environment for the target config.",
   },
 ];
 

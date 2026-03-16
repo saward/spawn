@@ -4,7 +4,11 @@ description: Mark a migration as applied without running it.
 ---
 
 import CLICommand from "../../../components/CLICommand.astro";
-import { globalOptions, databaseOption, environmentOption } from "../../../components/cli-options";
+import {
+  globalOptions,
+  targetOption,
+  environmentOption,
+} from "../../../components/cli-options";
 
 <CLICommand
   usage="spawn migration adopt [migration] [options]"
@@ -12,7 +16,7 @@ import { globalOptions, databaseOption, environmentOption } from "../../../compo
     { flag: "--yes", description: "Skip confirmation prompt" },
     { flag: "--description <text>", description: "Reason for adoption (recorded in history)" },
     ...environmentOption,
-    ...databaseOption,
+    ...targetOption,
     ...globalOptions
   ]}
 >
@@ -32,6 +36,7 @@ Records a migration as applied in `_spawn.migration_history` without executing t
 ## Behavior
 
 Adoption creates a history entry with:
+
 - Status: `success`
 - Activity: `ADOPT`
 - Optional description explaining why it was adopted
