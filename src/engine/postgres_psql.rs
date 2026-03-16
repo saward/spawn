@@ -75,14 +75,20 @@ impl PSQL {
         EscapedLiteral::new(SPAWN_NAMESPACE)
     }
 
-    /// Returns a psql `\c` command to switch to the spawn_database, if configured.
-    /// Used to ensure internal queries and schema migrations target the correct database.
-    fn spawn_db_connect_command(&self) -> InsecureRawSql {
-        if let Some(spawn_db) = &self.target_config.spawn_database {
-            InsecureRawSql::new(&format!("\\c {}\n", EscapedIdentifier::new(spawn_db)))
+    /// Returns a psql `\c` command to switch to the given database, or
+    /// an empty string if `database` is None.
+    fn db_connect_command(database: Option<&str>) -> InsecureRawSql {
+        if let Some(db) = database {
+            InsecureRawSql::new(&format!("\\c {}\n", EscapedIdentifier::new(db)))
         } else {
             InsecureRawSql::new("")
         }
+    }
+
+    /// Returns a psql `\c` command to switch to the spawn_database, if configured.
+    /// Used to ensure internal queries and schema migrations target the correct database.
+    fn spawn_db_connect_command(&self) -> InsecureRawSql {
+        Self::db_connect_command(self.target_config.spawn_database.as_deref())
     }
 
     fn build_record_migration_sql(
@@ -388,7 +394,11 @@ impl Engine for PSQL {
         );
 
         let output = self
-            .execute_sql(&query, Some("unaligned"))
+            .execute_sql(
+                &query,
+                Some("unaligned"),
+                self.target_config.spawn_database.as_deref(),
+            )
             .await
             .map_err(MigrationError::Database)?;
 
@@ -607,9 +617,16 @@ impl PSQL {
 
     /// Execute SQL and return stdout as a String.
     /// Used for internal queries where we need to parse results.
-    async fn execute_sql(&self, query: &EscapedQuery, format: Option<&str>) -> Result<String> {
+    /// If `database` is Some, a `\c` command is prepended to switch databases first.
+    async fn execute_sql(
+        &self,
+        query: &EscapedQuery,
+        format: Option<&str>,
+        database: Option<&str>,
+    ) -> Result<String> {
         let query_str = query.as_str().to_string();
         let format_owned = format.map(|s| s.to_string());
+        let db_connect = Self::db_connect_command(database);
 
         // Create a shared buffer to capture stdout
         let stdout_buf = Arc::new(Mutex::new(Vec::new()));
@@ -617,6 +634,8 @@ impl PSQL {
 
         self.execute_with_writer(
             Box::new(move |writer| {
+                // Switch database if requested
+                writer.write_all(db_connect.as_str().as_bytes())?;
                 // Format settings if requested (QUIET is already set globally)
                 if let Some(fmt) = format_owned {
                     writer.write_all(b"\\pset tuples_only on\n")?;
@@ -636,14 +655,14 @@ impl PSQL {
     }
 
     async fn migration_table_exists(&self) -> Result<bool> {
-        self.table_exists("migration").await
+        self.spawn_table_exists("migration").await
     }
 
     async fn migration_history_table_exists(&self) -> Result<bool> {
-        self.table_exists("migration_history").await
+        self.spawn_table_exists("migration_history").await
     }
 
-    async fn table_exists(&self, table_name: &str) -> Result<bool> {
+    async fn spawn_table_exists(&self, table_name: &str) -> Result<bool> {
         let safe_table_name = EscapedLiteral::new(table_name);
         // Use type-safe escaped types - escaping happens at construction time
         let query = sql_query!(
@@ -658,7 +677,13 @@ impl PSQL {
             safe_table_name
         );
 
-        let output = self.execute_sql(&query, Some("csv")).await?;
+        let output = self
+            .execute_sql(
+                &query,
+                Some("csv"),
+                self.target_config.spawn_database.as_deref(),
+            )
+            .await?;
         // With tuples_only mode, output is just "t" or "f"
         Ok(output.trim() == "t")
     }
@@ -673,7 +698,13 @@ impl PSQL {
             namespace,
         );
 
-        let output = self.execute_sql(&query, Some("csv")).await?;
+        let output = self
+            .execute_sql(
+                &query,
+                Some("csv"),
+                self.target_config.spawn_database.as_deref(),
+            )
+            .await?;
         let mut migrations = HashSet::new();
 
         // With tuples_only mode, we get just the data rows (no headers)
@@ -710,7 +741,13 @@ impl PSQL {
             namespace
         );
 
-        let output = self.execute_sql(&query, Some("csv")).await?;
+        let output = self
+            .execute_sql(
+                &query,
+                Some("csv"),
+                self.target_config.spawn_database.as_deref(),
+            )
+            .await?;
 
         // With tuples_only mode, we get just the data row (no headers).
         // Parse CSV: name,namespace,status_id_status,activity_id_activity,checksum

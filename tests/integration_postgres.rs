@@ -1706,6 +1706,26 @@ COMMIT;"#
         no_table_output
     );
 
+    // Re-apply the same migration. Because tracking is in tracking_db,
+    // the engine must read from tracking_db to detect it's already applied.
+    // If execute_sql doesn't prepend \c to the tracking database, the read
+    // queries hit migration_db (where _spawn tables don't exist), the
+    // engine won't find the prior apply, and it will re-run the SQL —
+    // which fails because split_db_test already exists.
+    let config2 = migration_helper.load_config().await?;
+    let cmd2 = ApplyMigration {
+        migration: Some(migration_name.clone()),
+        pinned: false,
+        variables: None,
+        yes: true,
+        retry: false,
+    };
+    cmd2.execute(&config2).await.expect(
+        "Re-applying the same migration should succeed (detected as already applied), \
+         but it failed — likely because execute_sql reads from the wrong database \
+         when spawn_database is configured",
+    );
+
     // =========================================================================
     // Cleanup
     // =========================================================================
