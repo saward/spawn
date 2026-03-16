@@ -119,8 +119,8 @@ impl PSQL {
 
         let qry = sql_query!(
             r#"
-    BEGIN;
     {}
+    BEGIN;
     WITH inserted_migration AS (
         INSERT INTO {}.migration (name, namespace) VALUES ({}, {})
         ON CONFLICT (name, namespace) DO UPDATE SET name = EXCLUDED.name
