@@ -46,13 +46,13 @@ pub struct Entry {
 pub(crate) async fn pin_contents(
     fs: &Operator,
     store_path: &str,
-    contents: String,
+    contents: &[u8],
 ) -> Result<String> {
-    let hash = xxhash3_128::Hasher::oneshot(contents.as_bytes());
+    let hash = xxhash3_128::Hasher::oneshot(contents);
     let hash = format!("{:032x}", hash);
     let dir = format!("{}/{}", store_path, hash_to_path(&hash)?);
 
-    fs.write(&dir, contents).await?;
+    fs.write(&dir, contents.to_vec()).await?;
 
     Ok(hash)
 }
@@ -121,8 +121,7 @@ pub(crate) async fn snapshot(fs: &Operator, store_path: &str, mut prefix: &str) 
             }
             false => {
                 let contents = fs.read(entry.path()).await?;
-                let contents = String::from_utf8(contents.to_bytes().to_vec())?;
-                let hash = pin_contents(fs, store_path, contents).await?;
+                let hash = pin_contents(fs, store_path, &contents.to_bytes()).await?;
 
                 entries.push((
                     entry.name().to_string(),
@@ -143,7 +142,7 @@ pub(crate) async fn snapshot(fs: &Operator, store_path: &str, mut prefix: &str) 
     tree.entries = entries.into_iter().map(|(_, entry)| entry).collect();
 
     let contents = toml::to_string(&tree).unwrap();
-    let hash = pin_contents(fs, store_path, contents)
+    let hash = pin_contents(fs, store_path, contents.as_bytes())
         .await
         .context("could not pin contents")?;
 

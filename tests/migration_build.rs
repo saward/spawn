@@ -451,6 +451,44 @@ async fn test_check_passes_when_all_pinned() -> Result<(), Box<dyn std::error::E
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_build_and_pin_with_binary_file() -> Result<(), Box<dyn std::error::Error>> {
+    // This test verifies that pinning works with binary files in components/
+    let helper =
+        MigrationTestHelper::new_from_local_folder("./static/tests/build_and_pin_pdf").await?;
+
+    // Verify the binary file actually contains invalid UTF-8 (this would have failed with old code)
+    let binary_bytes = helper.fs.read("/db/components/small.bin").await?.to_bytes();
+    assert!(
+        String::from_utf8(binary_bytes.to_vec()).is_err(),
+        "small.bin should contain invalid UTF-8 bytes"
+    );
+
+    let migration_name = "20240907212659-initial";
+
+    // Build the migration - it reads a binary file and base64 encodes it
+    let built = helper.build_migration(&migration_name, false).await?;
+
+    // small.bin contains bytes [0x00, 0x01, 0x02, 0xff, 0xfe, 0xfd] which base64 encodes to "AAEC//79"
+    // The quotes are escaped/doubled by the SQL auto-escape
+    let expected = r#"BEGIN;
+
+SELECT 'AAEC//79';
+
+COMMIT;"#;
+    assert_eq!(expected, built);
+
+    // Pin the migration - this should work even with a binary file in components/
+    let pin_hash = helper.pin_migration(migration_name).await?;
+    assert!(!pin_hash.is_empty(), "Pin hash should not be empty");
+
+    // Build with pinned=true to verify pinned content works
+    let built_pinned = helper.build_migration(&migration_name, true).await?;
+    assert_eq!(expected, built_pinned);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_build_shows_warning_when_pinned_but_not_using_pinned_flag(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let helper = MigrationTestHelper::new_empty().await?;
