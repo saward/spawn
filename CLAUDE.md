@@ -64,7 +64,16 @@ spawn migration new|pin|build|apply|adopt|status
 spawn test new|build|run|compare|expect
 ```
 
-Key apply flags: `--no-pin` (skip pin requirement), `--retry` (retry failed migration), `--yes` (skip confirmation).
+Key apply flags: `--no-pin` (skip pin requirement), `--retry` (retry failed migration), `--yes` (skip confirmation), `--reuse-connection` (reuse database connection across migrations).
+
+## Documentation
+
+User-facing documentation lives in `docs/src/content/docs/`. When adding or changing CLI commands or flags:
+
+1. Update the relevant `.mdx` file in `docs/src/content/docs/cli/` (e.g., `migration-apply.mdx`).
+2. Add new flags to the `options` array in the `<CLICommand>` component.
+3. Document behavior in a dedicated section if the flag has non-trivial semantics.
+4. Add an example in the "Examples" section showing typical usage.
 
 ## Conventions
 

@@ -18,6 +18,7 @@ import {
     ...variablesOption,
     { flag: "--yes", description: "Skip confirmation prompt" },
     { flag: "--retry", description: "Retry a previous migration" },
+    { flag: "--reuse-connection", description: "Reuse the same database connection across all migrations" },
     ...environmentOption,
     ...targetOption,
     ...globalOptions
@@ -56,6 +57,10 @@ By default, `apply` requires migrations to have a `lock.toml`. This ensures the 
 
 If a migration previously failed, `apply` will refuse to run it again unless you pass `--retry`. This prevents accidental re-execution of partially applied migrations. Retrying a successful migration will run the same migration again.
 
+## Connection reuse
+
+By default, each migration creates a fresh database connection. When applying many migrations, this can be slow due to connection setup overhead. Use `--reuse-connection` to reuse the same connection across all migrations (currently migration status updates still occur in separate connections), which can speed up batch applies.
+
 ## Examples
 
 Apply all pending migrations:
@@ -80,6 +85,12 @@ Use unpinned components (not recommended):
 
 ```bash
 spawn migration apply 20260131120000-add-users-table --no-pin
+```
+
+Apply all pending migrations with connection reuse (faster):
+
+```bash
+spawn migration apply --reuse-connection
 ```
 
 </CLICommand>
