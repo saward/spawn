@@ -304,6 +304,7 @@ impl IntegrationTestHelper {
             variables: None,
             yes: true,
             retry: false,
+            reuse_connection: false,
         };
 
         let outcome = cmd.execute(&config).await?;
@@ -417,7 +418,8 @@ fn require_postgres() -> Result<()> {
 async fn test_mass_apply_and_adopt() -> Result<()> {
     require_postgres()?;
 
-    for mode in ["apply", "adopt"] {
+    // Test both apply modes (with and without connection reuse) and adopt
+    for (mode, reuse_connection) in [("apply", false), ("apply_reuse", true), ("adopt", false)] {
         let test_name = format!("test_mass_{}", mode);
         let helper = IntegrationTestHelper::new(&test_name, None).await?;
 
@@ -461,18 +463,20 @@ COMMIT;"#
         // Mass apply/adopt the remaining pending migrations
         let config = helper.migration_helper.load_config().await?;
         let expected_activity = match mode {
-            "apply" => {
+            "apply" | "apply_reuse" => {
                 let cmd = ApplyMigration {
                     migration: None,
                     pinned: false,
                     variables: None,
                     yes: true,
                     retry: false,
+                    reuse_connection,
                 };
                 let outcome = cmd.execute(&config).await?;
                 assert!(
                     matches!(outcome, Outcome::AppliedMigrations),
-                    "mass apply should return AppliedMigrations"
+                    "mass apply (reuse_connection={}) should return AppliedMigrations",
+                    reuse_connection
                 );
                 "APPLY"
             }
@@ -1286,6 +1290,7 @@ COMMIT;"#;
         variables: None,
         yes: true,
         retry: false,
+        reuse_connection: false,
     };
     let result = cmd.execute(&config).await;
     assert!(
@@ -1306,6 +1311,7 @@ COMMIT;"#;
         variables: None,
         yes: true,
         retry: true,
+        reuse_connection: false,
     };
     let result = cmd.execute(&config).await;
     assert!(
@@ -1551,6 +1557,7 @@ COMMIT;"#;
         variables: None,
         yes: true,
         retry: false,
+        reuse_connection: false,
     };
     let result = cmd.execute(&config).await;
     assert!(
@@ -1571,6 +1578,7 @@ COMMIT;"#;
         variables: None,
         yes: true,
         retry: false,
+        reuse_connection: false,
     };
     let result = cmd.execute(&config).await;
     assert!(result.is_ok(), "apply with --no-pin should succeed");
@@ -1667,6 +1675,7 @@ COMMIT;"#
         variables: None,
         yes: true,
         retry: false,
+        reuse_connection: false,
     };
     cmd.execute(&config).await?;
 
@@ -1719,6 +1728,7 @@ COMMIT;"#
         variables: None,
         yes: true,
         retry: false,
+        reuse_connection: false,
     };
     cmd2.execute(&config2).await.expect(
         "Re-applying the same migration should succeed (detected as already applied), \

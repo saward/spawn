@@ -1,7 +1,7 @@
 use crate::commands::migration::get_pending_and_confirm;
 use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
-use crate::engine::MigrationError;
+use crate::engine::{Engine, MigrationError};
 use crate::migrator::Migrator;
 use crate::variables::Variables;
 use anyhow::{anyhow, Result};
@@ -12,6 +12,7 @@ pub struct ApplyMigration {
     pub variables: Option<Variables>,
     pub yes: bool,
     pub retry: bool,
+    pub reuse_connection: bool,
 }
 
 impl TelemetryDescribe for ApplyMigration {
@@ -20,6 +21,7 @@ impl TelemetryDescribe for ApplyMigration {
             ("opt_pinned", self.pinned.to_string()),
             ("has_variables", self.variables.is_some().to_string()),
             ("apply_all", self.migration.is_none().to_string()),
+            ("opt_reuse_connection", self.reuse_connection.to_string()),
         ])
     }
 }
@@ -35,6 +37,14 @@ impl Command for ApplyMigration {
         };
 
         let total = migrations.len();
+
+        // Optionally reuse the same engine (database connection) across all migrations
+        let shared_engine = if self.reuse_connection {
+            Some(config.new_engine().await?)
+        } else {
+            None
+        };
+
         for (i, migration) in migrations.into_iter().enumerate() {
             let counter = if total > 1 {
                 format!(
@@ -49,7 +59,15 @@ impl Command for ApplyMigration {
             let mgrtr = Migrator::new(config, &migration, self.pinned);
             match mgrtr.generate_streaming(self.variables.clone()).await {
                 Ok(streaming) => {
-                    let engine = config.new_engine().await?;
+                    // Use shared engine if reuse_connection is enabled, otherwise create new
+                    let new_engine: Option<Box<dyn Engine>>;
+                    let engine: &dyn Engine = match &shared_engine {
+                        Some(e) => e.as_ref(),
+                        None => {
+                            new_engine = Some(config.new_engine().await?);
+                            new_engine.as_ref().unwrap().as_ref()
+                        }
+                    };
                     let write_fn = streaming.into_writer_fn();
                     match engine
                         .migration_apply(

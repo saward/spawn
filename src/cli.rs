@@ -133,6 +133,11 @@ pub enum MigrationCommands {
         /// Retry a previously failed migration
         #[arg(long)]
         retry: bool,
+
+        /// Reuse the same database connection across all migrations.
+        /// Can significantly speed up applying many migrations.
+        #[arg(long)]
+        reuse_connection: bool,
     },
     /// Mark a migration as applied without actually running it.
     /// Useful when a migration was applied manually and needs to be recorded.
@@ -168,12 +173,14 @@ impl TelemetryDescribe for MigrationCommands {
                 variables,
                 migration,
                 retry,
+                reuse_connection,
                 ..
             } => TelemetryInfo::new("apply").with_properties(vec![
                 ("opt_no_pin", no_pin.to_string()),
                 ("opt_retry", retry.to_string()),
                 ("has_variables", variables.is_some().to_string()),
                 ("apply_all", migration.is_none().to_string()),
+                ("opt_reuse_connection", reuse_connection.to_string()),
             ]),
             MigrationCommands::Adopt { .. } => TelemetryInfo::new("adopt"),
             MigrationCommands::Status => TelemetryInfo::new("status"),
@@ -332,6 +339,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                     variables,
                     yes,
                     retry,
+                    reuse_connection,
                 }) => {
                     let vars = match variables {
                         Some(vars_path) => Some(config.load_variables_from_path(&vars_path).await?),
@@ -343,6 +351,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                         variables: vars,
                         yes,
                         retry,
+                        reuse_connection,
                     }
                     .execute(config)
                     .await
