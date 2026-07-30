@@ -72,7 +72,13 @@ where
     };
 
     rt.block_on(async {
-        let service = Fs::default().root(".");
+        // In tests, use static/example; in production, use current directory
+        #[cfg(test)]
+        let root = "static/example";
+        #[cfg(not(test))]
+        let root = ".";
+
+        let service = Fs::default().root(root);
         let op = match Operator::new(service) {
             Ok(op) => op.finish(),
             Err(_) => return Vec::new(),
@@ -94,10 +100,28 @@ mod tests {
     use std::ffi::OsString;
 
     #[test]
-    fn test_complete_migrations_returns_empty_without_config() {
-        // When run from repo root without spawn.toml, should return empty
+    fn test_complete_migrations() {
         let result = complete_migrations(&OsString::new());
-        // Just verify it doesn't panic - result depends on working directory
-        let _ = result;
+
+        // static/example has one migration: 20240907212659-initial
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].get_value().to_str().unwrap(),
+            "20240907212659-initial"
+        );
+    }
+
+    #[test]
+    fn test_complete_tests() {
+        let result = complete_tests(&OsString::new());
+
+        // static/example has two tests
+        assert_eq!(result.len(), 2);
+        let names: Vec<_> = result
+            .iter()
+            .map(|c| c.get_value().to_str().unwrap())
+            .collect();
+        assert!(names.contains(&"20250607115200-example-test"));
+        assert!(names.contains(&"20250607115201-example-test"));
     }
 }
