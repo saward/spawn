@@ -75,6 +75,8 @@ User-facing documentation lives in `docs/src/content/docs/`. When adding or chan
 3. Document behavior in a dedicated section if the flag has non-trivial semantics.
 4. Add an example in the "Examples" section showing typical usage.
 
+When updating CLI tool or other docs, ensure that you also update the sidebar in `docs/astro.config.mjs`.
+
 ## Conventions
 
 - Migration apply defaults to `pinned: true`. Unpinned migrations must use `--no-pin`.

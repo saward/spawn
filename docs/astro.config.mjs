@@ -59,6 +59,7 @@ export default defineConfig({
             { label: "CI/CD", slug: "reference/ci-cd" },
             { label: "Configuration File", slug: "reference/config" },
             { label: "Roadmap", slug: "reference/roadmap" },
+            { label: "Shell Completions", slug: "reference/completions" },
             { label: "Templating", slug: "reference/templating" },
           ],
         },
