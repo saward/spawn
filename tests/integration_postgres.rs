@@ -590,7 +590,7 @@ COMMIT;"#,
     helper.adopt_migration(&adopted_migration).await?;
 
     // Create a migration but don't apply it
-    let pending_migration = helper
+    let _ = helper
         .migration_helper
         .create_migration_manual(
             "pending-migration",

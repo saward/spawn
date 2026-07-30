@@ -1,5 +1,5 @@
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use opendal::services::Fs;
 use opendal::Operator;
 use spawn_db::cli::{run_cli, Cli};
@@ -7,6 +7,18 @@ use spawn_db::commands::{Outcome, TelemetryDescribe};
 use spawn_db::telemetry::{self, CommandStatus, TelemetryRecorder};
 
 fn main() -> Result<()> {
+    let bin_name: &'static str = std::env::args()
+        .next()
+        .and_then(|s| {
+            std::path::Path::new(&s)
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "spawn".to_string())
+        .leak();
+
+    clap_complete::CompleteEnv::with_factory(|| Cli::command().name(bin_name)).complete();
+
     let cli = Cli::parse();
 
     // Handle internal telemetry child process (runs synchronously, no tokio runtime)

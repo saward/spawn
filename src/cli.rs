@@ -3,11 +3,13 @@ use crate::commands::{
     ExpectTest, Init, MigrationStatus, NewMigration, NewTest, Outcome, PinMigration, RunTest,
     TelemetryDescribe, TelemetryInfo,
 };
-use crate::config::Config;
+use crate::completions::{complete_migrations, complete_tests};
+use crate::config::{Config, DEFAULT_CONFIG_FILE};
 use opendal::Operator;
 
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
+use clap_complete::ArgValueCompleter;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -16,7 +18,7 @@ pub struct Cli {
     #[arg(short, long)]
     pub debug: bool,
 
-    #[arg(global = true, short, long, default_value = "spawn.toml")]
+    #[arg(global = true, short, long, default_value = DEFAULT_CONFIG_FILE)]
     pub config_file: String,
 
     #[arg(global = true, long)]
@@ -97,6 +99,7 @@ pub enum MigrationCommands {
     /// Pin a migration with current components
     Pin {
         /// Migration to pin
+        #[arg(add = ArgValueCompleter::new(complete_migrations))]
         migration: String,
     },
     /// Build a migration into SQL
@@ -106,6 +109,7 @@ pub enum MigrationCommands {
         pinned: bool,
         /// Migration to build.  Looks for up.sql inside this specified
         /// migration folder.
+        #[arg(add = ArgValueCompleter::new(complete_migrations))]
         migration: String,
         /// Path to a variables file (JSON, TOML, or YAML) to use for templating.
         /// Overrides the variables_file setting in spawn.toml.
@@ -119,6 +123,7 @@ pub enum MigrationCommands {
         #[arg(long)]
         no_pin: bool,
 
+        #[arg(add = ArgValueCompleter::new(complete_migrations))]
         migration: Option<String>,
 
         /// Path to a variables file (JSON, TOML, or YAML) to use for templating.
@@ -143,6 +148,7 @@ pub enum MigrationCommands {
     /// Useful when a migration was applied manually and needs to be recorded.
     Adopt {
         /// Migration to adopt
+        #[arg(add = ArgValueCompleter::new(complete_migrations))]
         migration: Option<String>,
 
         /// Skip confirmation prompt
@@ -196,17 +202,21 @@ pub enum TestCommands {
         name: String,
     },
     Build {
+        #[arg(add = ArgValueCompleter::new(complete_tests))]
         name: String,
     },
     /// Run a particular test, or all tests if no name provided.
     Run {
+        #[arg(add = ArgValueCompleter::new(complete_tests))]
         name: Option<String>,
     },
     /// Run tests and compare to expected.  Runs all tests if no name provided.
     Compare {
+        #[arg(add = ArgValueCompleter::new(complete_tests))]
         name: Option<String>,
     },
     Expect {
+        #[arg(add = ArgValueCompleter::new(complete_tests))]
         name: String,
     },
 }

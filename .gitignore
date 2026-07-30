@@ -6,3 +6,4 @@ CURRENT.md
 /play
 
 .DS_Store
+build_test.sh
