@@ -18,6 +18,13 @@ pub struct MigrationFileStatus {
     pub has_lock_toml: bool,
 }
 
+/// Filesystem-level status of a single test.
+#[derive(Debug, Clone)]
+pub struct TestFileStatus {
+    pub has_test_sql: bool,
+    pub has_expected: bool,
+}
+
 /// Get the filesystem status of a single migration.
 /// Returns the status indicating whether up.sql and lock.toml files exist.
 pub async fn get_migration_fs_status(
@@ -96,6 +103,60 @@ pub async fn list_migration_fs_status(
             status.has_up_sql = true;
         } else if filename == "lock.toml" {
             status.has_lock_toml = true;
+        }
+    }
+
+    Ok(result)
+}
+
+/// Scan the tests folder and return the filesystem status of each test,
+/// keyed by test name. This does not touch the database.
+/// Performs a single recursive list for efficiency with remote storage.
+///
+/// If `test_name` is provided, only lists that specific test folder.
+/// Otherwise lists all tests.
+pub async fn list_test_fs_status(
+    op: &Operator,
+    pather: &FolderPather,
+    test_name: Option<&str>,
+) -> Result<BTreeMap<String, TestFileStatus>> {
+    let tests_folder = pather.tests_folder();
+    let normalized_folder = tests_folder
+        .trim_start_matches("./")
+        .trim_start_matches('/');
+    let tests_prefix = if let Some(name) = test_name {
+        format!("{}/{}/", normalized_folder, name)
+    } else {
+        format!("{}/", normalized_folder)
+    };
+
+    let mut lister = op
+        .lister_with(&tests_prefix)
+        .recursive(true)
+        .await
+        .context("listing tests")?;
+
+    let mut result: BTreeMap<String, TestFileStatus> = BTreeMap::new();
+
+    while let Some(entry) = lister.try_next().await? {
+        let path = entry.path().to_string();
+        let relative_path = path.strip_prefix(&tests_prefix).unwrap_or(&path);
+
+        let (name, filename) = match relative_path.split_once('/') {
+            Some((name, filename)) => (name, filename),
+            None if test_name.is_some() => (test_name.unwrap(), relative_path),
+            None => continue,
+        };
+
+        let status = result.entry(name.to_string()).or_insert(TestFileStatus {
+            has_test_sql: false,
+            has_expected: false,
+        });
+
+        if filename == "test.sql" {
+            status.has_test_sql = true;
+        } else if filename == "expected" {
+            status.has_expected = true;
         }
     }
 

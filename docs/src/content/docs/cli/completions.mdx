@@ -1,0 +1,84 @@
+---
+title: Shell Completions
+description: Enable tab completion for spawn commands.
+---
+
+Spawn supports dynamic shell completions for Bash, Zsh, Fish, PowerShell, and Elvish. Completions are context-aware and include migration names, test names, and all command options.
+
+## Features
+
+- **Dynamic completions**: Always reflects current migrations and tests in your project
+- **Fuzzy-friendly**: Works with shell fuzzy finders like fzf-tab
+
+## Setup
+
+### Zsh
+
+Add to your `~/.zshrc`:
+
+```zsh
+# Initialize zsh completion system (skip if using oh-my-zsh, prezto, etc.)
+autoload -Uz compinit && compinit
+
+source <(COMPLETE=zsh spawn)
+```
+
+If you're using a zsh framework like oh-my-zsh or prezto, it already initializes `compinit`, so you only need the `source` line.
+
+### Bash
+
+Add to your `~/.bashrc`:
+
+```bash
+source <(COMPLETE=bash spawn)
+```
+
+### Fish
+
+Add to your Fish config (`~/.config/fish/config.fish`):
+
+```fish
+COMPLETE=fish spawn | source
+```
+
+### PowerShell
+
+Add to your PowerShell profile:
+
+```powershell
+Invoke-Expression (& { $env:COMPLETE="powershell"; spawn })
+```
+
+### Elvish
+
+Add to your Elvish config:
+
+```elvish
+eval (COMPLETE=elvish spawn | slurp)
+```
+
+## Usage
+
+After setup, use Tab to complete:
+
+```bash
+# Complete subcommands
+spawn migr<TAB>
+# → spawn migration
+
+# Complete migration names
+spawn migration build <TAB>
+# → 20260102030405-add-users
+# → 20260103120000-create-posts
+
+# Complete test names
+spawn test run <TAB>
+# → my-test
+# → another-test
+```
+
+## Fuzzy Finder Integration
+
+When working with many timestamped migrations, a fuzzy finder like [fzf-tab](https://github.com/Aloxaf/fzf-tab) can help you quickly filter by typing any part of the migration name.
+
+With fzf-tab installed, pressing Tab opens an interactive fzf menu where you can type `add-users` to filter to `20260102030405-add-users`, even though the completion value starts with a timestamp.

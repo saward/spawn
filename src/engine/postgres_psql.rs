@@ -550,7 +550,7 @@ impl PSQL {
 
         // Create a config to use for generating using spawn templating
         // engine.
-        let mut cfg = crate::config::Config::load("spawn.toml", &op, None)
+        let mut cfg = crate::config::Config::load(crate::config::DEFAULT_CONFIG_FILE, &op, None)
             .await
             .context("Failed to load config for postgres psql")?;
         let dbengtype = "psql".to_string();

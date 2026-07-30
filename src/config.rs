@@ -7,6 +7,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Default configuration file name.
+pub const DEFAULT_CONFIG_FILE: &str = "spawn.toml";
+
 static PINFILE_LOCK_NAME: &str = "lock.toml";
 
 // 1. The "Blueprint" struct. Use this for Deserialization.

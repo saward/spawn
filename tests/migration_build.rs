@@ -59,7 +59,7 @@ impl MigrationTestHelper {
         op: Operator,
         config_loader: ConfigLoaderSaver,
     ) -> Result<Self> {
-        let config_path = "./spawn.toml".to_string();
+        let config_path = format!("./{}", spawn_db::config::DEFAULT_CONFIG_FILE);
         let mth = Self {
             fs: op,
             config_path,
