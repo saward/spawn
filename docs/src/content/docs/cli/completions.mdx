@@ -16,9 +16,14 @@ Spawn supports dynamic shell completions for Bash, Zsh, Fish, PowerShell, and El
 
 Add to your `~/.zshrc`:
 
-```bash
+```zsh
+# Initialize zsh completion system (skip if using oh-my-zsh, prezto, etc.)
+autoload -Uz compinit && compinit
+
 source <(COMPLETE=zsh spawn)
 ```
+
+If you're using a zsh framework like oh-my-zsh or prezto, it already initializes `compinit`, so you only need the `source` line.
 
 ### Bash
 
