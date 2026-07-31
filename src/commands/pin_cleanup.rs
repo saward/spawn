@@ -4,17 +4,17 @@ use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::store::pinner::gc::gc_pinned;
 
-pub struct Gc {
+pub struct PinCleanup {
     pub dry_run: bool,
 }
 
-impl TelemetryDescribe for Gc {
+impl TelemetryDescribe for PinCleanup {
     fn telemetry(&self) -> TelemetryInfo {
-        TelemetryInfo::new("gc").with_properties(vec![("dry_run", self.dry_run.to_string())])
+        TelemetryInfo::new("cleanup").with_properties(vec![("dry_run", self.dry_run.to_string())])
     }
 }
 
-impl Command for Gc {
+impl Command for PinCleanup {
     async fn execute(&self, config: &Config) -> Result<Outcome> {
         let pather = config.pather();
         let fs = config.operator();
@@ -48,7 +48,7 @@ impl Command for Gc {
             );
         }
 
-        Ok(Outcome::Gc {
+        Ok(Outcome::PinCleanup {
             orphaned: result.orphaned,
             referenced_count: result.referenced_count,
             dry_run: result.dry_run,

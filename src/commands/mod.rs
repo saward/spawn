@@ -2,18 +2,18 @@ use crate::config::Config;
 use anyhow::Result;
 
 pub mod check;
-pub mod gc;
 pub mod init;
 pub mod migration;
+pub mod pin_cleanup;
 pub mod test;
 
 pub use check::Check;
-pub use gc::Gc;
 pub use init::Init;
 pub use migration::{
     AdoptMigration, ApplyMigration, BuildMigration, MigrationStatus, NewMigration, PinError,
     PinMigration,
 };
+pub use pin_cleanup::PinCleanup;
 pub use test::{BuildTest, CompareTests, ExpectTest, NewTest, RunTest};
 
 /// Telemetry information for a command.
@@ -63,7 +63,7 @@ pub enum Outcome {
         pinned_warn: bool,
     },
     CheckFailed,
-    Gc {
+    PinCleanup {
         /// Hashes that were deleted (or would be deleted in dry-run mode).
         orphaned: Vec<String>,
         /// Total number of hashes that are still referenced.

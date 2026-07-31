@@ -1,5 +1,5 @@
 ---
-title: spawn gc
+title: spawn pin cleanup
 description: Clean up orphaned pinned files that are no longer referenced by any migration.
 ---
 
@@ -7,7 +7,7 @@ import CLICommand from "../../../components/CLICommand.astro";
 import { globalOptions, targetOption } from "../../../components/cli-options";
 
 <CLICommand
-  usage="spawn gc [--dry-run]"
+  usage="spawn pin cleanup [--dry-run]"
   options={[
     {
       flag: "--dry-run",
@@ -25,7 +25,7 @@ Over time, your `pinned/` directory may accumulate orphaned files – snapshots
 - Delete a migration
 - Re-pin a migration after changing components
 
-The `gc` command identifies and removes these orphaned files to reclaim disk space and keep your repository clean.
+The `cleanup` command identifies and removes these orphaned files to reclaim disk space and keep your repository clean.
 
 ## Behavior
 
@@ -39,7 +39,7 @@ The `gc` command identifies and removes these orphaned files to reclaim disk spa
 ### Preview what would be deleted
 
 ```bash
-spawn gc --dry-run
+spawn pin cleanup --dry-run
 ```
 
 Output:
@@ -59,7 +59,7 @@ Run without --dry-run to delete orphaned files.
 ### Delete orphaned files
 
 ```bash
-spawn gc
+spawn pin cleanup
 ```
 
 Output:
@@ -72,7 +72,7 @@ Deleted 4 orphaned pinned file(s).
 ### Nothing to clean up
 
 ```bash
-spawn gc
+spawn pin cleanup
 ```
 
 Output:
@@ -83,7 +83,7 @@ No orphaned pinned files found. Nothing to clean up.
 
 ## When to run
 
-- **Before committing**: Run `spawn gc --dry-run` to check if there are orphans worth cleaning up
+- **Before committing**: Run `spawn pin cleanup --dry-run` to check if there are orphans worth cleaning up
 - **After deleting migrations**: Clean up pinned files that are no longer needed
 - **Periodically**: As part of repository maintenance
 

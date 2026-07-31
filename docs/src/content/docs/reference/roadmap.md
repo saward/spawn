@@ -60,7 +60,7 @@ This is a high-level overview of where Spawn is headed. Items here are subject t
 
 - 🔄 **Pin checkout** - `spawn pin checkout <pin_hash>` to restore component states
 - 🔄 **Pin diffing** - `spawn pin diff <migration1> <migration2>` between migrations
-- 🔄 **Pin cleanup** - `spawn pin report --unused` to find orphaned objects
+- ✅ **Pin cleanup** - `spawn pin cleanup` to remove orphaned pinned objects
 - 🔄 **Pin validation** - Verify integrity of all pinned objects
 - 🔄 **Component change tracking** - Report components with unapplied changes
 - 🔄 **Environment-specific pinning** - Per-environment pin requirements

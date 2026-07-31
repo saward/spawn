@@ -4,7 +4,9 @@ use opendal::services::Memory;
 use opendal::Operator;
 use pretty_assertions::assert_eq;
 use spawn_db::{
-    commands::{BuildMigration, Check, Command, Gc, NewMigration, Outcome, PinError, PinMigration},
+    commands::{
+        BuildMigration, Check, Command, NewMigration, Outcome, PinCleanup, PinError, PinMigration,
+    },
     config::{Config, ConfigLoaderSaver},
     engine::{CommandSpec, EngineType, TargetConfig},
     store,
@@ -601,7 +603,7 @@ COMMIT;"#;
 }
 
 #[tokio::test]
-async fn test_gc_no_orphans() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_pin_cleanup_no_orphans() -> Result<(), Box<dyn std::error::Error>> {
     let helper = MigrationTestHelper::new_empty().await?;
 
     // Create and pin a migration
@@ -611,17 +613,17 @@ async fn test_gc_no_orphans() -> Result<(), Box<dyn std::error::Error>> {
     let config = helper.load_config().await?;
     let files_before = helper.collect_all_files().await?;
 
-    // Run GC - should find no orphans and change nothing
-    let cmd = Gc { dry_run: false };
+    // Run cleanup - should find no orphans and change nothing
+    let cmd = PinCleanup { dry_run: false };
     let outcome = cmd.execute(&config).await?;
 
-    let Outcome::Gc {
+    let Outcome::PinCleanup {
         orphaned,
         referenced_count,
         dry_run,
     } = outcome
     else {
-        panic!("Expected Outcome::Gc");
+        panic!("Expected Outcome::PinCleanup");
     };
 
     assert!(orphaned.is_empty(), "should have no orphans");
@@ -631,14 +633,14 @@ async fn test_gc_no_orphans() -> Result<(), Box<dyn std::error::Error>> {
     let files_after = helper.collect_all_files().await?;
     assert_eq!(
         files_before, files_after,
-        "GC should not change any files when there are no orphans"
+        "cleanup should not change any files when there are no orphans"
     );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_gc_finds_and_deletes_orphans() -> Result<(), Box<dyn std::error::Error>> {
+async fn test_pin_cleanup_finds_and_deletes_orphans() -> Result<(), Box<dyn std::error::Error>> {
     let helper =
         MigrationTestHelper::new_from_local_folder("./static/tests/gc_clean_unreffed_pin").await?;
 
@@ -646,17 +648,17 @@ async fn test_gc_finds_and_deletes_orphans() -> Result<(), Box<dyn std::error::E
 
     let files_before = helper.collect_all_files().await?;
 
-    // Run GC dry-run - should report orphans but not delete anything
-    let cmd = Gc { dry_run: true };
+    // Run cleanup dry-run - should report orphans but not delete anything
+    let cmd = PinCleanup { dry_run: true };
     let outcome = cmd.execute(&config).await?;
 
-    let Outcome::Gc {
+    let Outcome::PinCleanup {
         orphaned,
         referenced_count,
         dry_run,
     } = outcome
     else {
-        panic!("Expected Outcome::Gc");
+        panic!("Expected Outcome::PinCleanup");
     };
 
     assert_eq!(orphaned.len(), 4, "dry-run should report 4 orphans");
@@ -669,28 +671,28 @@ async fn test_gc_finds_and_deletes_orphans() -> Result<(), Box<dyn std::error::E
         "dry-run should not change any files"
     );
 
-    // Run GC for real - should delete orphaned pinned files
-    let cmd = Gc { dry_run: false };
+    // Run cleanup for real - should delete orphaned pinned files
+    let cmd = PinCleanup { dry_run: false };
     let outcome = cmd.execute(&config).await?;
 
-    let Outcome::Gc {
+    let Outcome::PinCleanup {
         orphaned,
         referenced_count,
         dry_run,
     } = outcome
     else {
-        panic!("Expected Outcome::Gc");
+        panic!("Expected Outcome::PinCleanup");
     };
 
     assert_eq!(orphaned.len(), 4, "should delete 4 orphans");
     assert_eq!(referenced_count, 2, "should have 2 referenced files");
     assert!(!dry_run);
 
-    let files_after_gc = helper.collect_all_files().await?;
+    let files_after_cleanup = helper.collect_all_files().await?;
     assert_eq!(
         files_before.len() - 4,
-        files_after_gc.len(),
-        "GC should delete 4 orphaned pinned files"
+        files_after_cleanup.len(),
+        "cleanup should delete 4 orphaned pinned files"
     );
 
     Ok(())
