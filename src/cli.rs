@@ -1,6 +1,6 @@
 use crate::commands::{
     AdoptMigration, ApplyMigration, BuildMigration, BuildTest, Check, Command, CompareTests,
-    ExpectTest, Init, MigrationStatus, NewMigration, NewTest, Outcome, PinMigration, RunTest,
+    ExpectTest, Gc, Init, MigrationStatus, NewMigration, NewTest, Outcome, PinMigration, RunTest,
     TelemetryDescribe, TelemetryInfo,
 };
 use crate::completions::{complete_migrations, complete_tests};
@@ -52,6 +52,12 @@ pub enum Commands {
     },
     /// Check for potential issues (unpinned migrations, etc.)
     Check,
+    /// Clean up orphaned pinned files that are no longer referenced by any migration
+    Gc {
+        /// Show what would be deleted without actually deleting
+        #[arg(long)]
+        dry_run: bool,
+    },
     Migration {
         #[command(subcommand)]
         command: Option<MigrationCommands>,
@@ -69,6 +75,9 @@ impl TelemetryDescribe for Commands {
         match self {
             Commands::Init { .. } => TelemetryInfo::new("init"),
             Commands::Check => TelemetryInfo::new("check"),
+            Commands::Gc { dry_run } => {
+                TelemetryInfo::new("gc").with_properties(vec![("dry_run", dry_run.to_string())])
+            }
             Commands::Migration { command, .. } => match command {
                 Some(cmd) => {
                     let mut info = cmd.telemetry();
@@ -314,6 +323,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
     match cli.command {
         Some(Commands::Init { .. }) => unreachable!(), // Already handled in run_cli
         Some(Commands::Check) => Check.execute(config).await,
+        Some(Commands::Gc { dry_run }) => Gc { dry_run }.execute(config).await,
         Some(Commands::Migration {
             command,
             environment,

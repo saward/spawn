@@ -2,11 +2,13 @@ use crate::config::Config;
 use anyhow::Result;
 
 pub mod check;
+pub mod gc;
 pub mod init;
 pub mod migration;
 pub mod test;
 
 pub use check::Check;
+pub use gc::Gc;
 pub use init::Init;
 pub use migration::{
     AdoptMigration, ApplyMigration, BuildMigration, MigrationStatus, NewMigration, PinError,
@@ -56,11 +58,24 @@ pub trait Command: TelemetryDescribe {
 pub enum Outcome {
     AdoptedMigration,
     AppliedMigrations,
-    BuiltMigration { content: String, pinned_warn: bool },
+    BuiltMigration {
+        content: String,
+        pinned_warn: bool,
+    },
     CheckFailed,
+    Gc {
+        /// Hashes that were deleted (or would be deleted in dry-run mode).
+        orphaned: Vec<String>,
+        /// Total number of hashes that are still referenced.
+        referenced_count: usize,
+        /// Whether this was a dry run.
+        dry_run: bool,
+    },
     NewMigration(String),
     NewTest(String),
-    PinnedMigration { hash: String },
+    PinnedMigration {
+        hash: String,
+    },
     Success,
     Unimplemented,
 }
