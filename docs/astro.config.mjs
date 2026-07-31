@@ -68,6 +68,7 @@ export default defineConfig({
           items: [
             { label: "spawn init", slug: "cli/init" },
             { label: "spawn check", slug: "cli/check" },
+            { label: "spawn gc", slug: "cli/gc" },
             {
               label: "Migration",
               items: [
