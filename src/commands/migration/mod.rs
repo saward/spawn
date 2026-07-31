@@ -9,7 +9,7 @@ pub use adopt::AdoptMigration;
 pub use apply::ApplyMigration;
 pub use build::BuildMigration;
 pub use new::NewMigration;
-pub use pin::PinMigration;
+pub use pin::{PinError, PinMigration};
 pub use status::MigrationStatus;
 
 pub const DEFAULT_NAMESPACE: &str = "default";
