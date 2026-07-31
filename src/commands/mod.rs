@@ -9,7 +9,8 @@ pub mod test;
 pub use check::Check;
 pub use init::Init;
 pub use migration::{
-    AdoptMigration, ApplyMigration, BuildMigration, MigrationStatus, NewMigration, PinMigration,
+    AdoptMigration, ApplyMigration, BuildMigration, MigrationStatus, NewMigration, PinError,
+    PinMigration,
 };
 pub use test::{BuildTest, CompareTests, ExpectTest, NewTest, RunTest};
 

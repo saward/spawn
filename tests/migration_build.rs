@@ -4,7 +4,7 @@ use opendal::services::Memory;
 use opendal::Operator;
 use pretty_assertions::assert_eq;
 use spawn_db::{
-    commands::{BuildMigration, Check, Command, NewMigration, Outcome, PinMigration},
+    commands::{BuildMigration, Check, Command, NewMigration, Outcome, PinError, PinMigration},
     config::{Config, ConfigLoaderSaver},
     engine::{CommandSpec, EngineType, TargetConfig},
     store,
@@ -446,6 +446,33 @@ async fn test_check_passes_when_all_pinned() -> Result<(), Box<dyn std::error::E
     let config = helper.load_config().await?;
     let outcome = Check.execute(&config).await?;
     assert!(matches!(outcome, Outcome::Success));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pin_fails_when_migration_does_not_exist() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    // Try to pin a migration that doesn't exist
+    let config = helper.load_config().await?;
+    let cmd = PinMigration {
+        migration: "nonexistent-migration".to_string(),
+    };
+
+    let Err(err) = cmd.execute(&config).await else {
+        panic!("Pinning a non-existent migration should fail");
+    };
+
+    // Check that the error is the specific PinError::MigrationNotFound type
+    let pin_error = err
+        .downcast_ref::<PinError>()
+        .expect("Error should be a PinError");
+    assert!(
+        matches!(pin_error, PinError::MigrationNotFound(_)),
+        "Expected PinError::MigrationNotFound, got: {:?}",
+        pin_error
+    );
 
     Ok(())
 }
