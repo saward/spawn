@@ -483,6 +483,14 @@ async fn test_pin_fails_when_migration_does_not_exist() -> Result<(), Box<dyn st
 
     // Capture files before attempting to pin
     let files_before = helper.collect_all_files().await?;
+    let component_path = format!("{}/example.sql", config.pather().components_folder());
+    // Strip leading slash since collect_all_files returns paths without it
+    let component_path = component_path.trim_start_matches('/');
+    assert!(
+        files_before.contains_key(component_path),
+        "Component file should exist at {}",
+        component_path
+    );
 
     // Try to pin a migration that doesn't exist
     let cmd = PinMigration {
