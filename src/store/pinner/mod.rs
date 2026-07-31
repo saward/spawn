@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use twox_hash::xxhash3_128;
 
+pub mod gc;
 pub mod latest;
 pub mod spawn;
 
@@ -43,11 +44,7 @@ pub struct Entry {
     pub name: String,
 }
 
-pub(crate) async fn pin_contents(
-    fs: &Operator,
-    store_path: &str,
-    contents: &[u8],
-) -> Result<String> {
+pub async fn pin_contents(fs: &Operator, store_path: &str, contents: &[u8]) -> Result<String> {
     let hash = xxhash3_128::Hasher::oneshot(contents);
     let hash = format!("{:032x}", hash);
     let dir = format!("{}/{}", store_path, hash_to_path(&hash)?);
@@ -58,7 +55,7 @@ pub(crate) async fn pin_contents(
 }
 
 /// Converts a hash string into a relative path like `c6/b8e869fa533155bbf2f0dd8fda9c68`.
-pub(crate) fn hash_to_path(hash: &str) -> Result<String> {
+pub fn hash_to_path(hash: &str) -> Result<String> {
     if hash.len() < 3 {
         return Err(anyhow::anyhow!("Hash too short"));
     }

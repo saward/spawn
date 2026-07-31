@@ -1,0 +1,96 @@
+---
+title: spawn pin cleanup
+description: Clean up orphaned pinned files that are no longer referenced by any migration.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import { globalOptions, targetOption } from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn pin cleanup [--dry-run]"
+  options={[
+    {
+      flag: "--dry-run",
+      description: "Show what would be deleted without actually deleting any files.",
+    },
+    ...targetOption,
+    ...globalOptions,
+  ]}
+>
+
+## Overview
+
+Over time, your `pinned/` directory may accumulate orphaned files – snapshots of components that are no longer referenced by any migration's `lock.toml`. This can happen when you:
+
+- Delete a migration
+- Re-pin a migration after changing components
+
+The `cleanup` command identifies and removes these orphaned files to reclaim disk space and keep your repository clean.
+
+## Behavior
+
+1. Scans all migrations for `lock.toml` files
+2. Walks the tree structure of each pinned snapshot to find all referenced hashes
+3. Lists all files in the `pinned/` directory
+4. Deletes files that exist in `pinned/` but aren't referenced by any migration
+
+## Examples
+
+### Preview what would be deleted
+
+```bash
+spawn pin cleanup --dry-run
+```
+
+Output:
+
+```
+Would delete 4 orphaned pinned file(s):
+  7a3f5e8b9c2d1a4e6f8b0c2d4e6f8a0b
+  93b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8
+  c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6
+  fd1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a
+
+2 pinned file(s) are still referenced by migrations.
+
+Run without --dry-run to delete orphaned files.
+```
+
+### Delete orphaned files
+
+```bash
+spawn pin cleanup
+```
+
+Output:
+
+```
+Deleted 4 orphaned pinned file(s).
+2 pinned file(s) are still referenced by migrations.
+```
+
+### Nothing to clean up
+
+```bash
+spawn pin cleanup
+```
+
+Output:
+
+```
+No orphaned pinned files found. Nothing to clean up.
+```
+
+## When to run
+
+- **Before committing**: Run `spawn pin cleanup --dry-run` to check if there are orphans worth cleaning up
+- **After deleting migrations**: Clean up pinned files that are no longer needed
+- **Periodically**: As part of repository maintenance
+
+## Safety
+
+The command only deletes files in the `pinned/` directory that are provably unreferenced. Files referenced by any migration's `lock.toml` are never deleted.
+
+Use `--dry-run` first if you want to review what will be removed.
+
+</CLICommand>

@@ -1,7 +1,7 @@
 use crate::commands::{
     AdoptMigration, ApplyMigration, BuildMigration, BuildTest, Check, Command, CompareTests,
-    ExpectTest, Init, MigrationStatus, NewMigration, NewTest, Outcome, PinMigration, RunTest,
-    TelemetryDescribe, TelemetryInfo,
+    ExpectTest, Init, MigrationStatus, NewMigration, NewTest, Outcome, PinCleanup, PinMigration,
+    RunTest, TelemetryDescribe, TelemetryInfo,
 };
 use crate::completions::{complete_migrations, complete_tests};
 use crate::config::{Config, DEFAULT_CONFIG_FILE};
@@ -52,6 +52,10 @@ pub enum Commands {
     },
     /// Check for potential issues (unpinned migrations, etc.)
     Check,
+    Pin {
+        #[command(subcommand)]
+        command: Option<PinCommands>,
+    },
     Migration {
         #[command(subcommand)]
         command: Option<MigrationCommands>,
@@ -69,6 +73,14 @@ impl TelemetryDescribe for Commands {
         match self {
             Commands::Init { .. } => TelemetryInfo::new("init"),
             Commands::Check => TelemetryInfo::new("check"),
+            Commands::Pin { command } => match command {
+                Some(cmd) => {
+                    let mut info = cmd.telemetry();
+                    info.label = format!("pin {}", info.label);
+                    info
+                }
+                None => TelemetryInfo::new("pin"),
+            },
             Commands::Migration { command, .. } => match command {
                 Some(cmd) => {
                     let mut info = cmd.telemetry();
@@ -195,6 +207,25 @@ impl TelemetryDescribe for MigrationCommands {
 }
 
 #[derive(Subcommand)]
+pub enum PinCommands {
+    /// Clean up orphaned pinned files that are no longer referenced by any migration
+    Cleanup {
+        /// Show what would be deleted without actually deleting
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+impl TelemetryDescribe for PinCommands {
+    fn telemetry(&self) -> TelemetryInfo {
+        match self {
+            PinCommands::Cleanup { dry_run } => TelemetryInfo::new("cleanup")
+                .with_properties(vec![("dry_run", dry_run.to_string())]),
+        }
+    }
+}
+
+#[derive(Subcommand)]
 pub enum TestCommands {
     /// Create a new test with the provided name
     New {
@@ -314,6 +345,13 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
     match cli.command {
         Some(Commands::Init { .. }) => unreachable!(), // Already handled in run_cli
         Some(Commands::Check) => Check.execute(config).await,
+        Some(Commands::Pin { command }) => match command {
+            Some(PinCommands::Cleanup { dry_run }) => PinCleanup { dry_run }.execute(config).await,
+            None => {
+                eprintln!("No pin subcommand specified");
+                Ok(Outcome::Unimplemented)
+            }
+        },
         Some(Commands::Migration {
             command,
             environment,
