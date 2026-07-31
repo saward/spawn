@@ -208,6 +208,23 @@ impl MigrationTestHelper {
 
         Ok(())
     }
+
+    /// Collect all files and their contents as a map for comparison
+    pub async fn collect_all_files(&self) -> Result<HashMap<String, Vec<u8>>> {
+        let mut lister = self.fs.lister_with("/").recursive(true).await?;
+        let mut files = HashMap::new();
+
+        while let Some(entry) = lister.try_next().await? {
+            // Skip directories
+            if entry.path().ends_with('/') {
+                continue;
+            }
+            let file_data = self.fs.read(entry.path()).await?.to_bytes().to_vec();
+            files.insert(entry.path().to_string(), file_data);
+        }
+
+        Ok(files)
+    }
 }
 
 // Run a create migration test:
@@ -454,8 +471,20 @@ async fn test_check_passes_when_all_pinned() -> Result<(), Box<dyn std::error::E
 async fn test_pin_fails_when_migration_does_not_exist() -> Result<(), Box<dyn std::error::Error>> {
     let helper = MigrationTestHelper::new_empty().await?;
 
-    // Try to pin a migration that doesn't exist
+    // Add a component so that pinning would create files if it ran
     let config = helper.load_config().await?;
+    helper
+        .fs
+        .write(
+            &format!("{}/example.sql", config.pather().components_folder()),
+            "SELECT 1;",
+        )
+        .await?;
+
+    // Capture files before attempting to pin
+    let files_before = helper.collect_all_files().await?;
+
+    // Try to pin a migration that doesn't exist
     let cmd = PinMigration {
         migration: "nonexistent-migration".to_string(),
     };
@@ -472,6 +501,13 @@ async fn test_pin_fails_when_migration_does_not_exist() -> Result<(), Box<dyn st
         matches!(pin_error, PinError::MigrationNotFound(_)),
         "Expected PinError::MigrationNotFound, got: {:?}",
         pin_error
+    );
+
+    // Verify no files were created or modified
+    let files_after = helper.collect_all_files().await?;
+    assert_eq!(
+        files_before, files_after,
+        "No files should be created or modified when pinning fails"
     );
 
     Ok(())
