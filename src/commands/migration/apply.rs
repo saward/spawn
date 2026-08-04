@@ -81,7 +81,7 @@ impl Command for ApplyMigration {
                     {
                         Ok(_) => {
                             println!(
-                                "{}Migration '{}' reverted successfully",
+                                "{}Migration '{}' applied successfully",
                                 &counter, &migration
                             );
                         }
@@ -95,7 +95,7 @@ impl Command for ApplyMigration {
                             MigrationError::PreviousAttemptFailed { status, info, .. } => {
                                 return Err(anyhow!(
                                     "Migration '{}' has a previous {} attempt (checksum: {}).\n\
-                                             Use `spawn migration revert --retry {}` to retry.",
+                                             Use `spawn migration apply --retry {}` to retry.",
                                     &migration,
                                     status,
                                     info.checksum,
@@ -104,10 +104,10 @@ impl Command for ApplyMigration {
                             }
 
                             MigrationError::Database(e) => {
-                                return Err(e.context(format!(
-                                    "Failed reverting migration {}",
-                                    &migration,
-                                )));
+                                return Err(e
+                                    .context(
+                                        format!("Failed applying migration {}", &migration,),
+                                    ));
                             }
 
                             MigrationError::AdvisoryLock(e) => {
