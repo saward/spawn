@@ -5,8 +5,8 @@
 use crate::config::FolderPather;
 use crate::engine::{
     resolve_command_spec, Engine, EngineError, ExistingMigrationInfo, MigrationActivity,
-    MigrationApplyResult, MigrationError, MigrationHistoryStatus, MigrationStatus, StdoutWriter,
-    TargetConfig, WriterFn,
+    MigrationApplyError, MigrationApplyResult, MigrationError, MigrationHistoryStatus,
+    MigrationRevertResult, MigrationStatus, StdoutWriter, TargetConfig, WriterFn,
 };
 use crate::escape::{EscapedIdentifier, EscapedLiteral, EscapedQuery, InsecureRawSql};
 use crate::sql_query;
@@ -313,6 +313,17 @@ impl Engine for PSQL {
         .await
     }
 
+    async fn migration_revert(
+        &self,
+        _migration_name: &str,
+        _write_fn: WriterFn,
+        _pin_hash: Option<String>,
+        _namespace: &str,
+        _retry: bool,
+    ) -> MigrationRevertResult<String> {
+        unimplemented!("migration_revert not yet implemented")
+    }
+
     async fn migration_adopt(
         &self,
         migration_name: &str,
@@ -325,7 +336,7 @@ impl Engine for PSQL {
         let existing_status = self
             .get_migration_status(migration_name, &namespace_lit)
             .await
-            .map_err(MigrationError::Database)?;
+            .map_err(|e| MigrationApplyError::from(MigrationError::Database(e)))?;
 
         if let Some(info) = existing_status {
             let name = migration_name.to_string();
@@ -333,7 +344,7 @@ impl Engine for PSQL {
 
             match info.last_status {
                 MigrationHistoryStatus::Success => {
-                    return Err(MigrationError::AlreadyApplied {
+                    return Err(MigrationApplyError::AlreadyApplied {
                         name,
                         namespace: ns,
                         info,
@@ -400,7 +411,7 @@ impl Engine for PSQL {
                 self.target_config.spawn_database.as_deref(),
             )
             .await
-            .map_err(MigrationError::Database)?;
+            .map_err(|e| MigrationApplyError::from(MigrationError::Database(e)))?;
 
         // Define a struct for JSON deserialization
         #[derive(Deserialize)]
@@ -420,11 +431,11 @@ impl Engine for PSQL {
         }
 
         let rows: Vec<MigrationRow> = serde_json::from_str(json_str).map_err(|e| {
-            MigrationError::Database(anyhow::anyhow!(
+            MigrationApplyError::from(MigrationError::Database(anyhow::anyhow!(
                 "Failed to parse JSON from database (output: '{}'): {}",
                 json_str,
                 e
-            ))
+            )))
         })?;
 
         // Convert to MigrationDbInfo
@@ -606,7 +617,7 @@ impl PSQL {
             {
                 Ok(_) => {}
                 // For internal schema migrations, already applied is fine
-                Err(MigrationError::AlreadyApplied { .. }) => {}
+                Err(MigrationApplyError::AlreadyApplied { .. }) => {}
                 // Other errors should propagate
                 Err(e) => return Err(e.into()),
             }
@@ -811,15 +822,18 @@ impl PSQL {
             false, // Don't merge stderr for recording migrations
         )
         .await
-        .map_err(|e| match e {
-            EngineError::ExecutionFailed { exit_code, stderr } => {
-                MigrationError::Database(anyhow!(
-                    "Failed to record migration (exit {}): {}",
-                    exit_code,
-                    stderr
-                ))
+        .map_err(|e| -> MigrationApplyError {
+            match e {
+                EngineError::ExecutionFailed { exit_code, stderr } => {
+                    MigrationError::Database(anyhow!(
+                        "Failed to record migration (exit {}): {}",
+                        exit_code,
+                        stderr
+                    ))
+                    .into()
+                }
+                EngineError::Io(e) => MigrationError::Database(e.into()).into(),
             }
-            EngineError::Io(e) => MigrationError::Database(e.into()),
         })?;
 
         Ok(())
@@ -840,11 +854,11 @@ impl PSQL {
         let existing_status = if self
             .migration_history_table_exists()
             .await
-            .map_err(MigrationError::Database)?
+            .map_err(|e| MigrationApplyError::from(MigrationError::Database(e)))?
         {
             self.get_migration_status(migration_name, &namespace)
                 .await
-                .map_err(MigrationError::Database)?
+                .map_err(|e| MigrationApplyError::from(MigrationError::Database(e)))?
         } else {
             None
         };
@@ -856,7 +870,7 @@ impl PSQL {
 
                 match info.last_status {
                     MigrationHistoryStatus::Success => {
-                        return Err(MigrationError::AlreadyApplied {
+                        return Err(MigrationApplyError::AlreadyApplied {
                             name,
                             namespace: ns,
                             info,
@@ -868,7 +882,8 @@ impl PSQL {
                             namespace: ns,
                             status: info.last_status.clone(),
                             info,
-                        });
+                        }
+                        .into());
                     }
                 }
             }
@@ -923,7 +938,8 @@ impl PSQL {
                     return Err(MigrationError::AdvisoryLock(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         stderr.clone(),
-                    )));
+                    ))
+                    .into());
                 }
                 (
                     MigrationStatus::Failure,
@@ -931,10 +947,9 @@ impl PSQL {
                 )
             }
             Err(EngineError::Io(e)) => {
-                return Err(MigrationError::Database(anyhow!(
-                    "IO error running migration: {}",
-                    e
-                )));
+                return Err(
+                    MigrationError::Database(anyhow!("IO error running migration: {}", e)).into(),
+                );
             }
         };
 
@@ -961,7 +976,8 @@ impl PSQL {
                     migration_outcome: MigrationStatus::Success,
                     migration_error: None,
                     recording_error: format!("{}", record_err),
-                });
+                }
+                .into());
             }
             // Both migration and recording failed
             return Err(MigrationError::NotRecorded {
@@ -969,7 +985,8 @@ impl PSQL {
                 migration_outcome: MigrationStatus::Failure,
                 migration_error: migration_error.clone(),
                 recording_error: format!("{}", record_err),
-            });
+            }
+            .into());
         }
 
         // If the migration itself failed (but was recorded), return that error
@@ -978,7 +995,8 @@ impl PSQL {
                 "Migration '{}' failed: {}",
                 migration_name,
                 err_msg
-            )));
+            ))
+            .into());
         }
 
         Ok("Migration applied successfully".to_string())
