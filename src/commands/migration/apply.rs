@@ -1,7 +1,7 @@
 use crate::commands::migration::get_pending_and_confirm;
 use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
-use crate::engine::{Engine, MigrationError};
+use crate::engine::{Engine, MigrationApplyError, MigrationError};
 use crate::migrator::Migrator;
 use crate::variables::Variables;
 use anyhow::{anyhow, Result};
@@ -80,37 +80,47 @@ impl Command for ApplyMigration {
                         .await
                     {
                         Ok(_) => {
-                            println!("{}Migration '{}' applied successfully", counter, &migration);
+                            println!(
+                                "{}Migration '{}' reverted successfully",
+                                &counter, &migration
+                            );
                         }
-                        Err(MigrationError::AlreadyApplied { info, .. }) => {
+                        Err(MigrationApplyError::AlreadyApplied { info, .. }) => {
                             println!(
                                 "{}Migration '{}' already applied (status: {}, checksum: {})",
-                                counter, &migration, info.last_status, info.checksum
+                                &counter, &migration, info.last_status, info.checksum
                             );
                         }
-                        Err(MigrationError::PreviousAttemptFailed { status, info, .. }) => {
-                            return Err(anyhow!(
-                                "Migration '{}' has a previous {} attempt (checksum: {}).\n\
-                                 Use `spawn migration apply --retry {}` to retry.",
-                                &migration,
-                                status,
-                                info.checksum,
-                                &migration,
-                            ));
-                        }
-                        Err(MigrationError::Database(e)) => {
-                            return Err(
-                                e.context(format!("Failed applying migration {}", &migration))
-                            );
-                        }
-                        Err(MigrationError::AdvisoryLock(e)) => {
-                            return Err(
-                                anyhow!("Unable to obtain advisory lock for migration").context(e)
-                            );
-                        }
-                        Err(e @ MigrationError::NotRecorded { .. }) => {
-                            return Err(anyhow!("{}", e));
-                        }
+                        Err(MigrationApplyError::Common(common_error)) => match common_error {
+                            MigrationError::PreviousAttemptFailed { status, info, .. } => {
+                                return Err(anyhow!(
+                                    "Migration '{}' has a previous {} attempt (checksum: {}).\n\
+                                             Use `spawn migration revert --retry {}` to retry.",
+                                    &migration,
+                                    status,
+                                    info.checksum,
+                                    &migration,
+                                ));
+                            }
+
+                            MigrationError::Database(e) => {
+                                return Err(e.context(format!(
+                                    "Failed reverting migration {}",
+                                    &migration,
+                                )));
+                            }
+
+                            MigrationError::AdvisoryLock(e) => {
+                                return Err(anyhow!(
+                                    "Unable to obtain advisory lock for migration"
+                                )
+                                .context(e));
+                            }
+
+                            e @ MigrationError::NotRecorded { .. } => {
+                                return Err(anyhow!("{e}"));
+                            }
+                        },
                     }
                 }
                 Err(e) => {

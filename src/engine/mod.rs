@@ -92,14 +92,6 @@ pub struct MigrationDbInfo {
 /// Errors specific to migration operations
 #[derive(Debug, Error)]
 pub enum MigrationError {
-    /// Migration was already successfully applied
-    #[error("migration '{name}' in namespace '{namespace}' already applied successfully")]
-    AlreadyApplied {
-        name: String,
-        namespace: String,
-        info: ExistingMigrationInfo,
-    },
-
     /// Migration exists but last attempt was not successful
     #[error("migration '{name}' in namespace '{namespace}' has previous {status} status")]
     PreviousAttemptFailed {
@@ -128,6 +120,34 @@ pub enum MigrationError {
         migration_error: Option<String>,
         /// The error from recording the result
         recording_error: String,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum MigrationApplyError {
+    #[error(transparent)]
+    Common(#[from] MigrationError),
+
+    /// Migration was already successfully applied
+    #[error("migration '{name}' in namespace '{namespace}' already applied successfully")]
+    AlreadyApplied {
+        name: String,
+        namespace: String,
+        info: ExistingMigrationInfo,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum MigrationRevertError {
+    #[error(transparent)]
+    Common(#[from] MigrationError),
+
+    /// Migration was already successfully reverted
+    #[error("migration '{name}' in namespace '{namespace}' already reverted successfully")]
+    AlreadyReverted {
+        name: String,
+        namespace: String,
+        info: ExistingMigrationInfo,
     },
 }
 
@@ -187,8 +207,11 @@ fn format_not_recorded_error(
     msg
 }
 
-/// Result type for migration operations
-pub type MigrationResult<T> = Result<T, MigrationError>;
+/// Result type for migration apply operations
+pub type MigrationApplyResult<T> = Result<T, MigrationApplyError>;
+
+/// Result type for migration revert operations
+pub type MigrationRevertResult<T> = Result<T, MigrationRevertError>;
 
 /// Errors for streaming SQL execution
 #[derive(Debug, Error)]
@@ -332,7 +355,16 @@ pub trait Engine: Send + Sync {
         pin_hash: Option<String>,
         namespace: &str,
         retry: bool,
-    ) -> MigrationResult<String>;
+    ) -> MigrationApplyResult<String>;
+
+    async fn migration_revert(
+        &self,
+        migration_name: &str,
+        write_fn: WriterFn,
+        pin_hash: Option<String>,
+        namespace: &str,
+        retry: bool,
+    ) -> MigrationRevertResult<String>;
 
     /// Adopt a migration without applying it.
     /// Creates a dummy table entry marking the migration as having been applied manually.
@@ -342,7 +374,7 @@ pub trait Engine: Send + Sync {
         migration_name: &str,
         namespace: &str,
         description: &str,
-    ) -> MigrationResult<String>;
+    ) -> MigrationApplyResult<String>;
 
     /// Get database information for all migrations in the given namespace.
     /// If namespace is None, returns migrations from all namespaces.
@@ -350,5 +382,5 @@ pub trait Engine: Send + Sync {
     async fn get_migrations_from_db(
         &self,
         namespace: Option<&str>,
-    ) -> MigrationResult<Vec<MigrationDbInfo>>;
+    ) -> MigrationApplyResult<Vec<MigrationDbInfo>>;
 }

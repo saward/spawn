@@ -11,7 +11,7 @@ pub use check::Check;
 pub use init::Init;
 pub use migration::{
     AdoptMigration, ApplyMigration, BuildMigration, MigrationStatus, NewMigration, PinError,
-    PinMigration,
+    PinMigration, RevertMigration,
 };
 pub use pin_cleanup::PinCleanup;
 pub use test::{BuildTest, CompareTests, ExpectTest, NewTest, RunTest};
@@ -76,6 +76,7 @@ pub enum Outcome {
     PinnedMigration {
         hash: String,
     },
+    RevertedMigration,
     Success,
     Unimplemented,
 }

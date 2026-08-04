@@ -5,7 +5,7 @@
 use crate::config::FolderPather;
 use crate::engine::{
     resolve_command_spec, Engine, EngineError, ExistingMigrationInfo, MigrationActivity,
-    MigrationError, MigrationHistoryStatus, MigrationResult, MigrationStatus, StdoutWriter,
+    MigrationApplyResult, MigrationError, MigrationHistoryStatus, MigrationStatus, StdoutWriter,
     TargetConfig, WriterFn,
 };
 use crate::escape::{EscapedIdentifier, EscapedLiteral, EscapedQuery, InsecureRawSql};
@@ -302,7 +302,7 @@ impl Engine for PSQL {
         pin_hash: Option<String>,
         namespace: &str,
         retry: bool,
-    ) -> MigrationResult<String> {
+    ) -> MigrationApplyResult<String> {
         self.apply_and_record_migration_v1(
             migration_name,
             write_fn,
@@ -318,7 +318,7 @@ impl Engine for PSQL {
         migration_name: &str,
         namespace: &str,
         description: &str,
-    ) -> MigrationResult<String> {
+    ) -> MigrationApplyResult<String> {
         let namespace_lit = EscapedLiteral::new(namespace);
 
         // Check if migration already exists in history
@@ -367,7 +367,7 @@ impl Engine for PSQL {
     async fn get_migrations_from_db(
         &self,
         namespace: Option<&str>,
-    ) -> MigrationResult<Vec<crate::engine::MigrationDbInfo>> {
+    ) -> MigrationApplyResult<Vec<crate::engine::MigrationDbInfo>> {
         use serde::Deserialize;
 
         // Build the query with optional namespace filter
@@ -790,7 +790,7 @@ impl PSQL {
         execution_time: Option<f32>,
         pin_hash: Option<&str>,
         description: Option<&str>,
-    ) -> MigrationResult<()> {
+    ) -> MigrationApplyResult<()> {
         let record_query = self.build_record_migration_sql(
             migration_name,
             namespace,
@@ -835,7 +835,7 @@ impl PSQL {
         pin_hash: Option<String>,
         namespace: EscapedLiteral,
         retry: bool,
-    ) -> MigrationResult<String> {
+    ) -> MigrationApplyResult<String> {
         // Check if migration already exists in history (skip if table doesn't exist yet)
         let existing_status = if self
             .migration_history_table_exists()

@@ -1,7 +1,7 @@
 use crate::commands::migration::get_pending_and_confirm;
 use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
-use crate::engine::MigrationError;
+use crate::engine::MigrationApplyError;
 use anyhow::{anyhow, Result};
 use dialoguer::Editor;
 
@@ -83,7 +83,7 @@ impl Command for AdoptMigration {
                 Ok(msg) => {
                     println!("{}{}", counter, msg);
                 }
-                Err(MigrationError::AlreadyApplied { info, .. }) => {
+                Err(MigrationApplyError::AlreadyApplied { info, .. }) => {
                     println!(
                         "{}Migration '{}' already applied (status: {}, activity: {})",
                         counter, migration, info.last_status, info.last_activity

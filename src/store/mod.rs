@@ -15,6 +15,7 @@ pub mod pinner;
 #[derive(Debug, Clone)]
 pub struct MigrationFileStatus {
     pub has_up_sql: bool,
+    pub has_down_sql: bool,
     pub has_lock_toml: bool,
 }
 
@@ -40,6 +41,7 @@ pub async fn get_migration_fs_status(
         .cloned()
         .unwrap_or(MigrationFileStatus {
             has_up_sql: false,
+            has_down_sql: false,
             has_lock_toml: false,
         }))
 }
@@ -96,13 +98,15 @@ pub async fn list_migration_fs_status(
             .entry(name.to_string())
             .or_insert(MigrationFileStatus {
                 has_up_sql: false,
+                has_down_sql: false,
                 has_lock_toml: false,
             });
 
-        if filename == "up.sql" {
-            status.has_up_sql = true;
-        } else if filename == "lock.toml" {
-            status.has_lock_toml = true;
+        match filename {
+            "up.sql" => status.has_up_sql = true,
+            "down.sql" => status.has_down_sql = true,
+            "lock.toml" => status.has_lock_toml = true,
+            _ => (),
         }
     }
 

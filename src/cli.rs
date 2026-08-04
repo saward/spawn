@@ -1,9 +1,9 @@
 use crate::commands::{
     AdoptMigration, ApplyMigration, BuildMigration, BuildTest, Check, Command, CompareTests,
     ExpectTest, Init, MigrationStatus, NewMigration, NewTest, Outcome, PinCleanup, PinMigration,
-    RunTest, TelemetryDescribe, TelemetryInfo,
+    RevertMigration, RunTest, TelemetryDescribe, TelemetryInfo,
 };
-use crate::completions::{complete_migrations, complete_tests};
+use crate::completions::{complete_migrations_down, complete_migrations_up, complete_tests};
 use crate::config::{Config, DEFAULT_CONFIG_FILE};
 use opendal::Operator;
 
@@ -111,7 +111,7 @@ pub enum MigrationCommands {
     /// Pin a migration with current components
     Pin {
         /// Migration to pin
-        #[arg(add = ArgValueCompleter::new(complete_migrations))]
+        #[arg(add = ArgValueCompleter::new(complete_migrations_up))]
         migration: String,
     },
     /// Build a migration into SQL
@@ -121,7 +121,7 @@ pub enum MigrationCommands {
         pinned: bool,
         /// Migration to build.  Looks for up.sql inside this specified
         /// migration folder.
-        #[arg(add = ArgValueCompleter::new(complete_migrations))]
+        #[arg(add = ArgValueCompleter::new(complete_migrations_up))]
         migration: String,
         /// Path to a variables file (JSON, TOML, or YAML) to use for templating.
         /// Overrides the variables_file setting in spawn.toml.
@@ -135,7 +135,7 @@ pub enum MigrationCommands {
         #[arg(long)]
         no_pin: bool,
 
-        #[arg(add = ArgValueCompleter::new(complete_migrations))]
+        #[arg(add = ArgValueCompleter::new(complete_migrations_up))]
         migration: Option<String>,
 
         /// Path to a variables file (JSON, TOML, or YAML) to use for templating.
@@ -160,7 +160,7 @@ pub enum MigrationCommands {
     /// Useful when a migration was applied manually and needs to be recorded.
     Adopt {
         /// Migration to adopt
-        #[arg(add = ArgValueCompleter::new(complete_migrations))]
+        #[arg(add = ArgValueCompleter::new(complete_migrations_up))]
         migration: Option<String>,
 
         /// Skip confirmation prompt
@@ -170,6 +170,27 @@ pub enum MigrationCommands {
         /// Description of why the migration is being adopted
         #[arg(long)]
         description: Option<String>,
+    },
+    Revert {
+        /// Skip the pin requirement and use unpinned components
+        #[arg(long)]
+        no_pin: bool,
+
+        #[arg(add = ArgValueCompleter::new(complete_migrations_down))]
+        migration: String,
+
+        /// Path to a variables file (JSON, TOML, or YAML) to use for templating.
+        /// Overrides the variables_file setting in spawn.toml.
+        #[arg(long)]
+        variables: Option<String>,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
+
+        /// Retry a previously failed migration
+        #[arg(long)]
+        retry: bool,
     },
     /// Show the status of all migrations
     Status,
@@ -200,6 +221,7 @@ impl TelemetryDescribe for MigrationCommands {
                 ("apply_all", migration.is_none().to_string()),
                 ("opt_reuse_connection", reuse_connection.to_string()),
             ]),
+            MigrationCommands::Revert { .. } => TelemetryInfo::new("revert"),
             MigrationCommands::Adopt { .. } => TelemetryInfo::new("adopt"),
             MigrationCommands::Status => TelemetryInfo::new("status"),
         }
@@ -400,6 +422,27 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                         yes,
                         retry,
                         reuse_connection,
+                    }
+                    .execute(config)
+                    .await
+                }
+                Some(MigrationCommands::Revert {
+                    migration,
+                    no_pin,
+                    variables,
+                    yes,
+                    retry,
+                }) => {
+                    let vars = match variables {
+                        Some(vars_path) => Some(config.load_variables_from_path(&vars_path).await?),
+                        None => None,
+                    };
+                    RevertMigration {
+                        migration,
+                        pinned: !no_pin,
+                        variables: vars,
+                        yes,
+                        retry,
                     }
                     .execute(config)
                     .await

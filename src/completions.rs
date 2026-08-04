@@ -14,8 +14,16 @@ use std::ffi::OsStr;
 ///
 /// Returns all migrations (directories containing up.sql) as candidates.
 /// Filtering is left to the shell or user's fuzzy finder (e.g., fzf-tab).
-pub fn complete_migrations(_current: &OsStr) -> Vec<CompletionCandidate> {
-    list_migrations()
+pub fn complete_migrations_up(_current: &OsStr) -> Vec<CompletionCandidate> {
+    list_migrations_up()
+        .into_iter()
+        .map(CompletionCandidate::new)
+        .collect()
+}
+
+/// Complete migration revert script names from the migrations directory.
+pub fn complete_migrations_down(_current: &OsStr) -> Vec<CompletionCandidate> {
+    list_migrations_down()
         .into_iter()
         .map(CompletionCandidate::new)
         .collect()
@@ -34,11 +42,26 @@ pub fn complete_tests(_current: &OsStr) -> Vec<CompletionCandidate> {
 /// List migrations using the existing store function.
 ///
 /// Only returns directories that contain up.sql (valid migrations).
-fn list_migrations() -> Vec<String> {
+fn list_migrations_up() -> Vec<String> {
     with_runtime(|op, pather| async move {
         list_migration_fs_status(&op, &pather, None)
             .await
-            .map(|statuses| statuses.into_keys().collect())
+            .map(|mut statuses| {
+                statuses.retain(|_, mfs| mfs.has_up_sql);
+                statuses.into_keys().collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+fn list_migrations_down() -> Vec<String> {
+    with_runtime(|op, pather| async move {
+        list_migration_fs_status(&op, &pather, None)
+            .await
+            .map(|mut statuses| {
+                statuses.retain(|_, mfs| mfs.has_down_sql);
+                statuses.into_keys().collect()
+            })
             .unwrap_or_default()
     })
 }
@@ -101,7 +124,7 @@ mod tests {
 
     #[test]
     fn test_complete_migrations() {
-        let result = complete_migrations(&OsString::new());
+        let result = complete_migrations_up(&OsString::new());
 
         // static/example has one migration: 20240907212659-initial
         assert_eq!(result.len(), 1);

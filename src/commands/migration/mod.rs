@@ -3,6 +3,7 @@ mod apply;
 mod build;
 mod new;
 mod pin;
+mod revert;
 mod status;
 
 pub use adopt::AdoptMigration;
@@ -10,6 +11,7 @@ pub use apply::ApplyMigration;
 pub use build::BuildMigration;
 pub use new::NewMigration;
 pub use pin::{PinError, PinMigration};
+pub use revert::RevertMigration;
 pub use status::MigrationStatus;
 
 pub const DEFAULT_NAMESPACE: &str = "default";

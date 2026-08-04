@@ -102,6 +102,9 @@ async fn async_main(cli: Cli) -> Result<()> {
         Outcome::PinCleanup { .. } => {
             // Output is handled by the command itself
         }
+        Outcome::RevertedMigration => {
+            println!("Migration reverted successfully.")
+        }
         Outcome::Success => {}
         Outcome::Unimplemented => {
             println!("Unimplemented command.");
