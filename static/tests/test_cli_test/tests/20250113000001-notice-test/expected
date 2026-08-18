@@ -1,0 +1,10 @@
+CREATE DATABASE
+You are now connected to database "testclitestnotice" as user "spawn".
+DROP TABLE
+ ok 
+----
+  1
+(1 row)
+
+You are now connected to database "postgres" as user "spawn".
+DROP DATABASE

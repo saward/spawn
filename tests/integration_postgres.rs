@@ -1381,6 +1381,76 @@ async fn test_cli_test_compare() -> Result<()> {
     Ok(())
 }
 
+/// Companion to `test_cli_test_compare` that exercises the split stderr
+/// comparison specifically: the `20250113000001-notice-test` fixture has a
+/// non-empty `expected_stderr` (a `NOTICE` from `DROP TABLE IF EXISTS` on a
+/// table that doesn't exist), and this confirms a stderr-only regression
+/// (stdout output unchanged) is still caught by `spawn test compare`.
+#[tokio::test]
+#[ignore]
+async fn test_cli_test_compare_with_stderr() -> Result<()> {
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new(
+        "test_cli_test_compare_with_stderr",
+        Some("./static/tests/test_cli_test"),
+    )
+    .await?;
+
+    let test_name = "20250113000001-notice-test".to_string();
+
+    // Run compare - it should pass against the checked-in fixture, whose
+    // expected_stderr is non-empty.
+    helper.run_test_compare(Some(test_name.clone())).await?;
+
+    // Change only the table name in the DROP TABLE IF EXISTS statement. This
+    // changes the NOTICE text (stderr) while leaving stdout's shape (command
+    // tags, result rows) identical, isolating a stderr-only diff.
+    let new_test = r#"\set QUIET off
+{% set dbname = "testclitestnotice" %}
+create database {{dbname|escape_identifier}} with template spawn;
+\c {{dbname|escape_identifier}}
+drop table if exists a_different_missing_table;
+select 1 as ok;
+\c postgres
+drop database {{dbname|escape_identifier}};
+"#;
+
+    helper
+        .migration_helper
+        .fs
+        .write("/db/tests/20250113000001-notice-test/test.sql", new_test)
+        .await?;
+
+    // Run compare again and confirm it fails, purely due to the stderr diff.
+    let result = helper.run_test_compare(Some(test_name.clone())).await;
+    match result {
+        Ok(_) => {
+            return Err(anyhow!(
+                "comparison should have produced a stderr-only diff error"
+            ));
+        }
+        Err(e) => {
+            let err_str = e.to_string();
+            if !err_str.contains("error calling test compare") {
+                return Err(anyhow!("Unexpected comparison output"));
+            }
+        }
+    }
+
+    // Now expect this, and run again and check pass:
+    helper
+        .run_test_expect(test_name.clone())
+        .await
+        .context("failed to update expectation")?;
+    helper
+        .run_test_compare(Some(test_name.clone()))
+        .await
+        .context("failed to compare after updating expectation")?;
+
+    Ok(())
+}
+
 /// Tests that migrations fail when another session holds the advisory lock.
 /// This verifies the concurrent migration protection works correctly.
 #[tokio::test]
