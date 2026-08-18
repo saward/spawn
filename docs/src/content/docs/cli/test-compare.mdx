@@ -21,9 +21,11 @@ Runs tests and compares their output against saved expected results, reporting a
 
 For each test:
 
-1. Runs the test and captures output
-2. Compares output to the `expected` file in the test directory
-3. Reports differences (if any)
+1. Runs the test, capturing stdout and stderr separately
+2. Compares stdout to the `expected` file and stderr to the `expected_stderr` file in the test directory
+3. Reports differences (if any), labeled by stream
+
+A test fails if either stream differs from its expected file. Comparing the streams separately avoids flaky diffs from stdout/stderr interleaving, since the operating system does not guarantee their relative ordering when captured independently.
 
 Use [`spawn test expect`](/cli/test-expect/) to update the expected output.
 

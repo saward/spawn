@@ -21,7 +21,15 @@ pub struct Tester {
 
 #[derive(Debug)]
 pub struct TestOutcome {
-    pub diff: Option<String>,
+    pub stdout_diff: Option<String>,
+    pub stderr_diff: Option<String>,
+}
+
+/// Captured output of a test run, split by stream.
+#[derive(Debug)]
+pub struct TestOutput {
+    pub stdout: String,
+    pub stderr: String,
 }
 
 impl Tester {
@@ -49,6 +57,10 @@ impl Tester {
         format!("{}/expected", self.test_folder())
     }
 
+    pub fn expected_stderr_file_path(&self) -> String {
+        format!("{}/expected_stderr", self.test_folder())
+    }
+
     /// Opens the specified script file and generates a test script, compiled
     /// using minijinja.
     pub async fn generate(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
@@ -71,14 +83,16 @@ impl Tester {
     }
 
     // Runs the test and compares the actual output to expected.
-    pub async fn run(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
+    pub async fn run(&self, variables: Option<crate::variables::Variables>) -> Result<TestOutput> {
         let content = self.generate(variables.clone()).await?;
 
         let engine = self.config.new_engine().await?;
 
-        // Create a shared buffer to capture stdout
+        // Create shared buffers to capture stdout and stderr independently.
         let stdout_buf = Arc::new(Mutex::new(Vec::new()));
         let stdout_buf_clone = stdout_buf.clone();
+        let stderr_buf = Arc::new(Mutex::new(Vec::new()));
+        let stderr_buf_clone = stderr_buf.clone();
 
         match engine
             .execute_with_writer(
@@ -87,45 +101,54 @@ impl Tester {
                     Ok(())
                 }),
                 Some(Box::new(SharedBufWriter(stdout_buf_clone))),
-                true, // Merge stderr into stdout for tests
+                Some(Box::new(SharedBufWriter(stderr_buf_clone))),
             )
             .await
         {
             Ok(()) => {}
             Err(EngineError::ExecutionFailed { .. }) => {
                 // psql exited non-zero (e.g. ON_ERROR_STOP triggered).
-                // The combined output buffer already has the error output,
+                // The stderr buffer already has the error output,
                 // so we just continue and return it.
             }
             Err(e) => return Err(e).context("failed to write content to test db"),
         }
 
-        let buf = stdout_buf.lock().unwrap();
-        let generated = String::from_utf8_lossy(&buf).to_string();
+        let stdout = String::from_utf8_lossy(&stdout_buf.lock().unwrap()).to_string();
+        let stderr = String::from_utf8_lossy(&stderr_buf.lock().unwrap()).to_string();
 
-        Ok(generated)
+        Ok(TestOutput { stdout, stderr })
     }
 
     pub async fn run_compare(
         &self,
         variables: Option<crate::variables::Variables>,
     ) -> Result<TestOutcome> {
-        let generated = self.run(variables).await?;
+        let output = self.run(variables).await?;
+
         let expected_bytes = self
             .config
             .operator()
             .read(&self.expected_file_path())
             .await
-            .context("unable to read expectations file")?
+            .context("unable to read expected file")?
             .to_bytes();
-        let expected = String::from_utf8(expected_bytes.to_vec())
+        let expected_stdout = String::from_utf8(expected_bytes.to_vec())
             .context("expected file is not valid UTF-8")?;
 
-        let outcome = match self.compare(&generated, &expected) {
-            Ok(()) => TestOutcome { diff: None },
-            Err(differences) => TestOutcome {
-                diff: Some(differences.to_string()),
-            },
+        let expected_stderr_bytes = self
+            .config
+            .operator()
+            .read(&self.expected_stderr_file_path())
+            .await
+            .context("unable to read expected_stderr file")?
+            .to_bytes();
+        let expected_stderr = String::from_utf8(expected_stderr_bytes.to_vec())
+            .context("expected_stderr file is not valid UTF-8")?;
+
+        let outcome = TestOutcome {
+            stdout_diff: Self::diff(&expected_stdout, &output.stdout).err(),
+            stderr_diff: Self::diff(&expected_stderr, &output.stderr).err(),
         };
 
         Ok(outcome)
@@ -135,12 +158,17 @@ impl Tester {
         &self,
         variables: Option<crate::variables::Variables>,
     ) -> Result<()> {
-        let content = self.run(variables).await?;
+        let output = self.run(variables).await?;
         self.config
             .operator()
-            .write(&self.expected_file_path(), content)
+            .write(&self.expected_file_path(), output.stdout)
             .await
-            .context("unable to write expectation file")?;
+            .context("unable to write expected file")?;
+        self.config
+            .operator()
+            .write(&self.expected_stderr_file_path(), output.stderr)
+            .await
+            .context("unable to write expected_stderr file")?;
 
         Ok(())
     }
@@ -157,7 +185,7 @@ impl Tester {
         Ok(self.script_path.clone())
     }
 
-    pub fn compare(&self, generated: &str, expected: &str) -> std::result::Result<(), String> {
+    fn diff(expected: &str, generated: &str) -> std::result::Result<(), String> {
         let diff = TextDiff::from_lines(expected, generated);
 
         let mut diff_display = String::new();

@@ -46,15 +46,21 @@ impl Command for CompareTests {
             let tester = Tester::new(config, &test_file);
 
             match tester.run_compare(None).await {
-                Ok(result) => match result.diff {
-                    None => {
+                Ok(result) => match (&result.stdout_diff, &result.stderr_diff) {
+                    (None, None) => {
                         println!("{}[PASS]{} {}", GREEN, RESET, test_file);
                     }
-                    Some(diff) => {
+                    (stdout_diff, stderr_diff) => {
                         failed = true;
                         println!("\n{}[FAIL]{} {}{}{}", RED, RESET, BOLD, test_file, RESET);
-                        println!("{}--- Diff ---{}", BOLD, RESET);
-                        println!("{}", diff);
+                        if let Some(diff) = stdout_diff {
+                            println!("{}--- stdout diff ---{}", BOLD, RESET);
+                            println!("{}", diff);
+                        }
+                        if let Some(diff) = stderr_diff {
+                            println!("{}--- stderr diff ---{}", BOLD, RESET);
+                            println!("{}", diff);
+                        }
                         println!("{}-------------{}\n", BOLD, RESET);
                     }
                 },

@@ -20,8 +20,8 @@ Runs a test and saves its output as the new expected result for future compariso
 ## Behavior
 
 1. Runs the specified test
-2. Captures the output
-3. Writes it to `tests/<name>/expected.txt`
+2. Captures stdout and stderr separately
+3. Writes them to `tests/<name>/expected` and `tests/<name>/expected_stderr` respectively
 
 Use this command when test behavior changes intentionally and you want to update the baseline for [`spawn test compare`](/cli/test-compare/).
 

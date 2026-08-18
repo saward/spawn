@@ -19,7 +19,7 @@ Executes one or all tests against the configured database and displays the resul
 
 ## Behavior
 
-Runs the SQL for the test against the database, showing the output from that test.
+Runs the SQL for the test against the database, showing the output from that test. Stdout is printed first; if the test produced any stderr output (e.g. `NOTICE`/`ERROR` messages from psql), it is shown afterward under a `--- stderr ---` separator.
 
 ## Examples
 
