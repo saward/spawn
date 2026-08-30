@@ -37,7 +37,11 @@ impl Command for RunTest {
         for test_name in test_names {
             let tester = Tester::new(config, &test_name);
             let result = tester.run(None).await?;
-            println!("{}", result);
+            println!("{}", result.stdout);
+            if !result.stderr.is_empty() {
+                println!("--- stderr ---");
+                println!("{}", result.stderr);
+            }
         }
 
         Ok(Outcome::Success)
