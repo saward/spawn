@@ -1,15 +1,11 @@
 # Spawn
 
-LLM disclaimer: I (Mark) estimate that 90% of the code/design/architecture has been done by myself (2026-02-12), but I do use LLM's for filling in tedious gaps. All LLM changes are reviewed to ensure they fit with the current design and future vision.
-
-### The Database Build System.
+## Database Build System.
 
 [![License](https://img.shields.io/badge/license-AGPL-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-spawn.dev-green)](https://docs.spawn.dev)
 
-**Treat your database code like a codebase.**
-
-I like to lean heavily on the database. I don't like tools that abstract away the raw power of databases like PostgreSQL. Spawn is designed for developers who want to use the full breadth of modern database features: Functions, Views, Triggers, RLS – while keeping the maintenance nightmares to a minimum.
+I like to lean heavily on the database. I don't like tools that abstract away the raw power of databases like PostgreSQL. Spawn is designed for developers who want to use the full breadth of modern database features – Functions, Views, Triggers, RLS – in a way that's easy to manage.
 
 Spawn introduces **Components**, **Compilation**, **Reproducibility**, and **Testing** to SQL migrations.
 
@@ -24,47 +20,33 @@ Or simply:
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/saward/spawn/releases/latest/download/spawn-db-installer.sh | sh
 ```
 
----
+## Features
 
-## The Philosophy
+### Familiar migrations
 
-Standard migration tools (Flyway, dbmate) are great at running scripts, but bad at managing code. When you update a complex function, the solutions are usually one of these:
-
-- Create a new migration, copy the old view/function into the new, and edit in the new.
-- Repeatable migrations, which break migrations when running through them from the beginning.
-- Complex solutions like with Sqitch, where a copy of your original migration is made, old scripts updated to point at old, and you edit old as the new.
-
-These solutions can be cumbersome, make tracking changes over time and reviewing PRs challenging, and can break older migrations when running on a fresh database.
-
-**Spawn works differently:**
-
-1.  **Edit in Place:** Keep your functions in `components/`. Edit them there. Get perfect Git diffs.
-2.  **Pin in Time:** When you create a migration, Spawn **snapshots** your components in an efficient git-like storage, referenced per-migration via their `lock.toml`.
-3.  **Compile to SQL:** Spawn compiles your templates and pinned components into standard SQL transactions.
-
-Old migrations work exactly as they did the first time they were created.
-
-> See it in action in the [Tutorial](https://docs.spawn.dev/getting-started/magic/).
-
----
-
-## Simple example
-
-<img src="docs/src/assets/spawn_in_action.png" width="600" alt="Spawn in action">
-
-## A Quick Look: Migrations
-
-**1. Setup**
-
-Get a full Postgres environment running in a few seconds:
+Migrations are just timestamped folders with an `up.sql` script:
 
 ```bash
-spawn init --docker && docker compose up -d
+├── components
+│   └── util
+│       └── add_func.sql
+└── migrations
+    ├── 20240907212659-initial
+    │   └── up.sql
+    └── 20240908123456-second
+        └── up.sql
 ```
 
-**2. Define & Pin**
+Apply with `spawn migration apply 20240907212659-initial`, or see status with `spawn migration status`.
 
-Create a reusable component (your source of truth) and a migration.
+INSERT_ status and apply examples?
+
+- https://docs.spawn.dev/cli/migration-apply/
+- https://docs.spawn.dev/cli/migration-status/
+
+### Reusable components
+
+Create reusable components and include them in a migration:
 
 _`spawn/components/users/name.sql`_:
 
@@ -76,7 +58,15 @@ END;
 $$ LANGUAGE plpgsql;
 ```
 
-_`spawn/migrations/20260101-init/up.sql`_:
+```
+% spawn migration new name-example
+
+creating migration with name 20260829121054-name-example
+creating migration at spawn/migrations/20260829121054-name-example/up.sql
+New migration created: 20260829121054-name-example
+```
+
+_`spawn/migrations/20260829121054-name-example/up.sql`_:
 
 ```sql
 BEGIN;
@@ -85,18 +75,40 @@ CREATE TABLE users (id serial, first text, last text);
 COMMIT;
 ```
 
-Run `spawn migration pin`. Spawn snapshots the V1 components and references them in a lockfile.
+Building the migration with `spawn migration build 20260829121054-name-example` produces:
 
-```toml
-# spawn/migrations/20260101-init/lock.toml
-pin = "a1b2c3d4..." # 🔒 Locked to V1 forever
+```sql
+BEGIN;
+CREATE TABLE users (id serial, first text, last text);
+CREATE OR REPLACE FUNCTION get_name(first text, last text) RETURNS text AS $$
+BEGIN
+    RETURN first || ' ' || last; -- V1 Logic
+END;
+$$ LANGUAGE plpgsql;
+ -- Include the component
+COMMIT;
 ```
 
-**3. Evolve**
+- https://docs.spawn.dev/getting-started/magic/
+- https://docs.spawn.dev/reference/templating/
+- https://docs.spawn.dev/cli/migration-build/
 
-Months later, you update the **same file** to change the business logic around displaying names, and create a new migration.
+### Reproducible builds
 
-_`spawn/components/users/name.sql`_ (Edited in place):
+Pin a migration (similar to `git commit`) via `spawn migration pin <migration>`, so that future changes to a component don't change the output of an old migration.
+
+For example:
+
+```bash
+% spawn migration pin 20260829121054-name-example
+Migration pinned: 4219bf4255dee5b32b1154d68fa4fab2
+```
+
+Now if you edit `spawn/components/users/name.sql` and include it in a new migration, the old migration uses the old version of `spawn/components/users/name.sql`, ensuring that old migrations run as they once did.
+
+This allows you to edit components in place, keeping the full git history of changes to them. No need to copy and then edit when making changes.
+
+If we change our method of constructing a name, editing _`spawn/components/users/name.sql`_:
 
 ```sql
 ...
@@ -104,7 +116,17 @@ _`spawn/components/users/name.sql`_ (Edited in place):
 ...
 ```
 
-_`spawn/migrations/20260601-update/up.sql`_ (New Migration):
+Then create a new migration:
+
+```bash
+% spawn migration new update-name
+
+creating migration with name 20260829123838-update-name
+creating migration at spawn/migrations/20260829123838-update-name/up.sql
+New migration created: 20260829123838-update-name
+```
+
+And in that migration, include the name function as before:
 
 ```sql
 BEGIN;
@@ -113,40 +135,145 @@ BEGIN;
 COMMIT;
 ```
 
-Pin the new migration:
+Now if we build the old migration, we see the old version of the name function still:
 
 ```bash
-spawn migration pin 20260601-update
+% spawn migration build 20260829121054-name-example --pinned
+BEGIN;
+CREATE TABLE users (id serial, first text, last text);
+CREATE OR REPLACE FUNCTION get_name(first text, last text) RETURNS text AS $$
+BEGIN
+    RETURN first || ' ' || last; -- V1 Logic
+END;
+$$ LANGUAGE plpgsql;
+ -- Include the component
+COMMIT;
 ```
 
-**4. The Magic**
-
-You changed the source code, but **you didn't break history.**
-Prove it by building both migrations:
+But the new migration shows the new logic:
 
 ```bash
-spawn migration build 20260101-init --pinned
+% spawn migration pin 20260829123838-update-name
+Migration pinned: 9a3a3d70587fca77197ade26877d589b
+% spawn migration build 20260829123838-update-name --pinned
+BEGIN;
+-- Re-import the SAME component file, which now contains V2 logic
+CREATE OR REPLACE FUNCTION get_name(first text, last text) RETURNS text AS $$
+BEGIN
+    RETURN first || ' ' || substring(last, 1, 1); -- V2 Logic
+END;
+$$ LANGUAGE plpgsql;
+
+COMMIT;
 ```
+
+The component changed, but the old migration still shows the same old logic while the new migration includes the new logic.
+
+- https://docs.spawn.dev/cli/migration-build/
+- https://docs.spawn.dev/cli/migration-pin/
+
+### Golden file tests
+
+Write tests to validate the behaviour of your functions, triggers, views, etc. Writing a test involves:
+
+1. Create the test, a single plain SQL file.
+2. Establish the expected output via an `expect` file (via `spawn test expect <name>`).
+3. Run test, which compares `expect`ed output to actual output.
+
+Create a test, and apply the first migration from before:
+
+```bash
+% spawn test new get-name
+creating test with name get-name
+creating test at spawn/tests/get-name/test.sql
+New test created: get-name
+% spawn migration apply 20260829121054-name-example
+Migration '20260829121054-name-example' applied successfully
+All migrations applied successfully.
+% spawn migration status
+
+┌─────────────────────────────┬────────────┬────────┬──────────┬───────────┐
+│ Migration                   │ Filesystem │ Pinned │ Database │ Status    │
+├─────────────────────────────┼────────────┼────────┼──────────┼───────────┤
+│ 20260829121054-name-example │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+│ 20260829123838-update-name  │ ✓          │ ✓      │ ✗        │ ○ Pending │
+└─────────────────────────────┴────────────┴────────┴──────────┴───────────┘
+```
+
+Edit `test.sql` to call the function a few times:
 
 ```sql
--- Migration 1 (Built from Snapshot)
-CREATE OR REPLACE FUNCTION get_name...
-    RETURN first || ' ' || last; -- ✅ Still V1
+SELECT get_name('John', 'Doe');
+SELECT get_name('John', 'Duplicate');
+SELECT get_name('Jane', 'Doe');
+SELECT get_name('Jane', 'Duplicate');
 ```
+
+We can see what the test will produce:
 
 ```bash
-spawn migration build 20260601-update --pinned
+% spawn test run get-name
+ get_name
+----------
+ John Doe
+(1 row)
+
+    get_name
+----------------
+ John Duplicate
+(1 row)
+
+ get_name
+----------
+ Jane Doe
+(1 row)
+
+    get_name
+----------------
+ Jane Duplicate
+(1 row)
 ```
 
-```sql
--- Migration 2 (Built from Snapshot)
-CREATE OR REPLACE FUNCTION get_name...
-    RETURN first || ' ' || substring(last, 1, 1); -- ✅ Updates to V2
+Yep, that looks right, so let's set this output as our expectation, and run to confirm it passes:
+
+```bash
+# This creates an expect file:
+% spawn test expect get-name
+% head -n 4 spawn/tests/get-name/expected
+ get_name
+----------
+ John Doe
+(1 row)
+# This runs the actual test, comparing actual output to expected:
+% spawn test compare get-name
+[PASS] get-name
 ```
 
-**Zero copy-pasting. Zero broken dependencies.**
+Now let's apply our next migration which changes how `get_name` works, and run the test again:
 
-> Full tutorial with testing, templating, and more: [docs.spawn.dev/getting-started/magic](https://docs.spawn.dev/getting-started/magic/)
+```bash
+% spawn migration apply 20260829123838-update-name
+Migration '20260829123838-update-name' applied successfully
+All migrations applied successfully.
+% spawn test compare get-name
+```
+
+<img src="docs/src/assets/spawn_in_action.png" width="600" alt="Spawn in action">
+
+Updating how `get_name` works broke our test cases, as expected.
+
+- https://docs.spawn.dev/cli/test-new/
+- https://docs.spawn.dev/cli/test-run/
+- https://docs.spawn.dev/cli/test-expect/
+- https://docs.spawn.dev/cli/test-compare/
+- https://docs.spawn.dev/recipes/test-macros/
+- https://docs.spawn.dev/recipes/non-determinism-tests/
+
+### Reusable test functions
+
+### Data from JSON
+
+### Github action
 
 ## A Quick Look: Regression Tests
 
@@ -307,3 +434,7 @@ Spawn collects anonymous usage data, to help us improve Spawn. Set `"telemetry =
 ## Contributing
 
 Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. Note that this project requires signing a CLA.
+
+## LLM Disclaimer
+
+I (Mark) estimate that 90% of the code/design/architecture has been done by myself (2026-02-12), but I do use LLM's for filling in tedious gaps. All LLM changes are reviewed to ensure they fit with the current design and future vision.
