@@ -360,7 +360,7 @@ insert into customer_address (
 
 This uses some `psql` features, allowing us to optionally provide address and customer id.
 
-Then we can call it in a test (`spawn/tests/customer-create/test.sql`):
+Then we can call it in a test (`spawn/tests/create-customer/test.sql`):
 
 ```sql
 {% from "tests/helpers/create_customer.sql" import create_customer -%}
@@ -517,7 +517,7 @@ VALUES ('{{ variables.admin_email }}');
 
 In the preceding section, we saw a way to pass in variables as a command line parameter. But sometimes you may want to make use of data from a fixture that you can use in tests automatically.
 
-Let's say we want to create a handful of customers, using the macro from <NOTE TODO LINK THIS TO EARLIER SECTION> above, but making use of data in a file in our `components` folder. _`spawn/components/tests/helpers/customers.json`_:
+Let's say we want to create a handful of customers, using the macro from the [Reusable components](#reusable-components-1) section above, but making use of data in a file in our `components` folder. _`spawn/components/tests/helpers/customers.json`_:
 
 ```json
 [
@@ -606,9 +606,9 @@ And then if we run it, we see the test created all our customers from the JSON f
 - https://docs.spawn.dev/recipes/non-determinism-tests/
 - https://docs.spawn.dev/blog/regression-tests/
 
-### Github action
+### GitHub action
 
-Spawn has a Github action you can include to run your tests and check for any unpinned migrations (it's usually best to pin a migration once you're finished with it):
+Spawn has a GitHub action you can include to run your tests and check for any unpinned migrations (it's usually best to pin a migration once you're finished with it):
 
 ```yaml
 - name: Install Spawn
@@ -630,7 +630,7 @@ Spawn has a Github action you can include to run your tests and check for any un
 
 ### Multiple database targets
 
-You can specify multiple database targets in your `spawn.toml` config file. For example, you can set up a postgres-psql
+You can specify multiple database targets in your `spawn.toml` config file. For example, you can set up a postgres-psql target:
 
 ```toml
 # spawn.toml
@@ -680,7 +680,7 @@ command = {
 | Feature              | **Spawn**                                                                            | **Sqitch**                                                                           | **Flyway**                                                                    | **dbmate**                                                     |
 | :------------------- | :----------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------- | :---------------------------------------------------------------------------- | :------------------------------------------------------------- |
 | **Core Philosophy**  | **Compiled.** Database logic is a codebase. Migrations are build artifacts.          | **DAG.** A dependency graph of changes. No linear version numbers.                   | **Linear.** Run scripts V1 → V2. "Repeatable" scripts run at the end.         | **Simple.** Just run these SQL files in order.                 |
-| **Views/Functions**  | **Pinned Components.** Edit in place. Snapshots locked per-migration (CAS).          | **Versioned Copies.** The rework command creates a new physical file old migrations. | **Repeatable.** Re-runs `R__` scripts every migration. Doesn't track history. | **Manual.** Copy-paste old logic into new migrations manually. |
+| **Views/Functions**  | **Pinned Components.** Edit in place. Snapshots locked per-migration (CAS).          | **Versioned Copies.** The rework command creates a new physical file for old migrations. | **Repeatable.** Re-runs `R__` scripts every migration. Doesn't track history. | **Manual.** Copy-paste old logic into new migrations manually. |
 | **Templating**       | **Native (Minijinja).** Macros, loops, and variables inside SQL.                     | **None.** Raw SQL only.                                                              | **Basic.** `${placeholder}` substitution only.                                | **None.** Raw SQL only.                                        |
 | **Testing**          | **Built-in.** `spawn test` with ephemeral DBs & diff assertions.                     | **Verify Scripts.** Boolean (Pass/Fail) scripts run after deploy.                    | **None.** Relies on external CI tools.                                        | **None.**                                                      |
 | **Dependencies**     | **Single Binary** (Rust) + `psql` CLI.                                               | **Perl.**                                                                            | **JRE / Binary.**                                                             | **Single Binary** (Go). Very easy install.                     |
