@@ -20,6 +20,56 @@ Or simply:
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/saward/spawn/releases/latest/download/spawn-db-installer.sh | sh
 ```
 
+## Quick Start
+
+Initialize a new project, with an example `docker compose` setup ready to work out of the box via `spawn init --docker` (or just use `spawn init` for an existing project):
+
+```bash
+% spawn init --docker
+Created docker-compose.yaml for database 'postgres'
+Start the database with: docker compose up -d
+
+▶ Spawn collects anonymous usage data.
+  This helps us improve Spawn.
+  Set "telemetry = false" in spawn.toml or use DO_NOT_TRACK=1 to opt-out.
+
+Initialized spawn project with project_id: 5bb5a4eb-3677-4dc1-84d6-52b768180171
+Created directories:
+  spawn/migrations/
+  spawn/components/
+  spawn/tests/
+  spawn/pinned/
+
+Edit spawn.toml to configure your database connection.
+```
+
+This creates a `docker-compose.yaml`, a `spawn.toml`, and the `spawn/` project structure:
+
+```bash
+% tree
+.
+├── docker-compose.yaml
+├── spawn
+│   ├── components
+│   ├── migrations
+│   ├── pinned
+│   └── tests
+└── spawn.toml
+
+6 directories, 2 files
+```
+
+Start the database, and you're ready to create your first migration:
+
+```bash
+% docker compose up -d
+```
+
+Related docs:
+
+- [spawn init](https://docs.spawn.dev/cli/init/)
+- [Welcome to Spawn](https://docs.spawn.dev/getting-started/magic/)
+
 ## Features
 
 ### Familiar migrations
@@ -514,13 +564,13 @@ Use data passed in via `--variables` (e.g., `variables.json`):
 And then reference it within your migration or test:
 
 ```sql
-CREATE TABLE {{ variables.table_name }} (
+CREATE TABLE {{ variables.table_name | escape_identifier }} (
   id SERIAL PRIMARY KEY,
   email TEXT NOT NULL
 );
 
-INSERT INTO {{ variables.table_name }} (email)
-VALUES ('{{ variables.admin_email }}');
+INSERT INTO {{ variables.table_name | escape_identifier }} (email)
+VALUES ({{ variables.admin_email }});
 ```
 
 Related docs:
@@ -631,14 +681,14 @@ Spawn has a GitHub action you can include to run your tests and check for any un
 - name: Install Spawn
   uses: saward/spawn-action@v1
 
+- name: Run check
+  run: |
+    spawn check
+
 - name: Run tests
   run: |
     spawn test compare test-1
     spawn test compare test-2
-
-- name: Run check
-  run: |
-    spawn check
 ```
 
 Related docs:
@@ -684,11 +734,11 @@ Spawn supports **Provider Commands**. Configure it to use `gcloud`, `aws`, or `a
 # spawn.toml
 [targets.prod]
 ...
-command = {
-    kind = "provider",
-    provider = ["gcloud", "compute", "ssh", "--dry-run", ...],
-    append = ["psql", ...]
-}
+
+[targets.prod.command]
+kind = "provider"
+provider = ["gcloud", "compute", "ssh", "--dry-run", ...]
+append = ["psql", ...]
 ...
 ```
 
@@ -699,17 +749,17 @@ Related docs:
 
 ## Comparison
 
-| Feature              | **Spawn**                                                                            | **Sqitch**                                                                           | **Flyway**                                                                    | **dbmate**                                                     |
-| :------------------- | :----------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------- | :---------------------------------------------------------------------------- | :------------------------------------------------------------- |
-| **Core Philosophy**  | **Compiled.** Database logic is a codebase. Migrations are build artifacts.          | **DAG.** A dependency graph of changes. No linear version numbers.                   | **Linear.** Run scripts V1 → V2. "Repeatable" scripts run at the end.         | **Simple.** Just run these SQL files in order.                 |
+| Feature              | **Spawn**                                                                            | **Sqitch**                                                                               | **Flyway**                                                                    | **dbmate**                                                     |
+| :------------------- | :----------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------- | :------------------------------------------------------------- |
+| **Core Philosophy**  | **Compiled.** Database logic is a codebase. Migrations are build artifacts.          | **DAG.** A dependency graph of changes. No linear version numbers.                       | **Linear.** Run scripts V1 → V2. "Repeatable" scripts run at the end.         | **Simple.** Just run these SQL files in order.                 |
 | **Views/Functions**  | **Pinned Components.** Edit in place. Snapshots locked per-migration (CAS).          | **Versioned Copies.** The rework command creates a new physical file for old migrations. | **Repeatable.** Re-runs `R__` scripts every migration. Doesn't track history. | **Manual.** Copy-paste old logic into new migrations manually. |
-| **Templating**       | **Native (Minijinja).** Macros, loops, and variables inside SQL.                     | **None.** Raw SQL only.                                                              | **Basic.** `${placeholder}` substitution only.                                | **None.** Raw SQL only.                                        |
-| **Testing**          | **Built-in.** `spawn test` with ephemeral DBs & diff assertions.                     | **Verify Scripts.** Boolean (Pass/Fail) scripts run after deploy.                    | **None.** Relies on external CI tools.                                        | **None.**                                                      |
-| **Dependencies**     | **Single Binary** (Rust) + `psql` CLI.                                               | **Perl.**                                                                            | **JRE / Binary.**                                                             | **Single Binary** (Go). Very easy install.                     |
-| **Rollbacks**        | 🚧 _Planned._ Currently manual, but not needed as much with pinning.                 | **First Class.** Every change _must_ have a revert script.                           | **Paid.** `Undo` functionality often gated behind Pro/Enterprise.             | **Supported.** `down.sql` files are standard.                  |
-| **DB Support**       | **PostgreSQL** (Focus on depth).                                                     | **Massive.** Postgres, MySQL, Oracle, SQLite, Vertica, etc.                          | **Massive.** Every DB known to man.                                           | **Broad.** Postgres, MySQL, SQLite, ClickHouse.                |
-| **Execution Engine** | **Native CLI Wrapper.** Full parity with `psql` (supports `\copy`, `\gset`, `\set`). | **Native Drivers.**                                                                  | **JDBC.** (Java Database Connectivity).                                       | **Native Drivers.** (Go drivers).                              |
-| **License**          | **AGPL-3.0**                                                                         | **MIT**                                                                              | **Apache 2.0** (Community) / Proprietary (Teams).                             | **MIT**                                                        |
+| **Templating**       | **Native (Minijinja).** Macros, loops, and variables inside SQL.                     | **None.** Raw SQL only.                                                                  | **Basic.** `${placeholder}` substitution only.                                | **None.** Raw SQL only.                                        |
+| **Testing**          | **Built-in.** `spawn test` with ephemeral DBs & diff assertions.                     | **Verify Scripts.** Boolean (Pass/Fail) scripts run after deploy.                        | **None.** Relies on external CI tools.                                        | **None.**                                                      |
+| **Dependencies**     | **Single Binary** (Rust) + `psql` CLI.                                               | **Perl.**                                                                                | **JRE / Binary.**                                                             | **Single Binary** (Go). Very easy install.                     |
+| **Rollbacks**        | 🚧 _Planned._ Currently manual, but not needed as much with pinning.                 | **First Class.** Every change _must_ have a revert script.                               | **Paid.** `Undo` functionality often gated behind Pro/Enterprise.             | **Supported.** `down.sql` files are standard.                  |
+| **DB Support**       | **PostgreSQL** (Focus on depth).                                                     | **Massive.** Postgres, MySQL, Oracle, SQLite, Vertica, etc.                              | **Massive.** Every DB known to man.                                           | **Broad.** Postgres, MySQL, SQLite, ClickHouse.                |
+| **Execution Engine** | **Native CLI Wrapper.** Full parity with `psql` (supports `\copy`, `\gset`, `\set`). | **Native Drivers.**                                                                      | **JDBC.** (Java Database Connectivity).                                       | **Native Drivers.** (Go drivers).                              |
+| **License**          | **AGPL-3.0**                                                                         | **MIT**                                                                                  | **Apache 2.0** (Community) / Proprietary (Teams).                             | **MIT**                                                        |
 
 ## Roadmap
 

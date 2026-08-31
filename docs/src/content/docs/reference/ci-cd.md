@@ -60,7 +60,7 @@ jobs:
 
 ### `spawn check`
 
-Validates that all migrations are pinned. Returns a non-zero exit code if any migrations are unpinned, making it a good gate for pull requests. Consult [`spawn check`](/cli/spawn-check) for more information.
+Validates that all migrations are pinned. Returns a non-zero exit code if any migrations are unpinned, making it a good gate for pull requests. Consult [`spawn check`](/cli/check/) for more information.
 
 ```yaml
 - name: Check migrations
