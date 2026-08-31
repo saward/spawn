@@ -288,6 +288,7 @@ As expected, the test now fails because our `get_name` logic has changed. Here w
 - https://docs.spawn.dev/cli/test-compare/
 - https://docs.spawn.dev/recipes/test-macros/
 - https://docs.spawn.dev/recipes/non-determinism-tests/
+- https://docs.spawn.dev/blog/regression-tests/
 
 ### Reusable test functions
 
@@ -516,7 +517,7 @@ VALUES ('{{ variables.admin_email }}');
 
 In the preceding section, we saw a way to pass in variables as a command line parameter. But sometimes you may want to make use of data from a fixture that you can use in tests automatically.
 
-Let's say we want to create a handful of customers, using the macro from <NOTE TODO LINK THIS TO EARLIER SECTION> above, but making use of data in a file in our `components` folder. _`spawn/components/tests/customers.json`_:
+Let's say we want to create a handful of customers, using the macro from <NOTE TODO LINK THIS TO EARLIER SECTION> above, but making use of data in a file in our `components` folder. _`spawn/components/tests/helpers/customers.json`_:
 
 ```json
 [
@@ -529,7 +530,7 @@ Let's say we want to create a handful of customers, using the macro from <NOTE T
     "address": "22 High Street"
   },
   {
-    "name": "Chloe Davis",
+    "name": "Chloe O'Davis",
     "address": "7 Station Road"
   },
   {
@@ -543,112 +544,136 @@ Let's say we want to create a handful of customers, using the macro from <NOTE T
 ]
 ```
 
-### Github action
-
-## A Quick Look: Regression Tests
-
-**1. Write the Test**
-
-Use plain SQL to write tests, and run them in a transaction or in a copy of the database via `WITH TEMPLATE`.
-
-_`spawn/tests/users/test.sql`_
+We might want to loop over this to create a handful of test cases. To do that, in our test (this works for migration scripts too), you can import this JSON and loop over it, using our macro to create test clients:
 
 ```sql
--- 1. Spin up a throwaway copy of your schema
-CREATE DATABASE test_users WITH TEMPLATE postgres;
-\c test_users
+{% from "tests/helpers/create_customer.sql" import create_customer -%}
 
--- 2. Run scenarios
-SELECT get_name('John', 'Doe'); -- Expecting full name
+-- Use 'WITH TEMPLATE' so you can run the test repeatedly with a fresh
+-- copy each time:
+DROP DATABASE IF EXISTS create_customer_test;
+CREATE DATABASE create_customer_test WITH TEMPLATE postgres;
+\c create_customer_test
 
--- 3. Cleanup
+{% set customers = "tests/helpers/customers.json" | read_json %}
+{% for customer in customers %}
+  {{ create_customer(name=customer.name, address_line=customer.address) }}
+{% endfor %}
+
+SELECT * FROM customer;
+SELECT * FROM address;
+SELECT * FROM customer_address;
+
 \c postgres
-DROP DATABASE test_users;
+DROP DATABASE IF EXISTS create_customer_test;
 ```
 
-**2. Capture the Baseline**
-Run the test and save the output as the "Source of Truth."
+And then if we run it, we see the test created all our customers from the JSON fixture:
+
+```
+% spawn test run create-customer
+ customer_id |     name
+-------------+---------------
+           3 | Alice Brown
+           4 | Ben Carter
+           5 | Chloe O'Davis
+           6 | Daniel Evans
+           7 | Emma Foster
+(5 rows)
+
+ address_id |   address_line
+------------+-------------------
+          2 | 1 King Street
+          3 | 22 High Street
+          4 | 7 Station Road
+          5 | 14 Market Lane
+          6 | 3 Victoria Avenue
+(5 rows)
+
+ customer_id | address_id
+-------------+------------
+           3 |          2
+           4 |          3
+           5 |          4
+           6 |          5
+           7 |          6
+(5 rows)
+```
+
+- https://docs.spawn.dev/cli/test-build/
+- https://docs.spawn.dev/cli/test-run/
+- https://docs.spawn.dev/recipes/test-macros/
+- https://docs.spawn.dev/recipes/non-determinism-tests/
+- https://docs.spawn.dev/blog/regression-tests/
+
+### Github action
+
+Spawn has a Github action you can include to run your tests and check for any unpinned migrations (it's usually best to pin a migration once you're finished with it):
+
+```yaml
+- name: Install Spawn
+  uses: saward/spawn-action@v1
+
+- name: Run tests
+  run: |
+    spawn test compare test-1
+    spawn test compare test-2
+
+- name: Run check
+  run: |
+    spawn check
+```
+
+- https://docs.spawn.dev/reference/ci-cd/
+- https://docs.spawn.dev/cli/check/
+- https://docs.spawn.dev/cli/pin-cleanup/
+
+### Multiple database targets
+
+You can specify multiple database targets in your `spawn.toml` config file. For example, you can set up a postgres-psql
+
+```toml
+# spawn.toml
+[targets.local]
+engine = "postgres-psql"
+spawn_database = "postgres"
+spawn_schema = "_spawn"
+environment = "dev"
+
+[targets.local.command]
+kind = "direct"
+direct = ["docker", "exec", "-i", "postgres-db", "psql", "-U", "postgres", "postgres"]
+```
+
+And then execute commands against a specific target. E.g.:
 
 ```bash
-spawn test expect users
+% spawn migration status --target local
+
+┌─────────────────────────────┬────────────┬────────┬──────────┬───────────┐
+│ Migration                   │ Filesystem │ Pinned │ Database │ Status    │
+├─────────────────────────────┼────────────┼────────┼──────────┼───────────┤
+│ 20260829121054-name-example │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+│ 20260829123838-update-name  │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+└─────────────────────────────┴────────────┴────────┴──────────┴───────────┘
 ```
-
-_`spawn/tests/users/expected`_
-
-```text
- get_name
-----------
- John Doe
-(1 row)
-```
-
-**3. Catch Regressions (CI/CD)**
-Later, you apply the V2 update (abbreviated last name), but the test still expects the full name. `spawn test compare` catches the behavioral change immediately.
-
-```bash
-spawn test compare users
-```
-
-```diff
-[FAIL] users
---- Diff ---
-   get_name
- ----------
--   John Doe
-+   John D
- (1 row)
-
-Error: ! Differences found in one or more tests
-```
-
-**No manual assertions. Run in GitHub Actions using the [Spawn Action](https://docs.spawn.dev/reference/ci-cd/).**
-
----
-
-## Key Features
-
-### 📦 Component System (CAS)
-
-Store reusable SQL snippets (views, functions, triggers) in a dedicated folder. When you create a migration, `spawn migration pin` creates a content-addressable snapshot of the entire tree.
-
-- **Result:** Old migrations never break, because they point to the _snapshot_ of the function from 2 years ago, not the version in your folder today.
-
-> Docs: [Tutorial: Components](https://docs.spawn.dev/getting-started/magic/) | [Templating](https://docs.spawn.dev/reference/templating/)
-
-### 🧪 Integration Testing Framework
-
-Spawn includes a native testing harness designed for SQL.
-
-- **Macros:** Use [Minijinja](https://github.com/mitsuhiko/minijinja) macros to create reusable data factories (`{{ create_user('alice') }}`).
-- **Ephemeral Tests:** Tests can run against temporary database copies (`WITH TEMPLATE`) for speed, or within transactionsi when possible.
-- **Diff-Based Assertions:** Tests pass if the output matches your `expected` file.
-
-> Docs: [Tutorial: Testing](https://docs.spawn.dev/getting-started/magic/) | [Test Macros](https://docs.spawn.dev/recipes/test-macros/)
-
-### 🚀 Zero-Abstractions
-
-Spawn wraps `psql`. If you can do it in Postgres, you can do it in Spawn.
-
-- No ORM limitations.
-- No waiting for the tool to support a new Postgres feature.
-- Full support for `\gset`, `\copy`, and other psql meta-commands.
-
-### ☁️ Cloud Native
 
 Connecting to production databases can be configured to use all your standard commands. You just need to provide it with a valid psql pipe.
-Spawn supports **Provider Commands** – configure it to use `gcloud`, `aws`, or `az` CLIs to resolve the connection or SSH tunnel automatically.
+Spawn supports **Provider Commands**. Configure it to use `gcloud`, `aws`, or `az` CLIs to resolve the connection or SSH tunnel automatically.
 
 ```toml
 # spawn.toml
 [targets.prod]
+...
 command = {
     kind = "provider",
     provider = ["gcloud", "compute", "ssh", "--dry-run", ...],
     append = ["psql", ...]
 }
+...
 ```
 
-> Docs: [Manage Databases](https://docs.spawn.dev/guides/manage-databases/) | [Configuration](https://docs.spawn.dev/reference/config/)
+- https://docs.spawn.dev/reference/config/
 
 ## Comparison
 
@@ -683,7 +708,6 @@ Spawn is currently in **Public Beta**. It is fully functional and has test suite
 - 🔄 **Rollback Support:** Optional down scripts for reversible migrations.
 - 🔄 **Additional Engines:** Native PostgreSQL driver, MySQL, and more.
 - 🔄 **Multi-Tenancy:** First-class support for schema-per-tenant migrations.
-- 🔄 **Drift Detection:** Compare expected vs actual database state.
 - 🔄 **External Data Sources:** Better support for data from files, URLs, and scripts in templates.
 - 🔄 **Plugin System:** Custom extensions for engines, data sources, and workflows.
 
