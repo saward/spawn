@@ -27,24 +27,42 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/saward/spawn/releases/l
 Migrations are just timestamped folders with an `up.sql` script:
 
 ```bash
-├── components
-│   └── util
-│       └── add_func.sql
-└── migrations
-    ├── 20240907212659-initial
-    │   └── up.sql
-    └── 20240908123456-second
-        └── up.sql
+.
+├── docker-compose.yaml
+├── spawn
+│   ├── components
+│   │   └── users
+│   │       └── name.sql
+│   ├── migrations
+│   │   ├── 20260829121054-name-example
+│   │   │   ├── lock.toml
+│   │   │   └── up.sql
+│   │   └── 20260829123838-update-name
+│   │       └── up.sql
 ```
 
-Apply with `spawn migration apply 20240907212659-initial`, or see status with `spawn migration status`.
+Apply a migration with `spawn migration apply <migration>`, or see status with `spawn migration status`:
 
-INSERT_ status and apply examples?
+```bash
+% spawn migration apply 20260829121054-name-example
+Migration '20260829121054-name-example' applied successfully
+All migrations applied successfully.
+mark@Marks-MacBook-Air-M2 spawntest % spawn migration status
+
+┌─────────────────────────────┬────────────┬────────┬──────────┬───────────┐
+│ Migration                   │ Filesystem │ Pinned │ Database │ Status    │
+├─────────────────────────────┼────────────┼────────┼──────────┼───────────┤
+│ 20260829121054-name-example │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+│ 20260829123838-update-name  │ ✓          │ ✓      │ ✗        │ ○ Pending │
+└─────────────────────────────┴────────────┴────────┴──────────┴───────────┘
+```
 
 - https://docs.spawn.dev/cli/migration-apply/
 - https://docs.spawn.dev/cli/migration-status/
 
 ### Reusable components
+
+Spawn uses [Minijinja](https://github.com/mitsuhiko/minijinja) under the hood to provide powerful templating abilities to your migrations.
 
 Create reusable components and include them in a migration:
 
@@ -97,7 +115,9 @@ COMMIT;
 
 Pin a migration (similar to `git commit`) via `spawn migration pin <migration>`, so that future changes to a component don't change the output of an old migration.
 
-For example:
+This allows you to edit a component _in place_, so that when you submit a PR, you can see exactly what's changed. Other tools often require you to duplicate some snippet, and then edit the copy, resulting in a big wall of green. Repeatable migrations help mitigate this, but have other limitations (e.g., running through migrations from start to finish).
+
+Pin a migration:
 
 ```bash
 % spawn migration pin 20260829121054-name-example
@@ -108,7 +128,7 @@ Now if you edit `spawn/components/users/name.sql` and include it in a new migrat
 
 This allows you to edit components in place, keeping the full git history of changes to them. No need to copy and then edit when making changes.
 
-If we change our method of constructing a name, editing _`spawn/components/users/name.sql`_:
+We can update our `get_name` function, changing the logic (_`spawn/components/users/name.sql`_):
 
 ```sql
 ...
@@ -116,7 +136,7 @@ If we change our method of constructing a name, editing _`spawn/components/users
 ...
 ```
 
-Then create a new migration:
+Then create a new migration to apply the updated function to our database:
 
 ```bash
 % spawn migration new update-name
@@ -126,7 +146,7 @@ creating migration at spawn/migrations/20260829123838-update-name/up.sql
 New migration created: 20260829123838-update-name
 ```
 
-And in that migration, include the name function as before:
+In that migration, import the component/function as we did in the first migration:
 
 ```sql
 BEGIN;
@@ -167,7 +187,7 @@ $$ LANGUAGE plpgsql;
 COMMIT;
 ```
 
-The component changed, but the old migration still shows the same old logic while the new migration includes the new logic.
+The component changed, but the old migration still shows the same old logic while the new migration includes the new logic. This gives repeatable builds where you can rerun your migrations from start to finish, all while keeping a nice reviewable git history.
 
 - https://docs.spawn.dev/cli/migration-build/
 - https://docs.spawn.dev/cli/migration-pin/
@@ -234,7 +254,7 @@ We can see what the test will produce:
 (1 row)
 ```
 
-Yep, that looks right, so let's set this output as our expectation, and run to confirm it passes:
+That looks right, so let's set this output as our expectation, and run to confirm it passes:
 
 ```bash
 # This creates an expect file:
@@ -258,9 +278,9 @@ All migrations applied successfully.
 % spawn test compare get-name
 ```
 
-<img src="docs/src/assets/spawn_in_action.png" width="600" alt="Spawn in action">
+<img src="docs/src/assets/test_compare_fail_name.png" width="600" alt="Spawn in action">
 
-Updating how `get_name` works broke our test cases, as expected.
+As expected, the test now fails because our `get_name` logic has changed. Here we see a colourful diff, highlighting the fact that our change in how `get_name` works has broken our test.
 
 - https://docs.spawn.dev/cli/test-new/
 - https://docs.spawn.dev/cli/test-run/
@@ -271,7 +291,257 @@ Updating how `get_name` works broke our test cases, as expected.
 
 ### Reusable test functions
 
+Spawn SQL tests are templates that can make use of the same powerful [Minijinja](https://github.com/mitsuhiko/minijinja) templating features, along with some helper functions.
+
+#### Reusable components
+
+Components allow you to do powerful things. For example, perhaps you want to make it easy to create a particular record for tests. Let's say we have a database structure like so:
+
+```sql
+CREATE TABLE customer (
+    customer_id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE address (
+    address_id BIGSERIAL PRIMARY KEY,
+    address_line TEXT NOT NULL
+);
+
+CREATE TABLE customer_address (
+    customer_id BIGINT NOT NULL REFERENCES customer(customer_id),
+    address_id BIGINT NOT NULL REFERENCES address(address_id),
+
+    PRIMARY KEY (customer_id, address_id)
+);
+```
+
+It's tedious to write the SQL to create test customers, so let's make a macro in `spawn/components/tests/helpers/create_customer.sql`:
+
+```sql
+{% macro create_customer(
+  customer_id="DEFAULT" | safe,
+  address_id="DEFAULT" | safe,
+  name="Test Customer",
+  address_line="1 Test Street",
+) %}
+
+insert into customer (
+    customer_id,
+    name
+) values (
+    {{ customer_id }},
+    {{ name }}
+)
+returning customer_id as created_customer_id
+\gset
+
+insert into address (
+    address_id,
+    address_line
+) values (
+    {{ address_id }},
+    {{ address_line }}
+)
+returning address_id as created_address_id
+\gset
+
+insert into customer_address (
+    customer_id,
+    address_id
+) values (
+    :created_customer_id,
+    :created_address_id
+);
+
+{%- endmacro %}
+```
+
+This uses some `psql` features, allowing us to optionally provide address and customer id.
+
+Then we can call it in a test (`spawn/tests/customer-create/test.sql`):
+
+```sql
+{% from "tests/helpers/create_customer.sql" import create_customer -%}
+
+{{ create_customer() }}
+{{ create_customer(address_id=4, name="Bob Jane") }}
+
+SELECT * FROM customer;
+SELECT * FROM address;
+SELECT * FROM customer_address;
+```
+
+This makes it really simple to create test data for tests, overriding details when required. The SQL it produces is the same as the below, massively reducing repetition and making tests easier to read:
+
+```sql
+insert into customer (
+    customer_id,
+    name
+) values (
+    DEFAULT,
+    'Test Customer'
+)
+returning customer_id as created_customer_id
+\gset
+
+insert into address (
+    address_id,
+    address_line
+) values (
+    DEFAULT,
+    '1 Test Street'
+)
+returning address_id as created_address_id
+\gset
+
+insert into customer_address (
+    customer_id,
+    address_id
+) values (
+    :created_customer_id,
+    :created_address_id
+);
+
+
+insert into customer (
+    customer_id,
+    name
+) values (
+    DEFAULT,
+    'Bob Jane'
+)
+returning customer_id as created_customer_id
+\gset
+
+insert into address (
+    address_id,
+    address_line
+) values (
+    4,
+    '1 Test Street'
+)
+returning address_id as created_address_id
+\gset
+
+insert into customer_address (
+    customer_id,
+    address_id
+) values (
+    :created_customer_id,
+    :created_address_id
+);
+
+SELECT * FROM customer;
+SELECT * FROM address;
+SELECT * FROM customer_address;
+```
+
+When we run it, we see:
+
+```bash
+% spawn test run create-customer
+ customer_id |     name
+-------------+---------------
+           1 | Test Customer
+           2 | Bob Jane
+(2 rows)
+
+ address_id | address_line
+------------+---------------
+          1 | 1 Test Street
+          4 | 1 Test Street
+(2 rows)
+
+ customer_id | address_id
+-------------+------------
+           1 |          1
+           2 |          4
+(2 rows)
+```
+
+- https://docs.spawn.dev/cli/test-run/
+- https://docs.spawn.dev/recipes/test-macros/
+- https://docs.spawn.dev/recipes/non-determinism-tests/
+
+### Helper functions and utilities
+
+Spawn provides a handful of helper functions and utilities that can be used in both migrations and tests.
+
+Create a v4 uuid (most of the time you'd likely use the built in database uuid generation function):
+
+```sql
+INSERT INTO users (id, name) VALUES ({{ gen_uuid_v4() }}, {{ user_name }});
+```
+
+Include bytes from a file, which can be useful for testing:
+
+```sql
+INSERT INTO images (data) VALUES (decode({{ "images/logo.png"|read_file|base64_encode }}, 'base64'));
+```
+
+Run code only when applying to a dev database target:
+
+```sql
+{% if env == "dev" %}
+-- Insert test data only in dev
+INSERT INTO users (email) VALUES ('test@example.com');
+{% endif %}
+```
+
+Use data passed in via `--variables` (e.g., `variables.json`):
+
+```json
+{
+  "table_name": "users",
+  "admin_email": "admin@example.com"
+}
+```
+
+And then reference it within your migration or test:
+
+```sql
+CREATE TABLE {{ variables.table_name }} (
+  id SERIAL PRIMARY KEY,
+  email TEXT NOT NULL
+);
+
+INSERT INTO {{ variables.table_name }} (email)
+VALUES ('{{ variables.admin_email }}');
+```
+
+- https://docs.spawn.dev/reference/templating
+
 ### Data from JSON
+
+In the preceding section, we saw a way to pass in variables as a command line parameter. But sometimes you may want to make use of data from a fixture that you can use in tests automatically.
+
+Let's say we want to create a handful of customers, using the macro from <NOTE TODO LINK THIS TO EARLIER SECTION> above, but making use of data in a file in our `components` folder. _`spawn/components/tests/customers.json`_:
+
+```json
+[
+  {
+    "name": "Alice Brown",
+    "address": "1 King Street"
+  },
+  {
+    "name": "Ben Carter",
+    "address": "22 High Street"
+  },
+  {
+    "name": "Chloe Davis",
+    "address": "7 Station Road"
+  },
+  {
+    "name": "Daniel Evans",
+    "address": "14 Market Lane"
+  },
+  {
+    "name": "Emma Foster",
+    "address": "3 Victoria Avenue"
+  }
+]
+```
 
 ### Github action
 
