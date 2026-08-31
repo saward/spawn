@@ -57,8 +57,10 @@ mark@Marks-MacBook-Air-M2 spawntest % spawn migration status
 └─────────────────────────────┴────────────┴────────┴──────────┴───────────┘
 ```
 
-- https://docs.spawn.dev/cli/migration-apply/
-- https://docs.spawn.dev/cli/migration-status/
+Related docs:
+
+- [spawn migration apply](https://docs.spawn.dev/cli/migration-apply/)
+- [spawn migration status](https://docs.spawn.dev/cli/migration-status/)
 
 ### Reusable components
 
@@ -107,9 +109,12 @@ $$ LANGUAGE plpgsql;
 COMMIT;
 ```
 
-- https://docs.spawn.dev/getting-started/magic/
-- https://docs.spawn.dev/reference/templating/
-- https://docs.spawn.dev/cli/migration-build/
+Related docs:
+
+- [Welcome to Spawn](https://docs.spawn.dev/getting-started/magic/)
+- [Templating](https://docs.spawn.dev/reference/templating/)
+- [spawn migration new](https://docs.spawn.dev/cli/migration-new/)
+- [spawn migration build](https://docs.spawn.dev/cli/migration-build/)
 
 ### Reproducible builds
 
@@ -189,8 +194,11 @@ COMMIT;
 
 The component changed, but the old migration still shows the same old logic while the new migration includes the new logic. This gives repeatable builds where you can rerun your migrations from start to finish, all while keeping a nice reviewable git history.
 
-- https://docs.spawn.dev/cli/migration-build/
-- https://docs.spawn.dev/cli/migration-pin/
+Related docs:
+
+- [spawn migration new](https://docs.spawn.dev/cli/migration-new/)
+- [spawn migration build](https://docs.spawn.dev/cli/migration-build/)
+- [spawn migration pin](https://docs.spawn.dev/cli/migration-pin/)
 
 ### Golden file tests
 
@@ -282,13 +290,15 @@ All migrations applied successfully.
 
 As expected, the test now fails because our `get_name` logic has changed. Here we see a colourful diff, highlighting the fact that our change in how `get_name` works has broken our test.
 
-- https://docs.spawn.dev/cli/test-new/
-- https://docs.spawn.dev/cli/test-run/
-- https://docs.spawn.dev/cli/test-expect/
-- https://docs.spawn.dev/cli/test-compare/
-- https://docs.spawn.dev/recipes/test-macros/
-- https://docs.spawn.dev/recipes/non-determinism-tests/
-- https://docs.spawn.dev/blog/regression-tests/
+Related docs:
+
+- [spawn test new](https://docs.spawn.dev/cli/test-new/)
+- [spawn test run](https://docs.spawn.dev/cli/test-run/)
+- [spawn test expect](https://docs.spawn.dev/cli/test-expect/)
+- [spawn test compare](https://docs.spawn.dev/cli/test-compare/)
+- [Test Macros](https://docs.spawn.dev/recipes/test-macros/)
+- [Non-determinism in Tests](https://docs.spawn.dev/recipes/non-determinism-tests/)
+- [Powerful regression tests for your PostgreSQL project](https://docs.spawn.dev/blog/regression-tests/)
 
 ### Reusable test functions
 
@@ -461,9 +471,11 @@ When we run it, we see:
 (2 rows)
 ```
 
-- https://docs.spawn.dev/cli/test-run/
-- https://docs.spawn.dev/recipes/test-macros/
-- https://docs.spawn.dev/recipes/non-determinism-tests/
+Related docs:
+
+- [spawn test run](https://docs.spawn.dev/cli/test-run/)
+- [Test Macros](https://docs.spawn.dev/recipes/test-macros/)
+- [Non-determinism in Tests](https://docs.spawn.dev/recipes/non-determinism-tests/)
 
 ### Helper functions and utilities
 
@@ -511,7 +523,9 @@ INSERT INTO {{ variables.table_name }} (email)
 VALUES ('{{ variables.admin_email }}');
 ```
 
-- https://docs.spawn.dev/reference/templating
+Related docs:
+
+- [Templating](https://docs.spawn.dev/reference/templating/)
 
 ### Data from JSON
 
@@ -600,11 +614,14 @@ And then if we run it, we see the test created all our customers from the JSON f
 (5 rows)
 ```
 
-- https://docs.spawn.dev/cli/test-build/
-- https://docs.spawn.dev/cli/test-run/
-- https://docs.spawn.dev/recipes/test-macros/
-- https://docs.spawn.dev/recipes/non-determinism-tests/
-- https://docs.spawn.dev/blog/regression-tests/
+Related docs:
+
+- [Templating](https://docs.spawn.dev/reference/templating/)
+- [spawn test build](https://docs.spawn.dev/cli/test-build/)
+- [spawn test run](https://docs.spawn.dev/cli/test-run/)
+- [Test Macros](https://docs.spawn.dev/recipes/test-macros/)
+- [Non-determinism in Tests](https://docs.spawn.dev/recipes/non-determinism-tests/)
+- [Powerful regression tests for your PostgreSQL project](https://docs.spawn.dev/blog/regression-tests/)
 
 ### GitHub action
 
@@ -624,9 +641,11 @@ Spawn has a GitHub action you can include to run your tests and check for any un
     spawn check
 ```
 
-- https://docs.spawn.dev/reference/ci-cd/
-- https://docs.spawn.dev/cli/check/
-- https://docs.spawn.dev/cli/pin-cleanup/
+Related docs:
+
+- [CI/CD](https://docs.spawn.dev/reference/ci-cd/)
+- [spawn check](https://docs.spawn.dev/cli/check/)
+- [spawn pin cleanup](https://docs.spawn.dev/cli/pin-cleanup/)
 
 ### Multiple database targets
 
@@ -673,7 +692,10 @@ command = {
 ...
 ```
 
-- https://docs.spawn.dev/reference/config/
+Related docs:
+
+- [Database Connections](https://docs.spawn.dev/guides/manage-databases/)
+- [Configuration File (spawn.toml)](https://docs.spawn.dev/reference/config/)
 
 ## Comparison
 
