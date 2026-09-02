@@ -11,7 +11,13 @@ Other tools require you to copy your view/function/etc into a new migration when
 
 This is just the tip of the iceberg. View [features](#features) below to see more of what Spawn enables.
 
+**Spawn in action:** create a component, wire it into a migration, build the SQL, pin it, and apply it.
+
 <img src="docs/src/assets/spawn_in_action.png" width="700" alt="Terminal session showing spawn migration new, a colourised SQL build, spawn migration pin, and spawn migration apply, with the migration status table going from Pending to Applied">
+
+**Powerful tests:** loop over a JSON fixture, reuse a macro to seed each row, and run it against a fresh, ephemeral database. Use the result as your test's expected output.
+
+<img src="docs/src/assets/powerful_tests.png" width="700" alt="SQL test file that creates a fresh ephemeral database, loops over a JSON fixture of customers, and calls a reusable create_customer macro to seed each one">
 
 ## Table of Contents
 
