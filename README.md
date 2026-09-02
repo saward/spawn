@@ -1,6 +1,6 @@
 # Spawn
 
-## Database Build System.
+## Database Migrations, Testing, and Reproducibility
 
 [![License](https://img.shields.io/badge/license-AGPL-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-spawn.dev-green)](https://docs.spawn.dev)
@@ -8,6 +8,8 @@
 I like to lean heavily on the database. I don't like tools that abstract away the raw power of databases like PostgreSQL. Spawn is designed for developers who want to use the full breadth of modern database features – Functions, Views, Triggers, RLS – in a way that's easy to manage.
 
 Spawn introduces **Components**, **Compilation**, **Reproducibility**, and **Testing** to SQL migrations.
+
+<img src="docs/src/assets/spawn_in_action.png" width="700" alt="Terminal session showing spawn migration new, a colourised SQL build, spawn migration pin, and spawn migration apply, with the migration status table going from Pending to Applied">
 
 ## Table of Contents
 
