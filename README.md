@@ -9,6 +9,28 @@ I like to lean heavily on the database. I don't like tools that abstract away th
 
 Spawn introduces **Components**, **Compilation**, **Reproducibility**, and **Testing** to SQL migrations.
 
+## Table of Contents
+
+- [Installing](#installing)
+- [Quick Start](#quick-start)
+- [Features](#features)
+  - [Familiar migrations](#familiar-migrations)
+  - [Reusable components](#reusable-components)
+  - [Reproducible builds](#reproducible-builds)
+  - [Golden file tests](#golden-file-tests)
+  - [Reusable test functions](#reusable-test-functions)
+  - [Helper functions and utilities](#helper-functions-and-utilities)
+  - [Secure by default](#secure-by-default)
+  - [Data from JSON](#data-from-json)
+  - [GitHub action](#github-action)
+  - [Multiple database targets](#multiple-database-targets)
+- [Comparison](#comparison)
+- [Roadmap](#roadmap)
+- [Documentation](#documentation)
+- [Telemetry](#telemetry)
+- [Contributing](#contributing)
+- [LLM Disclaimer](#llm-disclaimer)
+
 ## Installing
 
 [![Install Spawn](https://img.shields.io/badge/Get_Started-Install_Spawn-2ea44f?style=for-the-badge&logo=rocket&logoColor=white)](https://docs.spawn.dev/getting-started/install/)
@@ -70,12 +92,6 @@ Related docs:
 - [spawn init](https://docs.spawn.dev/cli/init/)
 - [Welcome to Spawn](https://docs.spawn.dev/getting-started/magic/)
 
-## Documentation
-
-Full documentation, recipes, and configuration guides are available at:
-
-### [👉 docs.spawn.dev](https://docs.spawn.dev)
-
 ## Features
 
 ### Familiar migrations
@@ -109,7 +125,7 @@ mark@Marks-MacBook-Air-M2 spawntest % spawn migration status
 │ Migration                   │ Filesystem │ Pinned │ Database │ Status    │
 ├─────────────────────────────┼────────────┼────────┼──────────┼───────────┤
 │ 20260829121054-name-example │ ✓          │ ✓      │ ✓        │ ✓ Applied │
-│ 20260829123838-update-name  │ ✓          │ ✓      │ ✗        │ ○ Pending │
+│ 20260829123838-update-name  │ ✓          │ ✗      │ ✗        │ ○ Pending │
 └─────────────────────────────┴────────────┴────────┴──────────┴───────────┘
 ```
 
@@ -585,7 +601,7 @@ Related docs:
 
 ### Secure by default
 
-Spawn helps to protect your SQL from malicious input by making the secure option the default one. Spawn auto-escapes every `{{}}` value as a SQL literal by default. E.g., consider the following insert:
+Spawn helps to protect your SQL from malicious input by making the secure option the default one. Spawn auto-escapes every `{{ }}` value as a SQL literal by default. E.g., consider the following insert:
 
 ```sql
 INSERT INTO users (name, age) VALUES ({{ user_name }}, {{ user_age }});
@@ -604,7 +620,7 @@ And a malicious value is escaped automatically:
 INSERT INTO users (name) VALUES ('''; DROP TABLE users; --');
 ```
 
-Sometimes, you need to use a value as an identifier (such as a table name) rather than a value. In those situations, you can use the `escape_identifer` filter:
+Sometimes, you need to use a value as an identifier (such as a table name) rather than a value. In those situations, you can use the `escape_identifier` filter:
 
 ```sql
 SELECT * FROM my_schema.{{ table_name | escape_identifier }} my_table;
@@ -798,9 +814,9 @@ Related docs:
 | **Core Philosophy**  | **Compiled.** Database logic is a codebase. Migrations are build artifacts.          | **DAG.** A dependency graph of changes. No linear version numbers.                       | **Linear.** Run scripts V1 → V2. "Repeatable" scripts run at the end.         | **Simple.** Just run these SQL files in order.                 |
 | **Views/Functions**  | **Pinned Components.** Edit in place. Snapshots locked per-migration (CAS).          | **Versioned Copies.** The rework command creates a new physical file for old migrations. | **Repeatable.** Re-runs `R__` scripts every migration. Doesn't track history. | **Manual.** Copy-paste old logic into new migrations manually. |
 | **Templating**       | **Native (Minijinja).** Macros, loops, and variables inside SQL.                     | **None.** Raw SQL only.                                                                  | **Basic.** `${placeholder}` substitution only.                                | **None.** Raw SQL only.                                        |
-| **Testing**          | **Built-in.** `spawn test` with ephemeral DBs & diff assertions.                     | **Verify Scripts.** Boolean (Pass/Fail) scripts run after deploy.                        | **None.** Relies on external CI tools.                                        | **None.**                                                      |
+| **Testing**          | **Built-in.** `spawn test` with diff-based assertions against a real database.       | **Verify Scripts.** Boolean (Pass/Fail) scripts run after deploy.                        | **None.** Relies on external CI tools.                                        | **None.**                                                      |
 | **Dependencies**     | **Single Binary** (Rust) + `psql` CLI.                                               | **Perl.**                                                                                | **JRE / Binary.**                                                             | **Single Binary** (Go). Very easy install.                     |
-| **Rollbacks**        | 🚧 _Planned._ Currently manual, but not needed as much with pinning.                 | **First Class.** Every change _must_ have a revert script.                               | **Paid.** `Undo` functionality often gated behind Pro/Enterprise.             | **Supported.** `down.sql` files are standard.                  |
+| **Rollbacks**        | 🔄 _Planned._ Currently manual, but not needed as much with pinning.                 | **First Class.** Every change _must_ have a revert script.                               | **Paid.** `Undo` functionality often gated behind Pro/Enterprise.             | **Supported.** `down.sql` files are standard.                  |
 | **DB Support**       | **PostgreSQL** (Focus on depth).                                                     | **Massive.** Postgres, MySQL, Oracle, SQLite, Vertica, etc.                              | **Massive.** Every DB known to man.                                           | **Broad.** Postgres, MySQL, SQLite, ClickHouse.                |
 | **Execution Engine** | **Native CLI Wrapper.** Full parity with `psql` (supports `\copy`, `\gset`, `\set`). | **Native Drivers.**                                                                      | **JDBC.** (Java Database Connectivity).                                       | **Native Drivers.** (Go drivers).                              |
 | **License**          | **AGPL-3.0**                                                                         | **MIT**                                                                                  | **Apache 2.0** (Community) / Proprietary (Teams).                             | **MIT**                                                        |
@@ -830,6 +846,12 @@ Spawn is currently in **Public Beta**. It is fully functional and has test suite
 _(See [Roadmap](https://docs.spawn.dev/reference/roadmap) for detailed tracking)_
 
 ---
+
+## Documentation
+
+Full documentation, recipes, and configuration guides are available at:
+
+### [👉 docs.spawn.dev](https://docs.spawn.dev)
 
 ## Telemetry
 
