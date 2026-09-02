@@ -46,13 +46,13 @@ Custom variables loaded from a JSON/TOML/YAML file via `--variables` or configur
 **Migration:**
 
 ```sql
-CREATE TABLE {{ variables.table_name }} (
+CREATE TABLE {{ variables.table_name | escape_identifier }} (
   id SERIAL PRIMARY KEY,
   email TEXT NOT NULL
 );
 
-INSERT INTO {{ variables.table_name }} (email)
-VALUES ('{{ variables.admin_email }}');
+INSERT INTO {{ variables.table_name | escape_identifier }} (email)
+VALUES ({{ variables.admin_email }});
 ```
 
 ## Including components

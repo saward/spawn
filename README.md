@@ -1,17 +1,39 @@
 # Spawn
 
-LLM disclaimer: I (Mark) estimate that 90% of the code/design/architecture has been done by myself (2026-02-12), but I do use LLM's for filling in tedious gaps. All LLM changes are reviewed to ensure they fit with the current design and future vision.
-
-### The Database Build System.
+## Database Migrations, Testing, and Reproducibility
 
 [![License](https://img.shields.io/badge/license-AGPL-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-spawn.dev-green)](https://docs.spawn.dev)
 
-**Treat your database code like a codebase.**
+Spawn lets you maintain functions, views, triggers, and other database logic as normal editable source files, while compiling immutable historical migrations from them. It was built to support developers who like to lean heavily on the database, but find existing tooling lacking in support for doing so.
 
-I like to lean heavily on the database. I don't like tools that abstract away the raw power of databases like PostgreSQL. Spawn is designed for developers who want to use the full breadth of modern database features: Functions, Views, Triggers, RLS – while keeping the maintenance nightmares to a minimum.
+Other tools require you to copy your view/function/etc into a new migration when updating it, and then edit the copy. This results in hard-to-read pull requests. Spawn lets you keep your snippets in components that you can edit in place, making changes easy to read and review, while keeping reproducibility of old migrations over time via pinning.
 
-Spawn introduces **Components**, **Compilation**, **Reproducibility**, and **Testing** to SQL migrations.
+This is just the tip of the iceberg. View [features](#features) below to see more of what Spawn enables.
+
+<img src="docs/src/assets/spawn_in_action.png" width="700" alt="Terminal session showing spawn migration new, a colourised SQL build, spawn migration pin, and spawn migration apply, with the migration status table going from Pending to Applied">
+
+## Table of Contents
+
+- [Installing](#installing)
+- [Quick Start](#quick-start)
+- [Features](#features)
+  - [Familiar migrations](#familiar-migrations)
+  - [Reusable components](#reusable-components)
+  - [Reproducible builds](#reproducible-builds)
+  - [Golden file tests](#golden-file-tests)
+  - [Reusable test functions](#reusable-test-functions)
+  - [Helper functions and utilities](#helper-functions-and-utilities)
+  - [Secure by default](#secure-by-default)
+  - [Data from JSON](#data-from-json)
+  - [GitHub action](#github-action)
+  - [Multiple database targets](#multiple-database-targets)
+- [Comparison](#comparison)
+- [Roadmap](#roadmap)
+- [Documentation](#documentation)
+- [Telemetry](#telemetry)
+- [Contributing](#contributing)
+- [LLM Disclaimer](#llm-disclaimer)
 
 ## Installing
 
@@ -24,47 +46,103 @@ Or simply:
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/saward/spawn/releases/latest/download/spawn-db-installer.sh | sh
 ```
 
----
+## Quick Start
 
-## The Philosophy
-
-Standard migration tools (Flyway, dbmate) are great at running scripts, but bad at managing code. When you update a complex function, the solutions are usually one of these:
-
-- Create a new migration, copy the old view/function into the new, and edit in the new.
-- Repeatable migrations, which break migrations when running through them from the beginning.
-- Complex solutions like with Sqitch, where a copy of your original migration is made, old scripts updated to point at old, and you edit old as the new.
-
-These solutions can be cumbersome, make tracking changes over time and reviewing PRs challenging, and can break older migrations when running on a fresh database.
-
-**Spawn works differently:**
-
-1.  **Edit in Place:** Keep your functions in `components/`. Edit them there. Get perfect Git diffs.
-2.  **Pin in Time:** When you create a migration, Spawn **snapshots** your components in an efficient git-like storage, referenced per-migration via their `lock.toml`.
-3.  **Compile to SQL:** Spawn compiles your templates and pinned components into standard SQL transactions.
-
-Old migrations work exactly as they did the first time they were created.
-
-> See it in action in the [Tutorial](https://docs.spawn.dev/getting-started/magic/).
-
----
-
-## Simple example
-
-<img src="docs/src/assets/spawn_in_action.png" width="600" alt="Spawn in action">
-
-## A Quick Look: Migrations
-
-**1. Setup**
-
-Get a full Postgres environment running in a few seconds:
+Initialize a new project, with an example `docker compose` setup ready to work out of the box via `spawn init --docker` (or just use `spawn init` for an existing project):
 
 ```bash
-spawn init --docker && docker compose up -d
+% spawn init --docker
+Created docker-compose.yaml for database 'postgres'
+Start the database with: docker compose up -d
+
+▶ Spawn collects anonymous usage data.
+  This helps us improve Spawn.
+  Set "telemetry = false" in spawn.toml or use DO_NOT_TRACK=1 to opt-out.
+
+Initialized spawn project with project_id: 5bb5a4eb-3677-4dc1-84d6-52b768180171
+Created directories:
+  spawn/migrations/
+  spawn/components/
+  spawn/tests/
+  spawn/pinned/
+
+Edit spawn.toml to configure your database connection.
 ```
 
-**2. Define & Pin**
+This creates a `docker-compose.yaml`, a `spawn.toml`, and the `spawn/` project structure:
 
-Create a reusable component (your source of truth) and a migration.
+```bash
+% tree
+.
+├── docker-compose.yaml
+├── spawn
+│   ├── components
+│   ├── migrations
+│   ├── pinned
+│   └── tests
+└── spawn.toml
+
+6 directories, 2 files
+```
+
+Start the database, and you're ready to create your first migration:
+
+```bash
+% docker compose up -d
+```
+
+Related docs:
+
+- [spawn init](https://docs.spawn.dev/cli/init/)
+- [Welcome to Spawn](https://docs.spawn.dev/getting-started/magic/)
+
+## Features
+
+### Familiar migrations
+
+Migrations are just timestamped folders with an `up.sql` script:
+
+```bash
+.
+├── docker-compose.yaml
+├── spawn
+│   ├── components
+│   │   └── users
+│   │       └── name.sql
+│   ├── migrations
+│   │   ├── 20260829121054-name-example
+│   │   │   ├── lock.toml
+│   │   │   └── up.sql
+│   │   └── 20260829123838-update-name
+│   │       └── up.sql
+```
+
+Apply a migration with `spawn migration apply <migration>`, or see status with `spawn migration status`:
+
+```bash
+% spawn migration apply 20260829121054-name-example
+Migration '20260829121054-name-example' applied successfully
+All migrations applied successfully.
+mark@Marks-MacBook-Air-M2 spawntest % spawn migration status
+
+┌─────────────────────────────┬────────────┬────────┬──────────┬───────────┐
+│ Migration                   │ Filesystem │ Pinned │ Database │ Status    │
+├─────────────────────────────┼────────────┼────────┼──────────┼───────────┤
+│ 20260829121054-name-example │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+│ 20260829123838-update-name  │ ✓          │ ✗      │ ✗        │ ○ Pending │
+└─────────────────────────────┴────────────┴────────┴──────────┴───────────┘
+```
+
+Related docs:
+
+- [spawn migration apply](https://docs.spawn.dev/cli/migration-apply/)
+- [spawn migration status](https://docs.spawn.dev/cli/migration-status/)
+
+### Reusable components
+
+Spawn uses [Minijinja](https://github.com/mitsuhiko/minijinja) under the hood to provide powerful templating abilities to your migrations.
+
+Create reusable components and include them in a migration:
 
 _`spawn/components/users/name.sql`_:
 
@@ -76,7 +154,15 @@ END;
 $$ LANGUAGE plpgsql;
 ```
 
-_`spawn/migrations/20260101-init/up.sql`_:
+```
+% spawn migration new name-example
+
+creating migration with name 20260829121054-name-example
+creating migration at spawn/migrations/20260829121054-name-example/up.sql
+New migration created: 20260829121054-name-example
+```
+
+_`spawn/migrations/20260829121054-name-example/up.sql`_:
 
 ```sql
 BEGIN;
@@ -85,18 +171,45 @@ CREATE TABLE users (id serial, first text, last text);
 COMMIT;
 ```
 
-Run `spawn migration pin`. Spawn snapshots the V1 components and references them in a lockfile.
+Building the migration with `spawn migration build 20260829121054-name-example` produces:
 
-```toml
-# spawn/migrations/20260101-init/lock.toml
-pin = "a1b2c3d4..." # 🔒 Locked to V1 forever
+```sql
+BEGIN;
+CREATE TABLE users (id serial, first text, last text);
+CREATE OR REPLACE FUNCTION get_name(first text, last text) RETURNS text AS $$
+BEGIN
+    RETURN first || ' ' || last; -- V1 Logic
+END;
+$$ LANGUAGE plpgsql;
+ -- Include the component
+COMMIT;
 ```
 
-**3. Evolve**
+Related docs:
 
-Months later, you update the **same file** to change the business logic around displaying names, and create a new migration.
+- [Welcome to Spawn](https://docs.spawn.dev/getting-started/magic/)
+- [Templating](https://docs.spawn.dev/reference/templating/)
+- [spawn migration new](https://docs.spawn.dev/cli/migration-new/)
+- [spawn migration build](https://docs.spawn.dev/cli/migration-build/)
 
-_`spawn/components/users/name.sql`_ (Edited in place):
+### Reproducible builds
+
+Pin a migration (similar to `git commit`) via `spawn migration pin <migration>`, so that future changes to a component don't change the output of an old migration.
+
+This allows you to edit a component _in place_, so that when you submit a PR, you can see exactly what's changed. Other tools often require you to duplicate some snippet, and then edit the copy, resulting in a big wall of green. Repeatable migrations help mitigate this, but have other limitations (e.g., running through migrations from start to finish).
+
+Pin a migration:
+
+```bash
+% spawn migration pin 20260829121054-name-example
+Migration pinned: 4219bf4255dee5b32b1154d68fa4fab2
+```
+
+Now if you edit `spawn/components/users/name.sql` and include it in a new migration, the old migration uses the old version of `spawn/components/users/name.sql`, ensuring that old migrations run as they once did.
+
+This allows you to edit components in place, keeping the full git history of changes to them. No need to copy and then edit when making changes.
+
+We can update our `get_name` function, changing the logic (_`spawn/components/users/name.sql`_):
 
 ```sql
 ...
@@ -104,7 +217,17 @@ _`spawn/components/users/name.sql`_ (Edited in place):
 ...
 ```
 
-_`spawn/migrations/20260601-update/up.sql`_ (New Migration):
+Then create a new migration to apply the updated function to our database:
+
+```bash
+% spawn migration new update-name
+
+creating migration with name 20260829123838-update-name
+creating migration at spawn/migrations/20260829123838-update-name/up.sql
+New migration created: 20260829123838-update-name
+```
+
+In that migration, import the component/function as we did in the first migration:
 
 ```sql
 BEGIN;
@@ -113,159 +236,594 @@ BEGIN;
 COMMIT;
 ```
 
-Pin the new migration:
+Now if we build the old migration, we see the old version of the name function still:
 
 ```bash
-spawn migration pin 20260601-update
+% spawn migration build 20260829121054-name-example --pinned
+BEGIN;
+CREATE TABLE users (id serial, first text, last text);
+CREATE OR REPLACE FUNCTION get_name(first text, last text) RETURNS text AS $$
+BEGIN
+    RETURN first || ' ' || last; -- V1 Logic
+END;
+$$ LANGUAGE plpgsql;
+ -- Include the component
+COMMIT;
 ```
 
-**4. The Magic**
-
-You changed the source code, but **you didn't break history.**
-Prove it by building both migrations:
+But the new migration shows the new logic:
 
 ```bash
-spawn migration build 20260101-init --pinned
+% spawn migration pin 20260829123838-update-name
+Migration pinned: 9a3a3d70587fca77197ade26877d589b
+% spawn migration build 20260829123838-update-name --pinned
+BEGIN;
+-- Re-import the SAME component file, which now contains V2 logic
+CREATE OR REPLACE FUNCTION get_name(first text, last text) RETURNS text AS $$
+BEGIN
+    RETURN first || ' ' || substring(last, 1, 1); -- V2 Logic
+END;
+$$ LANGUAGE plpgsql;
+
+COMMIT;
 ```
+
+The component changed, but the old migration still shows the same old logic while the new migration includes the new logic. This gives repeatable builds where you can rerun your migrations from start to finish, all while keeping a nice reviewable git history.
+
+Related docs:
+
+- [spawn migration new](https://docs.spawn.dev/cli/migration-new/)
+- [spawn migration build](https://docs.spawn.dev/cli/migration-build/)
+- [spawn migration pin](https://docs.spawn.dev/cli/migration-pin/)
+
+### Golden file tests
+
+Write tests to validate the behaviour of your functions, triggers, views, etc. Writing a test involves:
+
+1. Create the test, a single plain SQL file.
+2. Establish the expected output via an `expect` file (via `spawn test expect <name>`).
+3. Run test, which compares `expect`ed output to actual output.
+
+Create a test, and apply the first migration from before:
+
+```bash
+% spawn test new get-name
+creating test with name get-name
+creating test at spawn/tests/get-name/test.sql
+New test created: get-name
+% spawn migration apply 20260829121054-name-example
+Migration '20260829121054-name-example' applied successfully
+All migrations applied successfully.
+% spawn migration status
+
+┌─────────────────────────────┬────────────┬────────┬──────────┬───────────┐
+│ Migration                   │ Filesystem │ Pinned │ Database │ Status    │
+├─────────────────────────────┼────────────┼────────┼──────────┼───────────┤
+│ 20260829121054-name-example │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+│ 20260829123838-update-name  │ ✓          │ ✓      │ ✗        │ ○ Pending │
+└─────────────────────────────┴────────────┴────────┴──────────┴───────────┘
+```
+
+Edit `test.sql` to call the function a few times:
 
 ```sql
--- Migration 1 (Built from Snapshot)
-CREATE OR REPLACE FUNCTION get_name...
-    RETURN first || ' ' || last; -- ✅ Still V1
+SELECT get_name('John', 'Doe');
+SELECT get_name('John', 'Duplicate');
+SELECT get_name('Jane', 'Doe');
+SELECT get_name('Jane', 'Duplicate');
 ```
+
+We can see what the test will produce:
 
 ```bash
-spawn migration build 20260601-update --pinned
-```
-
-```sql
--- Migration 2 (Built from Snapshot)
-CREATE OR REPLACE FUNCTION get_name...
-    RETURN first || ' ' || substring(last, 1, 1); -- ✅ Updates to V2
-```
-
-**Zero copy-pasting. Zero broken dependencies.**
-
-> Full tutorial with testing, templating, and more: [docs.spawn.dev/getting-started/magic](https://docs.spawn.dev/getting-started/magic/)
-
-## A Quick Look: Regression Tests
-
-**1. Write the Test**
-
-Use plain SQL to write tests, and run them in a transaction or in a copy of the database via `WITH TEMPLATE`.
-
-_`spawn/tests/users/test.sql`_
-
-```sql
--- 1. Spin up a throwaway copy of your schema
-CREATE DATABASE test_users WITH TEMPLATE postgres;
-\c test_users
-
--- 2. Run scenarios
-SELECT get_name('John', 'Doe'); -- Expecting full name
-
--- 3. Cleanup
-\c postgres
-DROP DATABASE test_users;
-```
-
-**2. Capture the Baseline**
-Run the test and save the output as the "Source of Truth."
-
-```bash
-spawn test expect users
-```
-
-_`spawn/tests/users/expected`_
-
-```text
+% spawn test run get-name
  get_name
 ----------
  John Doe
 (1 row)
+
+    get_name
+----------------
+ John Duplicate
+(1 row)
+
+ get_name
+----------
+ Jane Doe
+(1 row)
+
+    get_name
+----------------
+ Jane Duplicate
+(1 row)
 ```
 
-**3. Catch Regressions (CI/CD)**
-Later, you apply the V2 update (abbreviated last name), but the test still expects the full name. `spawn test compare` catches the behavioral change immediately.
+That looks right, so let's set this output as our expectation, and run to confirm it passes:
 
 ```bash
-spawn test compare users
+# This creates an expect file:
+% spawn test expect get-name
+% head -n 4 spawn/tests/get-name/expected
+ get_name
+----------
+ John Doe
+(1 row)
+# This runs the actual test, comparing actual output to expected:
+% spawn test compare get-name
+[PASS] get-name
 ```
 
-```diff
-[FAIL] users
---- Diff ---
-   get_name
- ----------
--   John Doe
-+   John D
- (1 row)
+Now let's apply our next migration which changes how `get_name` works, and run the test again:
 
-Error: ! Differences found in one or more tests
+```bash
+% spawn migration apply 20260829123838-update-name
+Migration '20260829123838-update-name' applied successfully
+All migrations applied successfully.
+% spawn test compare get-name
 ```
 
-**No manual assertions. Run in GitHub Actions using the [Spawn Action](https://docs.spawn.dev/reference/ci-cd/).**
+<img src="docs/src/assets/test_compare_fail_name.png" width="600" alt="Spawn in action">
 
----
+As expected, the test now fails because our `get_name` logic has changed. Here we see a colourful diff, highlighting the fact that our change in how `get_name` works has broken our test.
 
-## Key Features
+Related docs:
 
-### 📦 Component System (CAS)
+- [spawn test new](https://docs.spawn.dev/cli/test-new/)
+- [spawn test run](https://docs.spawn.dev/cli/test-run/)
+- [spawn test expect](https://docs.spawn.dev/cli/test-expect/)
+- [spawn test compare](https://docs.spawn.dev/cli/test-compare/)
+- [Test Macros](https://docs.spawn.dev/recipes/test-macros/)
+- [Non-determinism in Tests](https://docs.spawn.dev/recipes/non-determinism-tests/)
+- [Powerful regression tests for your PostgreSQL project](https://docs.spawn.dev/blog/regression-tests/)
 
-Store reusable SQL snippets (views, functions, triggers) in a dedicated folder. When you create a migration, `spawn migration pin` creates a content-addressable snapshot of the entire tree.
+### Reusable test functions
 
-- **Result:** Old migrations never break, because they point to the _snapshot_ of the function from 2 years ago, not the version in your folder today.
+Spawn SQL tests are templates that can make use of the same powerful [Minijinja](https://github.com/mitsuhiko/minijinja) templating features, along with some helper functions.
 
-> Docs: [Tutorial: Components](https://docs.spawn.dev/getting-started/magic/) | [Templating](https://docs.spawn.dev/reference/templating/)
+#### Reusable components
 
-### 🧪 Integration Testing Framework
+Components allow you to do powerful things. For example, perhaps you want to make it easy to create a particular record for tests. Let's say we have a database structure like so:
 
-Spawn includes a native testing harness designed for SQL.
+```sql
+CREATE TABLE customer (
+    customer_id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
 
-- **Macros:** Use [Minijinja](https://github.com/mitsuhiko/minijinja) macros to create reusable data factories (`{{ create_user('alice') }}`).
-- **Ephemeral Tests:** Tests can run against temporary database copies (`WITH TEMPLATE`) for speed, or within transactionsi when possible.
-- **Diff-Based Assertions:** Tests pass if the output matches your `expected` file.
+CREATE TABLE address (
+    address_id BIGSERIAL PRIMARY KEY,
+    address_line TEXT NOT NULL
+);
 
-> Docs: [Tutorial: Testing](https://docs.spawn.dev/getting-started/magic/) | [Test Macros](https://docs.spawn.dev/recipes/test-macros/)
+CREATE TABLE customer_address (
+    customer_id BIGINT NOT NULL REFERENCES customer(customer_id),
+    address_id BIGINT NOT NULL REFERENCES address(address_id),
 
-### 🚀 Zero-Abstractions
+    PRIMARY KEY (customer_id, address_id)
+);
+```
 
-Spawn wraps `psql`. If you can do it in Postgres, you can do it in Spawn.
+It's tedious to write the SQL to create test customers, so let's make a macro in `spawn/components/tests/helpers/create_customer.sql`:
 
-- No ORM limitations.
-- No waiting for the tool to support a new Postgres feature.
-- Full support for `\gset`, `\copy`, and other psql meta-commands.
+```sql
+{% macro create_customer(
+  customer_id="DEFAULT" | safe,
+  address_id="DEFAULT" | safe,
+  name="Test Customer",
+  address_line="1 Test Street",
+) %}
 
-### ☁️ Cloud Native
+insert into customer (
+    customer_id,
+    name
+) values (
+    {{ customer_id }},
+    {{ name }}
+)
+returning customer_id as created_customer_id
+\gset
+
+insert into address (
+    address_id,
+    address_line
+) values (
+    {{ address_id }},
+    {{ address_line }}
+)
+returning address_id as created_address_id
+\gset
+
+insert into customer_address (
+    customer_id,
+    address_id
+) values (
+    :created_customer_id,
+    :created_address_id
+);
+
+{%- endmacro %}
+```
+
+This uses some `psql` features, allowing us to optionally provide address and customer id.
+
+Then we can call it in a test (`spawn/tests/create-customer/test.sql`):
+
+```sql
+{% from "tests/helpers/create_customer.sql" import create_customer -%}
+
+{{ create_customer() }}
+{{ create_customer(address_id=4, name="Bob Jane") }}
+
+SELECT * FROM customer;
+SELECT * FROM address;
+SELECT * FROM customer_address;
+```
+
+This makes it really simple to create test data for tests, overriding details when required. The SQL it produces is the same as the below, massively reducing repetition and making tests easier to read:
+
+```sql
+insert into customer (
+    customer_id,
+    name
+) values (
+    DEFAULT,
+    'Test Customer'
+)
+returning customer_id as created_customer_id
+\gset
+
+insert into address (
+    address_id,
+    address_line
+) values (
+    DEFAULT,
+    '1 Test Street'
+)
+returning address_id as created_address_id
+\gset
+
+insert into customer_address (
+    customer_id,
+    address_id
+) values (
+    :created_customer_id,
+    :created_address_id
+);
+
+
+insert into customer (
+    customer_id,
+    name
+) values (
+    DEFAULT,
+    'Bob Jane'
+)
+returning customer_id as created_customer_id
+\gset
+
+insert into address (
+    address_id,
+    address_line
+) values (
+    4,
+    '1 Test Street'
+)
+returning address_id as created_address_id
+\gset
+
+insert into customer_address (
+    customer_id,
+    address_id
+) values (
+    :created_customer_id,
+    :created_address_id
+);
+
+SELECT * FROM customer;
+SELECT * FROM address;
+SELECT * FROM customer_address;
+```
+
+When we run it, we see:
+
+```bash
+% spawn test run create-customer
+ customer_id |     name
+-------------+---------------
+           1 | Test Customer
+           2 | Bob Jane
+(2 rows)
+
+ address_id | address_line
+------------+---------------
+          1 | 1 Test Street
+          4 | 1 Test Street
+(2 rows)
+
+ customer_id | address_id
+-------------+------------
+           1 |          1
+           2 |          4
+(2 rows)
+```
+
+Related docs:
+
+- [spawn test run](https://docs.spawn.dev/cli/test-run/)
+- [Test Macros](https://docs.spawn.dev/recipes/test-macros/)
+- [Non-determinism in Tests](https://docs.spawn.dev/recipes/non-determinism-tests/)
+
+### Helper functions and utilities
+
+Spawn provides a handful of helper functions and utilities that can be used in both migrations and tests.
+
+Create a v4 uuid (most of the time you'd likely use the built in database uuid generation function):
+
+```sql
+INSERT INTO users (id, name) VALUES ({{ gen_uuid_v4() }}, {{ user_name }});
+```
+
+Include bytes from a file, which can be useful for testing:
+
+```sql
+INSERT INTO images (data) VALUES (decode({{ "images/logo.png"|read_file|base64_encode }}, 'base64'));
+```
+
+Run code only when applying to a dev database target:
+
+```sql
+{% if env == "dev" %}
+-- Insert test data only in dev
+INSERT INTO users (email) VALUES ('test@example.com');
+{% endif %}
+```
+
+Use data passed in via `--variables` (e.g., `variables.json`):
+
+```json
+{
+  "table_name": "users",
+  "admin_email": "admin@example.com"
+}
+```
+
+And then reference it within your migration or test:
+
+```sql
+CREATE TABLE {{ variables.table_name | escape_identifier }} (
+  id SERIAL PRIMARY KEY,
+  email TEXT NOT NULL
+);
+
+INSERT INTO {{ variables.table_name | escape_identifier }} (email)
+VALUES ({{ variables.admin_email }});
+```
+
+Related docs:
+
+- [Templating](https://docs.spawn.dev/reference/templating/)
+
+### Secure by default
+
+Spawn helps to protect your SQL from malicious input by making the secure option the default one. Spawn auto-escapes every `{{ }}` value as a SQL literal by default. E.g., consider the following insert:
+
+```sql
+INSERT INTO users (name, age) VALUES ({{ user_name }}, {{ user_age }});
+```
+
+If `user_name` is `O'Reilly` and `user_age` is `42`, that produces:
+
+```sql
+INSERT INTO users (name, age) VALUES ('O''Reilly', 42);
+```
+
+And a malicious value is escaped automatically:
+
+```sql
+-- user_name = "'; DROP TABLE users; --"
+INSERT INTO users (name) VALUES ('''; DROP TABLE users; --');
+```
+
+Sometimes, you need to use a value as an identifier (such as a table name) rather than a value. In those situations, you can use the `escape_identifier` filter:
+
+```sql
+SELECT * FROM my_schema.{{ table_name | escape_identifier }} my_table;
+```
+
+Or if you know the value is safe and you want to use it as it is, unmodified and unescaped, you can do so with the `safe` filter:
+
+```sql
+{% set conditions = "status = 'active' AND created_at > NOW() - INTERVAL '1 day'" %}
+SELECT * FROM users WHERE {{ conditions | safe }};
+```
+
+Related docs:
+
+- [Templating](https://docs.spawn.dev/reference/templating/)
+
+### Data from JSON
+
+In the preceding section, we saw a way to pass in variables as a command line parameter. But sometimes you may want to make use of data from a fixture that you can use in tests automatically.
+
+Let's say we want to create a handful of customers, using the macro from the [Reusable components](#reusable-components-1) section above, but making use of data in a file in our `components` folder. _`spawn/components/tests/helpers/customers.json`_:
+
+```json
+[
+  {
+    "name": "Alice Brown",
+    "address": "1 King Street"
+  },
+  {
+    "name": "Ben Carter",
+    "address": "22 High Street"
+  },
+  {
+    "name": "Chloe O'Davis",
+    "address": "7 Station Road"
+  },
+  {
+    "name": "Daniel Evans",
+    "address": "14 Market Lane"
+  },
+  {
+    "name": "Emma Foster",
+    "address": "3 Victoria Avenue"
+  }
+]
+```
+
+We might want to loop over this to create a handful of test cases. To do that, in our test (this works for migration scripts too), you can import this JSON and loop over it, using our macro to create test clients:
+
+```sql
+{% from "tests/helpers/create_customer.sql" import create_customer -%}
+
+-- Use 'WITH TEMPLATE' so you can run the test repeatedly with a fresh
+-- copy each time:
+DROP DATABASE IF EXISTS create_customer_test;
+CREATE DATABASE create_customer_test WITH TEMPLATE postgres;
+\c create_customer_test
+
+{% set customers = "tests/helpers/customers.json" | read_json %}
+{% for customer in customers %}
+  {{ create_customer(name=customer.name, address_line=customer.address) }}
+{% endfor %}
+
+SELECT * FROM customer;
+SELECT * FROM address;
+SELECT * FROM customer_address;
+
+\c postgres
+DROP DATABASE IF EXISTS create_customer_test;
+```
+
+And then if we run it, we see the test created all our customers from the JSON fixture:
+
+```
+% spawn test run create-customer
+ customer_id |     name
+-------------+---------------
+           3 | Alice Brown
+           4 | Ben Carter
+           5 | Chloe O'Davis
+           6 | Daniel Evans
+           7 | Emma Foster
+(5 rows)
+
+ address_id |   address_line
+------------+-------------------
+          2 | 1 King Street
+          3 | 22 High Street
+          4 | 7 Station Road
+          5 | 14 Market Lane
+          6 | 3 Victoria Avenue
+(5 rows)
+
+ customer_id | address_id
+-------------+------------
+           3 |          2
+           4 |          3
+           5 |          4
+           6 |          5
+           7 |          6
+(5 rows)
+```
+
+Related docs:
+
+- [Templating](https://docs.spawn.dev/reference/templating/)
+- [spawn test build](https://docs.spawn.dev/cli/test-build/)
+- [spawn test run](https://docs.spawn.dev/cli/test-run/)
+- [Test Macros](https://docs.spawn.dev/recipes/test-macros/)
+- [Non-determinism in Tests](https://docs.spawn.dev/recipes/non-determinism-tests/)
+- [Powerful regression tests for your PostgreSQL project](https://docs.spawn.dev/blog/regression-tests/)
+
+### GitHub action
+
+Spawn has a GitHub action you can include to run your tests and check for any unpinned migrations (it's usually best to pin a migration once you're finished with it):
+
+```yaml
+- name: Install Spawn
+  uses: saward/spawn-action@v1
+
+- name: Run check
+  run: |
+    spawn check
+
+- name: Run tests
+  run: |
+    spawn test compare test-1
+    spawn test compare test-2
+```
+
+Related docs:
+
+- [CI/CD](https://docs.spawn.dev/reference/ci-cd/)
+- [spawn check](https://docs.spawn.dev/cli/check/)
+- [spawn pin cleanup](https://docs.spawn.dev/cli/pin-cleanup/)
+
+### Multiple database targets
+
+You can specify multiple database targets in your `spawn.toml` config file. For example, you can set up a postgres-psql target:
+
+```toml
+# spawn.toml
+[targets.local]
+engine = "postgres-psql"
+spawn_database = "postgres"
+spawn_schema = "_spawn"
+environment = "dev"
+
+[targets.local.command]
+kind = "direct"
+direct = ["docker", "exec", "-i", "postgres-db", "psql", "-U", "postgres", "postgres"]
+```
+
+And then execute commands against a specific target. E.g.:
+
+```bash
+% spawn migration status --target local
+
+┌─────────────────────────────┬────────────┬────────┬──────────┬───────────┐
+│ Migration                   │ Filesystem │ Pinned │ Database │ Status    │
+├─────────────────────────────┼────────────┼────────┼──────────┼───────────┤
+│ 20260829121054-name-example │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+│ 20260829123838-update-name  │ ✓          │ ✓      │ ✓        │ ✓ Applied │
+└─────────────────────────────┴────────────┴────────┴──────────┴───────────┘
+```
 
 Connecting to production databases can be configured to use all your standard commands. You just need to provide it with a valid psql pipe.
-Spawn supports **Provider Commands** – configure it to use `gcloud`, `aws`, or `az` CLIs to resolve the connection or SSH tunnel automatically.
+Spawn supports **Provider Commands**. Configure it to use `gcloud`, `aws`, or `az` CLIs to resolve the connection or SSH tunnel automatically.
 
 ```toml
 # spawn.toml
 [targets.prod]
-command = {
-    kind = "provider",
-    provider = ["gcloud", "compute", "ssh", "--dry-run", ...],
-    append = ["psql", ...]
-}
+...
+
+[targets.prod.command]
+kind = "provider"
+provider = ["gcloud", "compute", "ssh", "--dry-run", ...]
+append = ["psql", ...]
+...
 ```
 
-> Docs: [Manage Databases](https://docs.spawn.dev/guides/manage-databases/) | [Configuration](https://docs.spawn.dev/reference/config/)
+Related docs:
+
+- [Database Connections](https://docs.spawn.dev/guides/manage-databases/)
+- [Configuration File (spawn.toml)](https://docs.spawn.dev/reference/config/)
 
 ## Comparison
 
-| Feature              | **Spawn**                                                                            | **Sqitch**                                                                           | **Flyway**                                                                    | **dbmate**                                                     |
-| :------------------- | :----------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------- | :---------------------------------------------------------------------------- | :------------------------------------------------------------- |
-| **Core Philosophy**  | **Compiled.** Database logic is a codebase. Migrations are build artifacts.          | **DAG.** A dependency graph of changes. No linear version numbers.                   | **Linear.** Run scripts V1 → V2. "Repeatable" scripts run at the end.         | **Simple.** Just run these SQL files in order.                 |
-| **Views/Functions**  | **Pinned Components.** Edit in place. Snapshots locked per-migration (CAS).          | **Versioned Copies.** The rework command creates a new physical file old migrations. | **Repeatable.** Re-runs `R__` scripts every migration. Doesn't track history. | **Manual.** Copy-paste old logic into new migrations manually. |
-| **Templating**       | **Native (Minijinja).** Macros, loops, and variables inside SQL.                     | **None.** Raw SQL only.                                                              | **Basic.** `${placeholder}` substitution only.                                | **None.** Raw SQL only.                                        |
-| **Testing**          | **Built-in.** `spawn test` with ephemeral DBs & diff assertions.                     | **Verify Scripts.** Boolean (Pass/Fail) scripts run after deploy.                    | **None.** Relies on external CI tools.                                        | **None.**                                                      |
-| **Dependencies**     | **Single Binary** (Rust) + `psql` CLI.                                               | **Perl.**                                                                            | **JRE / Binary.**                                                             | **Single Binary** (Go). Very easy install.                     |
-| **Rollbacks**        | 🚧 _Planned._ Currently manual, but not needed as much with pinning.                 | **First Class.** Every change _must_ have a revert script.                           | **Paid.** `Undo` functionality often gated behind Pro/Enterprise.             | **Supported.** `down.sql` files are standard.                  |
-| **DB Support**       | **PostgreSQL** (Focus on depth).                                                     | **Massive.** Postgres, MySQL, Oracle, SQLite, Vertica, etc.                          | **Massive.** Every DB known to man.                                           | **Broad.** Postgres, MySQL, SQLite, ClickHouse.                |
-| **Execution Engine** | **Native CLI Wrapper.** Full parity with `psql` (supports `\copy`, `\gset`, `\set`). | **Native Drivers.**                                                                  | **JDBC.** (Java Database Connectivity).                                       | **Native Drivers.** (Go drivers).                              |
-| **License**          | **AGPL-3.0**                                                                         | **MIT**                                                                              | **Apache 2.0** (Community) / Proprietary (Teams).                             | **MIT**                                                        |
+| Feature              | **Spawn**                                                                            | **Sqitch**                                                                               | **Flyway**                                                                    | **dbmate**                                                     |
+| :------------------- | :----------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------- | :------------------------------------------------------------- |
+| **Core Philosophy**  | **Compiled.** Database logic is a codebase. Migrations are build artifacts.          | **DAG.** A dependency graph of changes. No linear version numbers.                       | **Linear.** Run scripts V1 → V2. "Repeatable" scripts run at the end.         | **Simple.** Just run these SQL files in order.                 |
+| **Views/Functions**  | **Pinned Components.** Edit in place. Snapshots locked per-migration (CAS).          | **Versioned Copies.** The rework command creates a new physical file for old migrations. | **Repeatable.** Re-runs `R__` scripts every migration. Doesn't track history. | **Manual.** Copy-paste old logic into new migrations manually. |
+| **Templating**       | **Native (Minijinja).** Macros, loops, and variables inside SQL.                     | **None.** Raw SQL only.                                                                  | **Basic.** `${placeholder}` substitution only.                                | **None.** Raw SQL only.                                        |
+| **Testing**          | **Built-in.** `spawn test` with diff-based assertions against a real database.       | **Verify Scripts.** Boolean (Pass/Fail) scripts run after deploy.                        | **None.** Relies on external CI tools.                                        | **None.**                                                      |
+| **Dependencies**     | **Single Binary** (Rust) + `psql` CLI.                                               | **Perl.**                                                                                | **JRE / Binary.**                                                             | **Single Binary** (Go). Very easy install.                     |
+| **Rollbacks**        | 🔄 _Planned._ Currently manual.                                                      | **First Class.** Every change _must_ have a revert script.                               | **Paid.** `Undo` functionality often gated behind Pro/Enterprise.             | **Supported.** `down.sql` files are standard.                  |
+| **DB Support**       | **PostgreSQL** (Focus on depth).                                                     | **Massive.** Postgres, MySQL, Oracle, SQLite, Vertica, etc.                              | **Massive.** Every DB known to man.                                           | **Broad.** Postgres, MySQL, SQLite, ClickHouse.                |
+| **Execution Engine** | **Native CLI Wrapper.** Full parity with `psql` (supports `\copy`, `\gset`, `\set`). | **Native Drivers.**                                                                      | **JDBC.** (Java Database Connectivity).                                       | **Native Drivers.** (Go drivers).                              |
+| **License**          | **AGPL-3.0**                                                                         | **MIT**                                                                                  | **Apache 2.0** (Community) / Proprietary (Teams).                             | **MIT**                                                        |
 
 ## Roadmap
 
@@ -286,7 +844,6 @@ Spawn is currently in **Public Beta**. It is fully functional and has test suite
 - 🔄 **Rollback Support:** Optional down scripts for reversible migrations.
 - 🔄 **Additional Engines:** Native PostgreSQL driver, MySQL, and more.
 - 🔄 **Multi-Tenancy:** First-class support for schema-per-tenant migrations.
-- 🔄 **Drift Detection:** Compare expected vs actual database state.
 - 🔄 **External Data Sources:** Better support for data from files, URLs, and scripts in templates.
 - 🔄 **Plugin System:** Custom extensions for engines, data sources, and workflows.
 
@@ -307,3 +864,7 @@ Spawn collects anonymous usage data, to help us improve Spawn. Set `"telemetry =
 ## Contributing
 
 Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. Note that this project requires signing a CLA.
+
+## LLM Disclaimer
+
+I (Mark) estimate that 90% of the code/design/architecture has been done by myself (2026-02-12), but I do use LLM's for filling in tedious gaps. All LLM changes are reviewed to ensure they fit with the current design and future vision.
