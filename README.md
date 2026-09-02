@@ -5,9 +5,11 @@
 [![License](https://img.shields.io/badge/license-AGPL-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-spawn.dev-green)](https://docs.spawn.dev)
 
-I like to lean heavily on the database. I don't like tools that abstract away the raw power of databases like PostgreSQL. Spawn is designed for developers who want to use the full breadth of modern database features – Functions, Views, Triggers, RLS – in a way that's easy to manage.
+Spawn lets you maintain functions, views, triggers, and other database logic as normal editable source files, while compiling immutable historical migrations from them. It was built to support developers who like to lean heavily on the database, but find existing tooling lacking in support for doing so.
 
-Spawn introduces **Components**, **Compilation**, **Reproducibility**, and **Testing** to SQL migrations.
+Other tools require you to copy your view/function/etc into a new migration when updating it, and then edit the copy. This results in hard-to-read pull requests. Spawn lets you keep your snippets in components that you can edit in place, making changes easy to read and review, while keeping reproducibility of old migrations over time via pinning.
+
+This is just the tip of the iceberg. View [features](#features) below to see more of what Spawn enables.
 
 <img src="docs/src/assets/spawn_in_action.png" width="700" alt="Terminal session showing spawn migration new, a colourised SQL build, spawn migration pin, and spawn migration apply, with the migration status table going from Pending to Applied">
 
@@ -818,7 +820,7 @@ Related docs:
 | **Templating**       | **Native (Minijinja).** Macros, loops, and variables inside SQL.                     | **None.** Raw SQL only.                                                                  | **Basic.** `${placeholder}` substitution only.                                | **None.** Raw SQL only.                                        |
 | **Testing**          | **Built-in.** `spawn test` with diff-based assertions against a real database.       | **Verify Scripts.** Boolean (Pass/Fail) scripts run after deploy.                        | **None.** Relies on external CI tools.                                        | **None.**                                                      |
 | **Dependencies**     | **Single Binary** (Rust) + `psql` CLI.                                               | **Perl.**                                                                                | **JRE / Binary.**                                                             | **Single Binary** (Go). Very easy install.                     |
-| **Rollbacks**        | 🔄 _Planned._ Currently manual, but not needed as much with pinning.                 | **First Class.** Every change _must_ have a revert script.                               | **Paid.** `Undo` functionality often gated behind Pro/Enterprise.             | **Supported.** `down.sql` files are standard.                  |
+| **Rollbacks**        | 🔄 _Planned._ Currently manual.                                                      | **First Class.** Every change _must_ have a revert script.                               | **Paid.** `Undo` functionality often gated behind Pro/Enterprise.             | **Supported.** `down.sql` files are standard.                  |
 | **DB Support**       | **PostgreSQL** (Focus on depth).                                                     | **Massive.** Postgres, MySQL, Oracle, SQLite, Vertica, etc.                              | **Massive.** Every DB known to man.                                           | **Broad.** Postgres, MySQL, SQLite, ClickHouse.                |
 | **Execution Engine** | **Native CLI Wrapper.** Full parity with `psql` (supports `\copy`, `\gset`, `\set`). | **Native Drivers.**                                                                      | **JDBC.** (Java Database Connectivity).                                       | **Native Drivers.** (Go drivers).                              |
 | **License**          | **AGPL-3.0**                                                                         | **MIT**                                                                                  | **Apache 2.0** (Community) / Proprietary (Teams).                             | **MIT**                                                        |
