@@ -129,7 +129,7 @@ Apply a migration with `spawn migration apply <migration>`, or see status with `
 % spawn migration apply 20260829121054-name-example
 Migration '20260829121054-name-example' applied successfully
 All migrations applied successfully.
-mark@Marks-MacBook-Air-M2 spawntest % spawn migration status
+% spawn migration status
 
 ┌─────────────────────────────┬────────────┬────────┬──────────┬───────────┐
 │ Migration                   │ Filesystem │ Pinned │ Database │ Status    │
