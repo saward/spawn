@@ -70,6 +70,12 @@ Related docs:
 - [spawn init](https://docs.spawn.dev/cli/init/)
 - [Welcome to Spawn](https://docs.spawn.dev/getting-started/magic/)
 
+## Documentation
+
+Full documentation, recipes, and configuration guides are available at:
+
+### [👉 docs.spawn.dev](https://docs.spawn.dev)
+
 ## Features
 
 ### Familiar migrations
@@ -577,6 +583,44 @@ Related docs:
 
 - [Templating](https://docs.spawn.dev/reference/templating/)
 
+### Secure by default
+
+Spawn helps to protect your SQL from malicious input by making the secure option the default one. Spawn auto-escapes every `{{}}` value as a SQL literal by default. E.g., consider the following insert:
+
+```sql
+INSERT INTO users (name, age) VALUES ({{ user_name }}, {{ user_age }});
+```
+
+If `user_name` is `O'Reilly` and `user_age` is `42`, that produces:
+
+```sql
+INSERT INTO users (name, age) VALUES ('O''Reilly', 42);
+```
+
+And a malicious value is escaped automatically:
+
+```sql
+-- user_name = "'; DROP TABLE users; --"
+INSERT INTO users (name) VALUES ('''; DROP TABLE users; --');
+```
+
+Sometimes, you need to use a value as an identifier (such as a table name) rather than a value. In those situations, you can use the `escape_identifer` filter:
+
+```sql
+SELECT * FROM my_schema.{{ table_name | escape_identifier }} my_table;
+```
+
+Or if you know the value is safe and you want to use it as it is, unmodified and unescaped, you can do so with the `safe` filter:
+
+```sql
+{% set conditions = "status = 'active' AND created_at > NOW() - INTERVAL '1 day'" %}
+SELECT * FROM users WHERE {{ conditions | safe }};
+```
+
+Related docs:
+
+- [Templating](https://docs.spawn.dev/reference/templating/)
+
 ### Data from JSON
 
 In the preceding section, we saw a way to pass in variables as a command line parameter. But sometimes you may want to make use of data from a fixture that you can use in tests automatically.
@@ -786,12 +830,6 @@ Spawn is currently in **Public Beta**. It is fully functional and has test suite
 _(See [Roadmap](https://docs.spawn.dev/reference/roadmap) for detailed tracking)_
 
 ---
-
-## Documentation
-
-Full documentation, recipes, and configuration guides are available at:
-
-### [👉 docs.spawn.dev](https://docs.spawn.dev)
 
 ## Telemetry
 
