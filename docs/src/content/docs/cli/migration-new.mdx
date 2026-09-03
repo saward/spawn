@@ -33,6 +33,8 @@ COMMIT;
 
 The timestamp prefix ensures migrations are applied in chronological order.
 
+To use your own starting content instead of the default template, set [`up_template`](/reference/config/#up_template) in `spawn.toml` to a path (relative to `spawn_folder`) of a file to copy into `up.sql`.
+
 ## Example
 
 ```bash

@@ -15,12 +15,18 @@ static PINFILE_LOCK_NAME: &str = "lock.toml";
 // 1. The "Blueprint" struct. Use this for Deserialization.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ConfigLoaderSaver {
-    pub spawn_folder: String,
-    pub target: Option<String>,
     pub environment: Option<String>,
-    pub targets: Option<HashMap<String, TargetConfig>>,
     /// Unique project identifier for telemetry (UUID string)
     pub project_id: Option<String>,
+    pub spawn_folder: String,
+    pub target: Option<String>,
+    pub targets: Option<HashMap<String, TargetConfig>>,
+    /// Allows you to override the default template for test new with a
+    /// custom one.
+    pub test_template: Option<String>,
+    /// Allows you to override the default template for migration new with a
+    /// custom one.
+    pub up_template: Option<String>,
     /// Set to false to disable telemetry
     #[serde(default = "default_telemetry", skip_serializing_if = "Option::is_none")]
     pub telemetry: Option<bool>,
@@ -34,11 +40,13 @@ impl ConfigLoaderSaver {
     // 2. A method to transform the Loader into the actual Config
     pub fn build(self, base_fs: Operator, spawn_fs: Option<Operator>) -> Config {
         Config {
+            environment: self.environment,
+            project_id: self.project_id,
             spawn_folder: self.spawn_folder,
             target: self.target,
-            environment: self.environment,
             targets: self.targets.unwrap_or_default(),
-            project_id: self.project_id,
+            test_template: self.test_template,
+            up_template: self.up_template,
             telemetry: self.telemetry.unwrap_or(true),
             base_fs,
             spawn_fs,
@@ -111,6 +119,14 @@ impl FolderPather {
         s
     }
 
+    /// Returns the path provided with the spawn folder base path set.
+    pub fn any_path(&self, path: &str) -> String {
+        let mut s = self.spawn_folder_path().to_string();
+        s.push('/');
+        s.push_str(path);
+        s
+    }
+
     pub fn components_folder(&self) -> String {
         let mut s = self.spawn_folder_path().to_string();
         s.push_str("/components");
@@ -167,12 +183,18 @@ impl FolderPather {
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    spawn_folder: String,
-    pub target: Option<String>,
     pub environment: Option<String>, // Override the environment for the target config
-    pub targets: HashMap<String, TargetConfig>,
     /// Unique project identifier for telemetry (UUID string)
     pub project_id: Option<String>,
+    spawn_folder: String,
+    pub target: Option<String>,
+    pub targets: HashMap<String, TargetConfig>,
+    /// Allows you to override the default template for test new with a
+    /// custom one.
+    pub test_template: Option<String>,
+    /// Allows you to override the default template for migration new with a
+    /// custom one.
+    pub up_template: Option<String>,
     /// Whether telemetry is enabled in config
     pub telemetry: bool,
 

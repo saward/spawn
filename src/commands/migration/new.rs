@@ -1,7 +1,7 @@
 use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::migrator::Migrator;
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 pub struct NewMigration {
     pub name: String,
@@ -23,6 +23,28 @@ impl Command for NewMigration {
         println!("creating migration with name {}", &migration_name);
         let mg = Migrator::new(config, &migration_name, false);
 
-        Ok(Outcome::NewMigration(mg.create_migration().await?))
+        let up_template: Option<String> = match &config.up_template {
+            Some(t) => {
+                let path = config.pather().any_path(t);
+                let content = config
+                    .operator()
+                    .read(&path)
+                    .await
+                    .context(format!(
+                        "Failed to read migration template file '{}'",
+                        &path
+                    ))?
+                    .to_bytes();
+                Some(
+                    String::from_utf8(content.to_vec())
+                        .context("Migration template file is not valid UTF-8")?,
+                )
+            }
+            None => None,
+        };
+
+        Ok(Outcome::NewMigration(
+            mg.create_migration(up_template).await?,
+        ))
     }
 }

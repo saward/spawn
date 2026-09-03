@@ -146,12 +146,15 @@ impl Tester {
     }
 
     /// Creates a new test folder with a blank test.sql file.
-    pub async fn create_test(&self) -> Result<String> {
+    pub async fn create_test(&self, template: Option<String>) -> Result<String> {
         let script_path = self.test_file_path();
         println!("creating test at {}", &script_path);
         self.config
             .operator()
-            .write(&script_path, BASE_TEST)
+            .write(
+                &script_path,
+                template.unwrap_or_else(|| BASE_TEST.to_string()),
+            )
             .await?;
 
         Ok(self.script_path.clone())

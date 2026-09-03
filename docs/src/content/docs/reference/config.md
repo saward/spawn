@@ -33,6 +33,45 @@ This would expect the following directory layout:
 - `./database/spawn/tests/`
 - `./database/spawn/pinned/`
 
+### `up_template`
+
+**Type:** String  
+**Required:** No  
+**Default:** None (uses the built-in default template)
+
+Path to a custom template file used by `spawn migration new` instead of the built-in default. Resolved relative to `spawn_folder`.
+
+```toml
+up_template = "templates/custom-up.sql"
+```
+
+With this set, `spawn migration new` copies the contents of `spawn_folder/templates/custom-up.sql` into the new migration's `up.sql` instead of the built-in default:
+
+```sql
+BEGIN;
+
+COMMIT;
+```
+
+### `test_template`
+
+**Type:** String  
+**Required:** No  
+**Default:** None (uses the built-in default template)
+
+Path to a custom template file used by `spawn test new` instead of the built-in default. Resolved relative to `spawn_folder`.
+
+```toml
+test_template = "templates/custom-test.sql"
+```
+
+With this set, `spawn test new` copies the contents of `spawn_folder/templates/custom-test.sql` into the new test's `test.sql` instead of the built-in default:
+
+```sql
+-- Test file
+SELECT 1;
+```
+
 ### `target`
 
 **Type:** String  
