@@ -18,7 +18,7 @@ pub struct ConfigLoaderSaver {
     pub environment: Option<String>,
     /// Allows you to override the default template for migration new with a
     /// custom one.
-    pub migration_template: Option<String>,
+    pub up_template: Option<String>,
     /// Unique project identifier for telemetry (UUID string)
     pub project_id: Option<String>,
     pub spawn_folder: String,
@@ -38,7 +38,7 @@ impl ConfigLoaderSaver {
     pub fn build(self, base_fs: Operator, spawn_fs: Option<Operator>) -> Config {
         Config {
             environment: self.environment,
-            migration_template: self.migration_template,
+            up_template: self.up_template,
             project_id: self.project_id,
             spawn_folder: self.spawn_folder,
             target: self.target,
@@ -182,7 +182,7 @@ pub struct Config {
     pub environment: Option<String>, // Override the environment for the target config
     /// Allows you to override the default template for migration new with a
     /// custom one.
-    pub migration_template: Option<String>,
+    pub up_template: Option<String>,
     /// Unique project identifier for telemetry (UUID string)
     pub project_id: Option<String>,
     spawn_folder: String,

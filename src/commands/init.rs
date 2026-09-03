@@ -76,7 +76,7 @@ impl Init {
 
         // Create default config
         let config = ConfigLoaderSaver {
-            migration_template: None,
+            up_template: None,
             spawn_folder: "spawn".to_string(),
             target: Some("postgres_psql".to_string()),
             environment: None,

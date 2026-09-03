@@ -100,7 +100,7 @@ impl MigrationTestHelper {
             spawn_folder: "/db".to_string(),
             target: Some("postgres_psql".to_string()),
             environment: Some("dev".to_string()),
-            migration_template: None,
+            up_template: None,
             targets: Some(targets),
             project_id: None,
             telemetry: Some(false),
@@ -250,6 +250,35 @@ async fn test_create_migration() -> Result<(), Box<dyn std::error::Error>> {
     let file_data = helper.fs.read(&script_path).await?.to_bytes();
     let file_contents = String::from_utf8(file_data.to_vec())?;
     assert_eq!(DEFAULT_MIGRATION_CONTENT, file_contents,);
+
+    Ok(())
+}
+
+// Run a create migration test using a custom up_template:
+#[tokio::test]
+async fn test_create_migration_with_custom_template() -> Result<(), Box<dyn std::error::Error>> {
+    const CUSTOM_TEMPLATE_CONTENT: &str = "-- custom migration template\nBEGIN;\n\nCOMMIT;\n";
+
+    let mem_op = Operator::new(Memory::default())?.finish();
+    let mut config_loader = MigrationTestHelper::default_config_loadersaver();
+    config_loader.up_template = Some("templates/custom.sql".to_string());
+    let helper = MigrationTestHelper::new_from_operator_with_config(mem_op, config_loader).await?;
+
+    let cfg = helper.load_config().await?;
+    let template_path = cfg.pather().any_path("templates/custom.sql");
+    helper.fs.write(&template_path, CUSTOM_TEMPLATE_CONTENT).await?;
+
+    // Test that we can create a migration
+    let migration_name = helper
+        .create_migration("test-create")
+        .await
+        .expect("Failed to create migration with helper");
+
+    // Check the contents are what we expect:
+    let script_path = format!("{}/up.sql", cfg.pather().migration_folder(&migration_name));
+    let file_data = helper.fs.read(&script_path).await?.to_bytes();
+    let file_contents = String::from_utf8(file_data.to_vec())?;
+    assert_eq!(CUSTOM_TEMPLATE_CONTENT, file_contents,);
 
     Ok(())
 }

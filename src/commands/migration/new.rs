@@ -23,7 +23,7 @@ impl Command for NewMigration {
         println!("creating migration with name {}", &migration_name);
         let mg = Migrator::new(config, &migration_name, false);
 
-        let migration_template: Option<String> = match &config.migration_template {
+        let up_template: Option<String> = match &config.up_template {
             Some(t) => {
                 let path = config.pather().any_path(t);
                 let content = config
@@ -41,7 +41,7 @@ impl Command for NewMigration {
         };
 
         Ok(Outcome::NewMigration(
-            mg.create_migration(migration_template).await?,
+            mg.create_migration(up_template).await?,
         ))
     }
 }
