@@ -36,7 +36,10 @@ impl Migrator {
         println!("creating migration at {}", &script_path);
         self.config
             .operator()
-            .write(&script_path, template.unwrap_or(BASE_MIGRATION.to_string()))
+            .write(
+                &script_path,
+                template.unwrap_or_else(|| BASE_MIGRATION.to_string()),
+            )
             .await?;
 
         Ok(self.name.to_string())

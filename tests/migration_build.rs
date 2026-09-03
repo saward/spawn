@@ -100,6 +100,7 @@ impl MigrationTestHelper {
             spawn_folder: "/db".to_string(),
             target: Some("postgres_psql".to_string()),
             environment: Some("dev".to_string()),
+            migration_template: None,
             targets: Some(targets),
             project_id: None,
             telemetry: Some(false),
