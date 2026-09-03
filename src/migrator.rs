@@ -28,7 +28,7 @@ impl Migrator {
     }
 
     /// Creates the migration folder with blank setup.
-    pub async fn create_migration(&self) -> Result<String> {
+    pub async fn create_migration(&self, template: Option<String>) -> Result<String> {
         // TODO: return error if migration already exists.
         let path = self.config.pather().migration_folder(&self.name);
 
@@ -36,7 +36,7 @@ impl Migrator {
         println!("creating migration at {}", &script_path);
         self.config
             .operator()
-            .write(&script_path, BASE_MIGRATION)
+            .write(&script_path, template.unwrap_or(BASE_MIGRATION.to_string()))
             .await?;
 
         Ok(self.name.to_string())
