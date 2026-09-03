@@ -97,6 +97,14 @@ Start the database, and you're ready to create your first migration:
 % docker compose up -d
 ```
 
+Create and apply:
+
+```bash
+spawn migration new my-first-migration
+# Edit the new migration up.sql, then apply:
+spawn migration apply 20260903011209-my-first-migration --no-pin
+```
+
 Related docs:
 
 - [spawn init](https://docs.spawn.dev/cli/init/)
