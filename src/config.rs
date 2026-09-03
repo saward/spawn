@@ -16,14 +16,17 @@ static PINFILE_LOCK_NAME: &str = "lock.toml";
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ConfigLoaderSaver {
     pub environment: Option<String>,
-    /// Allows you to override the default template for migration new with a
-    /// custom one.
-    pub up_template: Option<String>,
     /// Unique project identifier for telemetry (UUID string)
     pub project_id: Option<String>,
     pub spawn_folder: String,
     pub target: Option<String>,
     pub targets: Option<HashMap<String, TargetConfig>>,
+    /// Allows you to override the default template for test new with a
+    /// custom one.
+    pub test_template: Option<String>,
+    /// Allows you to override the default template for migration new with a
+    /// custom one.
+    pub up_template: Option<String>,
     /// Set to false to disable telemetry
     #[serde(default = "default_telemetry", skip_serializing_if = "Option::is_none")]
     pub telemetry: Option<bool>,
@@ -38,11 +41,12 @@ impl ConfigLoaderSaver {
     pub fn build(self, base_fs: Operator, spawn_fs: Option<Operator>) -> Config {
         Config {
             environment: self.environment,
-            up_template: self.up_template,
             project_id: self.project_id,
             spawn_folder: self.spawn_folder,
             target: self.target,
             targets: self.targets.unwrap_or_default(),
+            test_template: self.test_template,
+            up_template: self.up_template,
             telemetry: self.telemetry.unwrap_or(true),
             base_fs,
             spawn_fs,
@@ -180,14 +184,17 @@ impl FolderPather {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub environment: Option<String>, // Override the environment for the target config
-    /// Allows you to override the default template for migration new with a
-    /// custom one.
-    pub up_template: Option<String>,
     /// Unique project identifier for telemetry (UUID string)
     pub project_id: Option<String>,
     spawn_folder: String,
     pub target: Option<String>,
     pub targets: HashMap<String, TargetConfig>,
+    /// Allows you to override the default template for test new with a
+    /// custom one.
+    pub test_template: Option<String>,
+    /// Allows you to override the default template for migration new with a
+    /// custom one.
+    pub up_template: Option<String>,
     /// Whether telemetry is enabled in config
     pub telemetry: bool,
 

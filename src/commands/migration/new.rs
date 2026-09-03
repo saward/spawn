@@ -30,7 +30,10 @@ impl Command for NewMigration {
                     .operator()
                     .read(&path)
                     .await
-                    .context(format!("Failed to read migration template file '{}'", &path))?
+                    .context(format!(
+                        "Failed to read migration template file '{}'",
+                        &path
+                    ))?
                     .to_bytes();
                 Some(
                     String::from_utf8(content.to_vec())

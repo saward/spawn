@@ -5,7 +5,8 @@ use opendal::Operator;
 use pretty_assertions::assert_eq;
 use spawn_db::{
     commands::{
-        BuildMigration, Check, Command, NewMigration, Outcome, PinCleanup, PinError, PinMigration,
+        BuildMigration, Check, Command, NewMigration, NewTest, Outcome, PinCleanup, PinError,
+        PinMigration,
     },
     config::{Config, ConfigLoaderSaver},
     engine::{CommandSpec, EngineType, TargetConfig},
@@ -19,6 +20,9 @@ const DEFAULT_MIGRATION_CONTENT: &str = r#"BEGIN;
 
 COMMIT;
 "#;
+
+/// Expected default new test content:
+const DEFAULT_TEST_CONTENT: &str = "-- Test file\nSELECT 1;\n";
 
 /// Reusable test helper structure for setting up migration tests
 pub struct MigrationTestHelper {
@@ -101,6 +105,7 @@ impl MigrationTestHelper {
             target: Some("postgres_psql".to_string()),
             environment: Some("dev".to_string()),
             up_template: None,
+            test_template: None,
             targets: Some(targets),
             project_id: None,
             telemetry: Some(false),
@@ -121,6 +126,21 @@ impl MigrationTestHelper {
             _ => Err(anyhow::anyhow!(
                 "Migration directory not found after creation"
             )),
+        }
+    }
+
+    /// Creates a new test using the NewTest command
+    pub async fn create_test(&self, name: &str) -> Result<String, anyhow::Error> {
+        let config = self.load_config().await?;
+        let cmd = NewTest {
+            name: name.to_string(),
+        };
+
+        let outcome = cmd.execute(&config).await?;
+
+        match outcome {
+            Outcome::NewTest(name) => Ok(name),
+            _ => Err(anyhow::anyhow!("Test directory not found after creation")),
         }
     }
 
@@ -266,7 +286,10 @@ async fn test_create_migration_with_custom_template() -> Result<(), Box<dyn std:
 
     let cfg = helper.load_config().await?;
     let template_path = cfg.pather().any_path("templates/custom.sql");
-    helper.fs.write(&template_path, CUSTOM_TEMPLATE_CONTENT).await?;
+    helper
+        .fs
+        .write(&template_path, CUSTOM_TEMPLATE_CONTENT)
+        .await?;
 
     // Test that we can create a migration
     let migration_name = helper
@@ -276,6 +299,60 @@ async fn test_create_migration_with_custom_template() -> Result<(), Box<dyn std:
 
     // Check the contents are what we expect:
     let script_path = format!("{}/up.sql", cfg.pather().migration_folder(&migration_name));
+    let file_data = helper.fs.read(&script_path).await?.to_bytes();
+    let file_contents = String::from_utf8(file_data.to_vec())?;
+    assert_eq!(CUSTOM_TEMPLATE_CONTENT, file_contents,);
+
+    Ok(())
+}
+
+// Run a create test test:
+#[tokio::test]
+async fn test_create_test() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    // Test that we can create a test
+    let test_name = helper
+        .create_test("test-create")
+        .await
+        .expect("Failed to create test with helper");
+
+    let cfg = helper.load_config().await?;
+
+    // Check that <test folder>/test.sql exists and has the default content:
+    let script_path = cfg.pather().test_file_path(&test_name);
+    let file_data = helper.fs.read(&script_path).await?.to_bytes();
+    let file_contents = String::from_utf8(file_data.to_vec())?;
+    assert_eq!(DEFAULT_TEST_CONTENT, file_contents,);
+
+    Ok(())
+}
+
+// Run a create test test using a custom test_template:
+#[tokio::test]
+async fn test_create_test_with_custom_template() -> Result<(), Box<dyn std::error::Error>> {
+    const CUSTOM_TEMPLATE_CONTENT: &str = "-- custom test template\nSELECT 2;\n";
+
+    let mem_op = Operator::new(Memory::default())?.finish();
+    let mut config_loader = MigrationTestHelper::default_config_loadersaver();
+    config_loader.test_template = Some("templates/custom.sql".to_string());
+    let helper = MigrationTestHelper::new_from_operator_with_config(mem_op, config_loader).await?;
+
+    let cfg = helper.load_config().await?;
+    let template_path = cfg.pather().any_path("templates/custom.sql");
+    helper
+        .fs
+        .write(&template_path, CUSTOM_TEMPLATE_CONTENT)
+        .await?;
+
+    // Test that we can create a test
+    let test_name = helper
+        .create_test("test-create")
+        .await
+        .expect("Failed to create test with helper");
+
+    // Check the contents are what we expect:
+    let script_path = cfg.pather().test_file_path(&test_name);
     let file_data = helper.fs.read(&script_path).await?.to_bytes();
     let file_contents = String::from_utf8(file_data.to_vec())?;
     assert_eq!(CUSTOM_TEMPLATE_CONTENT, file_contents,);
