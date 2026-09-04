@@ -23,7 +23,9 @@
 //! - Using the `|safe` filter in templates (intentional)
 //! - Using `Value::from_safe_string()` in Rust code (requires explicit code)
 //!
-//! The `|escape` filter will error for custom SQL formats, preventing accidental misuse.
+//! The `|escape` filter is redundant here since values are already auto-escaped,
+//! but it is safe to use: minijinja routes it through this same formatter for
+//! custom auto-escape formats, so it produces identical escaped output.
 
 use minijinja::value::ValueKind;
 use minijinja::{AutoEscape, Output, State, Value};
@@ -345,8 +347,10 @@ mod tests {
     }
 
     #[test]
-    fn test_sql_escape_filter_fails_for_custom_format() {
-        // The |escape filter in minijinja does NOT work with custom formats
+    fn test_sql_escape_filter_uses_custom_format() {
+        // The |escape filter routes through our custom SQL formatter, so it
+        // produces the same escaped output as plain auto-escaping rather than
+        // erroring or falling back to HTML escaping.
         let mut env = Environment::new();
         env.set_auto_escape_callback(auto_escape_callback);
         env.set_formatter(sql_escape_formatter);
@@ -354,12 +358,8 @@ mod tests {
         env.add_template("test.sql", "{{ value|escape }}").unwrap();
         let tmpl = env.get_template("test.sql").unwrap();
 
-        let result = tmpl.render(context!(value => "test"));
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("does not know how to format to custom format"));
+        let result = tmpl.render(context!(value => "it's a test")).unwrap();
+        assert_eq!(result, "'it''s a test'");
     }
 
     #[test]

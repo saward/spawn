@@ -44,7 +44,7 @@ impl MigrationTestHelper {
     /// Creates a new test environment with no data
     pub async fn new_empty() -> Result<Self> {
         let mem_service = Memory::default();
-        let mem_op = Operator::new(mem_service)?.finish();
+        let mem_op = Operator::new(mem_service)?;
 
         Self::new_from_operator(mem_op).await
     }
@@ -279,7 +279,7 @@ async fn test_create_migration() -> Result<(), Box<dyn std::error::Error>> {
 async fn test_create_migration_with_custom_template() -> Result<(), Box<dyn std::error::Error>> {
     const CUSTOM_TEMPLATE_CONTENT: &str = "-- custom migration template\nBEGIN;\n\nCOMMIT;\n";
 
-    let mem_op = Operator::new(Memory::default())?.finish();
+    let mem_op = Operator::new(Memory::default())?;
     let mut config_loader = MigrationTestHelper::default_config_loadersaver();
     config_loader.up_template = Some("templates/custom.sql".to_string());
     let helper = MigrationTestHelper::new_from_operator_with_config(mem_op, config_loader).await?;
@@ -333,7 +333,7 @@ async fn test_create_test() -> Result<(), Box<dyn std::error::Error>> {
 async fn test_create_test_with_custom_template() -> Result<(), Box<dyn std::error::Error>> {
     const CUSTOM_TEMPLATE_CONTENT: &str = "-- custom test template\nSELECT 2;\n";
 
-    let mem_op = Operator::new(Memory::default())?.finish();
+    let mem_op = Operator::new(Memory::default())?;
     let mut config_loader = MigrationTestHelper::default_config_loadersaver();
     config_loader.test_template = Some("templates/custom.sql".to_string());
     let helper = MigrationTestHelper::new_from_operator_with_config(mem_op, config_loader).await?;

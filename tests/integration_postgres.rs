@@ -196,7 +196,7 @@ impl IntegrationTestHelper {
             Some(folder) => MigrationTestHelper::operator_from_local_folder(folder).await?,
             None => {
                 let mem_service = Memory::default();
-                Operator::new(mem_service)?.finish()
+                Operator::new(mem_service)?
             }
         };
 
@@ -1626,7 +1626,7 @@ async fn test_spawn_database_config() -> Result<()> {
     IntegrationTestHelper::create_test_database(&migration_db, &connection_mode)?;
 
     let mem_service = Memory::default();
-    let mem_op = Operator::new(mem_service)?.finish();
+    let mem_op = Operator::new(mem_service)?;
 
     // Config: psql connects to migration_db, but spawn_database = tracking_db
     let mut targets = HashMap::new();

@@ -550,7 +550,7 @@ mod tests {
 
         // Set up an in-memory operator with a test file in the components folder
         let mem_service = Memory::default();
-        let op = Operator::new(mem_service).unwrap().finish();
+        let op = Operator::new(mem_service).unwrap();
         op.write("components/test.txt", "file contents here")
             .await
             .unwrap();
@@ -580,7 +580,7 @@ mod tests {
         use opendal::Operator;
 
         let mem_service = Memory::default();
-        let op = Operator::new(mem_service).unwrap().finish();
+        let op = Operator::new(mem_service).unwrap();
         op.write("components/binary.dat", vec![0xDE, 0xAD, 0xBE, 0xEF])
             .await
             .unwrap();
@@ -610,7 +610,7 @@ mod tests {
         use opendal::Operator;
 
         let mem_service = Memory::default();
-        let op = Operator::new(mem_service).unwrap().finish();
+        let op = Operator::new(mem_service).unwrap();
 
         let pinner = Latest::new("").unwrap();
         let pather = FolderPather {
@@ -638,7 +638,7 @@ mod tests {
         use opendal::Operator;
 
         let mem_service = Memory::default();
-        let op = Operator::new(mem_service).unwrap().finish();
+        let op = Operator::new(mem_service).unwrap();
 
         // Write a file into the components folder and snapshot it into the pinned store
         op.write("components/test.txt", "pinned content")
