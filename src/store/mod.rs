@@ -239,19 +239,18 @@ pub async fn disk_to_operator(
     let dest_op = match desired_operator {
         DesiredOperator::FileSystem => {
             let dest_service = opendal::services::Fs::default().root("./testout");
-            Operator::new(dest_service)?.finish()
+            Operator::new(dest_service)?
         }
         DesiredOperator::Memory => {
             let dest_service = Memory::default();
-            Operator::new(dest_service)?.finish()
+            Operator::new(dest_service)?
         }
     };
 
     // Create a LocalFileSystem to read from static/example
     let fs_service = opendal::services::Fs::default().root(source_folder);
-    let source_store = Operator::new(fs_service)
-        .context("disk_to_mem_operator failed to create operator")?
-        .finish();
+    let source_store =
+        Operator::new(fs_service).context("disk_to_mem_operator failed to create operator")?;
 
     // Populate the in-memory store with contents from static/example
     let store_loc = dest_prefix.unwrap_or_default();
@@ -324,7 +323,7 @@ pub async fn operator_from_includedir(
 ) -> Result<Operator> {
     // Create a memory operator
     let dest_service = Memory::default();
-    let operator = Operator::new(dest_service)?.finish();
+    let operator = Operator::new(dest_service)?;
 
     let prefix = dest_prefix.unwrap_or_default();
 
@@ -450,7 +449,7 @@ mod tests {
     async fn test_get_migration_fs_status_with_lock() {
         // Create an in-memory operator with both up.sql and lock.toml
         let mem_service = Memory::default();
-        let op = Operator::new(mem_service).unwrap().finish();
+        let op = Operator::new(mem_service).unwrap();
 
         // Write both up.sql and lock.toml
         op.write("/migrations/20240101000000-test/up.sql", "SELECT 1;")
@@ -480,7 +479,7 @@ mod tests {
     async fn test_get_migration_fs_status_without_lock() {
         // Create an in-memory operator with just an up.sql file
         let mem_service = Memory::default();
-        let op = Operator::new(mem_service).unwrap().finish();
+        let op = Operator::new(mem_service).unwrap();
 
         // Write only up.sql, no lock.toml
         op.write("/migrations/20240101000000-test/up.sql", "SELECT 1;")
@@ -511,7 +510,7 @@ mod tests {
             "/spawn",
         ] {
             let mem_service = Memory::default();
-            let op = Operator::new(mem_service).unwrap().finish();
+            let op = Operator::new(mem_service).unwrap();
 
             let prefix = spawn_folder
                 .trim_start_matches("./")

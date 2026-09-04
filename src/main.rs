@@ -36,7 +36,7 @@ fn main() -> Result<()> {
 
 async fn async_main(cli: Cli) -> Result<()> {
     let service = Fs::default().root(".");
-    let config_fs = Operator::new(service)?.finish();
+    let config_fs = Operator::new(service)?;
 
     // Get telemetry info from CLI before running
     let telemetry_info = cli.telemetry();

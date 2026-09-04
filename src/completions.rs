@@ -80,7 +80,7 @@ where
 
         let service = Fs::default().root(root);
         let op = match Operator::new(service) {
-            Ok(op) => op.finish(),
+            Ok(op) => op,
             Err(_) => return Vec::new(),
         };
 
