@@ -1,6 +1,7 @@
 use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::migrator::Migrator;
+use crate::secrets::SecretsRenderMode;
 use crate::store::get_migration_fs_status;
 use crate::variables::Variables;
 use anyhow::Result;
@@ -9,6 +10,10 @@ pub struct BuildMigration {
     pub migration: String,
     pub pinned: bool,
     pub variables: Option<Variables>,
+    /// Render real secret values instead of masked placeholders. Only
+    /// intended for local debugging: the output of `build` is meant for
+    /// inspection, not execution.
+    pub reveal_secrets: bool,
 }
 
 impl TelemetryDescribe for BuildMigration {
@@ -16,6 +21,7 @@ impl TelemetryDescribe for BuildMigration {
         TelemetryInfo::new("migration build").with_properties(vec![
             ("opt_pinned", self.pinned.to_string()),
             ("has_variables", self.variables.is_some().to_string()),
+            ("opt_reveal_secrets", self.reveal_secrets.to_string()),
         ])
     }
 }
@@ -34,7 +40,16 @@ impl Command for BuildMigration {
             false
         };
 
-        match mgrtr.generate_streaming(self.variables.clone()).await {
+        let secrets_mode = if self.reveal_secrets {
+            SecretsRenderMode::Revealed
+        } else {
+            SecretsRenderMode::Masked
+        };
+
+        match mgrtr
+            .generate_streaming(self.variables.clone(), secrets_mode)
+            .await
+        {
             Ok(gen) => {
                 let mut buffer = Vec::new();
                 gen.render_to_writer(&mut buffer)

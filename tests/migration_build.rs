@@ -10,6 +10,7 @@ use spawn_db::{
     },
     config::{Config, ConfigLoaderSaver},
     engine::{CommandSpec, EngineType, TargetConfig},
+    secrets::{SecretDefinition, SecretSource},
     store,
 };
 use std::collections::HashMap;
@@ -107,6 +108,7 @@ impl MigrationTestHelper {
             up_template: None,
             test_template: None,
             targets: Some(targets),
+            secrets: None,
             project_id: None,
             telemetry: Some(false),
         }
@@ -189,6 +191,7 @@ impl MigrationTestHelper {
             migration: migration_name.to_string(),
             pinned,
             variables,
+            reveal_secrets: false,
         };
 
         let outcome = cmd.execute(&config).await?;
@@ -691,6 +694,7 @@ COMMIT;"#;
         migration: migration_name.to_string(),
         pinned: false,
         variables: None,
+        reveal_secrets: false,
     };
 
     let outcome = cmd.execute(&config).await?;
@@ -701,6 +705,7 @@ COMMIT;"#;
         migration: migration_name.to_string(),
         pinned: true,
         variables: None,
+        reveal_secrets: false,
     };
 
     let outcome_pinned = cmd_pinned.execute(&config).await?;
@@ -801,6 +806,103 @@ async fn test_pin_cleanup_finds_and_deletes_orphans() -> Result<(), Box<dyn std:
         files_after_cleanup.len(),
         "cleanup should delete 4 orphaned pinned files"
     );
+
+    Ok(())
+}
+
+/// Exercises the full stack for secrets: a [secrets.*] table round-tripped
+/// through real TOML (via ConfigLoaderSaver::save/Config::load), an
+/// environment-specific override, and both masked and revealed builds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_migration_build_with_secrets() -> Result<(), Box<dyn std::error::Error>> {
+    let mut targets = HashMap::new();
+    targets.insert(
+        "postgres_psql".to_string(),
+        TargetConfig {
+            engine: EngineType::PostgresPSQL,
+            spawn_database: Some("spawn".to_string()),
+            spawn_schema: "public".to_string(),
+            environment: "dev".to_string(),
+            command: None,
+        },
+    );
+
+    let mut secrets = HashMap::new();
+    secrets.insert(
+        "application_password".to_string(),
+        SecretDefinition {
+            default: SecretSource::Literal {
+                value: "prod-secret".to_string(),
+                insecure: true,
+            },
+            environments: HashMap::from([(
+                "dev".to_string(),
+                SecretSource::Literal {
+                    value: "dev-secret".to_string(),
+                    insecure: true,
+                },
+            )]),
+        },
+    );
+
+    let config_loader = ConfigLoaderSaver {
+        spawn_folder: "/db".to_string(),
+        target: Some("postgres_psql".to_string()),
+        environment: Some("dev".to_string()),
+        up_template: None,
+        test_template: None,
+        targets: Some(targets),
+        secrets: Some(secrets),
+        project_id: None,
+        telemetry: Some(false),
+    };
+
+    let mem_op = Operator::new(Memory::default())?;
+    let helper = MigrationTestHelper::new_from_operator_with_config(mem_op, config_loader).await?;
+
+    let migration_name = helper
+        .create_migration_manual(
+            "with-secret",
+            "SELECT {{ secret(\"application_password\") }};".to_string(),
+        )
+        .await?;
+
+    let config = helper.load_config().await?;
+
+    // Masked build (default): must not leak either the default or the
+    // environment-specific value.
+    let masked_outcome = BuildMigration {
+        migration: migration_name.clone(),
+        pinned: false,
+        variables: None,
+        reveal_secrets: false,
+    }
+    .execute(&config)
+    .await?;
+    let masked_content = match masked_outcome {
+        Outcome::BuiltMigration { content, .. } => content,
+        _ => panic!("unexpected outcome"),
+    };
+    assert!(masked_content.contains("***MASKED:application_password***"));
+    assert!(!masked_content.contains("dev-secret"));
+    assert!(!masked_content.contains("prod-secret"));
+
+    // Revealed build: current environment is "dev", so the override wins
+    // over the default.
+    let revealed_outcome = BuildMigration {
+        migration: migration_name,
+        pinned: false,
+        variables: None,
+        reveal_secrets: true,
+    }
+    .execute(&config)
+    .await?;
+    let revealed_content = match revealed_outcome {
+        Outcome::BuiltMigration { content, .. } => content,
+        _ => panic!("unexpected outcome"),
+    };
+    assert!(revealed_content.contains("dev-secret"));
+    assert!(!revealed_content.contains("prod-secret"));
 
     Ok(())
 }

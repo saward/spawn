@@ -1,6 +1,7 @@
 use crate::config;
 use crate::engine::EngineType;
 use crate::escape::{EscapedIdentifier, EscapedLiteral};
+use crate::secrets::{SecretsRenderMode, SecretsRepository};
 use crate::store::pinner::latest::Latest;
 use crate::store::pinner::spawn::Spawn;
 use crate::store::pinner::Pinner;
@@ -31,7 +32,11 @@ fn engine_to_dialect(engine: &EngineType) -> SqlDialect {
     }
 }
 
-pub fn template_env(store: Store, engine: &EngineType) -> Result<Environment<'static>> {
+pub fn template_env(
+    store: Store,
+    engine: &EngineType,
+    secrets: SecretsRepository,
+) -> Result<Environment<'static>> {
     let mut env = Environment::new();
 
     let store = Arc::new(store);
@@ -45,6 +50,12 @@ pub fn template_env(store: Store, engine: &EngineType) -> Result<Environment<'st
     env.add_function("gen_uuid_v7", gen_uuid_v7);
     env.add_filter("escape_identifier", escape_identifier_filter);
     env.add_filter("escape_literal", escape_literal_filter);
+
+    let secrets = Arc::new(secrets);
+    env.add_function(
+        "secret",
+        move |name: &str| -> Result<Value, minijinja::Error> { secret_function(name, &secrets) },
+    );
 
     let read_file_store = Arc::clone(&store);
     env.add_filter(
@@ -156,6 +167,23 @@ fn escape_literal_filter(value: &Value) -> Result<Value, minijinja::Error> {
     let escaped = EscapedLiteral::new(&s);
     // Return as a safe string so it won't be further escaped by the SQL formatter
     Ok(Value::from_safe_string(escaped.to_string()))
+}
+
+/// Resolves a named secret via the SecretsRepository, returning either its
+/// real value or a masked placeholder depending on the current render mode.
+///
+/// Usage in templates: `{{ secret("application_password") }}`
+fn secret_function(
+    name: &str,
+    secrets: &Arc<SecretsRepository>,
+) -> Result<Value, minijinja::Error> {
+    let result = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async { secrets.resolve(name).await })
+    });
+
+    result.map(Value::from).map_err(|e| {
+        minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, format!("{:#}", e))
+    })
 }
 
 /// Reads raw bytes from a file in the components folder via the Store.
@@ -281,13 +309,14 @@ pub struct StreamingGeneration {
     environment: String,
     variables: Variables,
     engine: EngineType,
+    secrets: SecretsRepository,
 }
 
 impl StreamingGeneration {
     /// Render the template to the provided writer.
     /// This creates the minijinja environment and renders in one step.
     pub fn render_to_writer<W: std::io::Write + ?Sized>(self, writer: &mut W) -> Result<()> {
-        let mut env = template_env(self.store, &self.engine)?;
+        let mut env = template_env(self.store, &self.engine, self.secrets)?;
         env.add_template("migration.sql", &self.template_contents)?;
         let tmpl = env.get_template("migration.sql")?;
         tmpl.render_to_write(
@@ -313,6 +342,7 @@ pub async fn generate_streaming(
     lock_file: Option<String>,
     name: &str,
     variables: Option<Variables>,
+    secrets_mode: SecretsRenderMode,
 ) -> Result<StreamingGeneration> {
     let pinner: Box<dyn Pinner> = if let Some(lock_file) = lock_file {
         let lock = cfg
@@ -338,6 +368,12 @@ pub async fn generate_streaming(
     let target_config = cfg
         .target_config()
         .context("could not get target config for generate")?;
+    let secrets = SecretsRepository::new(
+        cfg.secrets.clone(),
+        target_config.environment.clone(),
+        secrets_mode,
+        cfg.operator().clone(),
+    );
 
     generate_streaming_with_store(
         name,
@@ -345,6 +381,7 @@ pub async fn generate_streaming(
         &target_config.environment,
         &target_config.engine,
         store,
+        secrets,
     )
     .await
 }
@@ -356,6 +393,7 @@ pub async fn generate_streaming_with_store(
     environment: &str,
     engine: &EngineType,
     store: Store,
+    secrets: SecretsRepository,
 ) -> Result<StreamingGeneration> {
     // Read contents from our object store first:
     let contents = store
@@ -369,6 +407,7 @@ pub async fn generate_streaming_with_store(
         environment: environment.to_string(),
         variables: variables.unwrap_or_default(),
         engine: engine.clone(),
+        secrets,
     })
 }
 
@@ -559,9 +598,10 @@ mod tests {
         let pather = FolderPather {
             spawn_folder: "".to_string(),
         };
+        let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, secrets).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
@@ -589,9 +629,10 @@ mod tests {
         let pather = FolderPather {
             spawn_folder: "".to_string(),
         };
+        let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, secrets).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "binary.dat"|read_file|base64_encode|safe }}"#,
@@ -616,9 +657,10 @@ mod tests {
         let pather = FolderPather {
             spawn_folder: "".to_string(),
         };
+        let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, secrets).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "nonexistent.txt"|read_file|to_string_lossy }}"#,
@@ -662,9 +704,10 @@ mod tests {
         let pather = FolderPather {
             spawn_folder: "".to_string(),
         };
+        let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, secrets).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
@@ -673,5 +716,93 @@ mod tests {
         let tmpl = env.get_template("test.sql").unwrap();
         let result = tmpl.render(context!()).unwrap();
         assert_eq!(result, "pinned content");
+    }
+
+    fn env_with_secrets(secrets: SecretsRepository) -> Environment<'static> {
+        use crate::config::FolderPather;
+        use opendal::services::Memory;
+        use opendal::Operator;
+
+        let op = Operator::new(Memory::default()).unwrap();
+        let pinner = Latest::new("").unwrap();
+        let pather = FolderPather {
+            spawn_folder: "".to_string(),
+        };
+        let store = Store::new(Box::new(pinner), op, pather).unwrap();
+        template_env(store, &EngineType::PostgresPSQL, secrets).unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_secret_function_reveals_when_revealed_mode() {
+        use std::collections::HashMap;
+
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            "application_password".to_string(),
+            crate::secrets::SecretDefinition {
+                default: crate::secrets::SecretSource::Literal {
+                    value: "hunter2".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        let secrets = SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Revealed,
+            op,
+        );
+
+        let mut env = env_with_secrets(secrets);
+        env.add_template("test.sql", r#"{{ secret("application_password") }}"#)
+            .unwrap();
+        let tmpl = env.get_template("test.sql").unwrap();
+        let result = tmpl.render(context!()).unwrap();
+        assert_eq!(result, "'hunter2'");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_secret_function_masks_when_masked_mode() {
+        use std::collections::HashMap;
+
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            "application_password".to_string(),
+            crate::secrets::SecretDefinition {
+                default: crate::secrets::SecretSource::Literal {
+                    value: "hunter2".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        let secrets = SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Masked,
+            op,
+        );
+
+        let mut env = env_with_secrets(secrets);
+        env.add_template("test.sql", r#"{{ secret("application_password") }}"#)
+            .unwrap();
+        let tmpl = env.get_template("test.sql").unwrap();
+        let result = tmpl.render(context!()).unwrap();
+        assert_eq!(result, "'***MASKED:application_password***'");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_secret_function_errors_for_unknown_secret() {
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let secrets = SecretsRepository::empty(op);
+        let mut env = env_with_secrets(secrets);
+        env.add_template("test.sql", r#"{{ secret("nope") }}"#)
+            .unwrap();
+        let tmpl = env.get_template("test.sql").unwrap();
+        let result = tmpl.render(context!());
+        assert!(result.is_err());
     }
 }

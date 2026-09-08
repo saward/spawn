@@ -3,6 +3,7 @@ use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::engine::{Engine, MigrationError};
 use crate::migrator::Migrator;
+use crate::secrets::SecretsRenderMode;
 use crate::variables::Variables;
 use anyhow::{anyhow, Result};
 
@@ -57,7 +58,11 @@ impl Command for ApplyMigration {
                 String::new()
             };
             let mgrtr = Migrator::new(config, &migration, self.pinned);
-            match mgrtr.generate_streaming(self.variables.clone()).await {
+            // Apply actually executes against the database, so secrets must always be revealed.
+            match mgrtr
+                .generate_streaming(self.variables.clone(), SecretsRenderMode::Revealed)
+                .await
+            {
                 Ok(streaming) => {
                     // Use shared engine if reuse_connection is enabled, otherwise create new
                     let new_engine: Option<Box<dyn Engine>>;

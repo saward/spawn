@@ -9,6 +9,7 @@ use crate::engine::{
     TargetConfig, WriterFn,
 };
 use crate::escape::{EscapedIdentifier, EscapedLiteral, EscapedQuery, InsecureRawSql};
+use crate::secrets::SecretsRenderMode;
 use crate::sql_query;
 use crate::store::pinner::latest::Latest;
 use crate::store::{operator_from_includedir, Store};
@@ -578,7 +579,9 @@ impl PSQL {
                 "json",
                 &serde_json::json!({"schema": &self.target_config.spawn_schema}).to_string(),
             )?;
-            let gen = migrator.generate_streaming(Some(variables)).await?;
+            let gen = migrator
+                .generate_streaming(Some(variables), SecretsRenderMode::Revealed)
+                .await?;
             let mut buffer = Vec::new();
             gen.render_to_writer(&mut buffer)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;

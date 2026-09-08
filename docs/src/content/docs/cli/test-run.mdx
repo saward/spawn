@@ -21,6 +21,10 @@ Executes one or all tests against the configured database and displays the resul
 
 Runs the SQL for the test against the database, showing the output from that test.
 
+## Secrets
+
+`test run` always reveals real `secret()` values, since it executes the rendered SQL against the database. See the [Secrets guide](/guides/secrets/) for how secrets are configured.
+
 ## Examples
 
 Run a specific test:

@@ -127,6 +127,11 @@ pub enum MigrationCommands {
         /// Overrides the variables_file setting in spawn.toml.
         #[arg(long)]
         variables: Option<String>,
+
+        /// Render real secret() values instead of masked placeholders.
+        /// Intended for local debugging only; build output is not executed.
+        #[arg(long)]
+        reveal_secrets: bool,
     },
     /// Apply will apply this migration to the database if not already applied,
     /// or all migrations if called without argument.
@@ -181,10 +186,14 @@ impl TelemetryDescribe for MigrationCommands {
             MigrationCommands::New { .. } => TelemetryInfo::new("new"),
             MigrationCommands::Pin { .. } => TelemetryInfo::new("pin"),
             MigrationCommands::Build {
-                pinned, variables, ..
+                pinned,
+                variables,
+                reveal_secrets,
+                ..
             } => TelemetryInfo::new("build").with_properties(vec![
                 ("opt_pinned", pinned.to_string()),
                 ("has_variables", variables.is_some().to_string()),
+                ("opt_reveal_secrets", reveal_secrets.to_string()),
             ]),
             MigrationCommands::Apply {
                 no_pin,
@@ -235,6 +244,11 @@ pub enum TestCommands {
     Build {
         #[arg(add = ArgValueCompleter::new(complete_tests))]
         name: String,
+
+        /// Render real secret() values instead of masked placeholders.
+        /// Intended for local debugging only; build output is not executed.
+        #[arg(long)]
+        reveal_secrets: bool,
     },
     /// Run a particular test, or all tests if no name provided.
     Run {
@@ -256,7 +270,8 @@ impl TelemetryDescribe for TestCommands {
     fn telemetry(&self) -> TelemetryInfo {
         match self {
             TestCommands::New { .. } => TelemetryInfo::new("new"),
-            TestCommands::Build { .. } => TelemetryInfo::new("build"),
+            TestCommands::Build { reveal_secrets, .. } => TelemetryInfo::new("build")
+                .with_properties(vec![("opt_reveal_secrets", reveal_secrets.to_string())]),
             TestCommands::Run { name } => TelemetryInfo::new("run")
                 .with_properties(vec![("run_all", name.is_none().to_string())]),
             TestCommands::Compare { name } => TelemetryInfo::new("compare")
@@ -368,6 +383,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                     migration,
                     pinned,
                     variables,
+                    reveal_secrets,
                 }) => {
                     let vars = match variables {
                         Some(vars_path) => Some(config.load_variables_from_path(&vars_path).await?),
@@ -377,6 +393,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                         migration,
                         pinned,
                         variables: vars,
+                        reveal_secrets,
                     }
                     .execute(config)
                     .await
@@ -426,7 +443,12 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
         }
         Some(Commands::Test { command }) => match command {
             Some(TestCommands::New { name }) => NewTest { name }.execute(config).await,
-            Some(TestCommands::Build { name }) => BuildTest { name }.execute(config).await,
+            Some(TestCommands::Build { name, reveal_secrets }) => BuildTest {
+                name,
+                reveal_secrets,
+            }
+            .execute(config)
+            .await,
             Some(TestCommands::Run { name }) => RunTest { name }.execute(config).await,
             Some(TestCommands::Compare { name }) => CompareTests { name }.execute(config).await,
             Some(TestCommands::Expect { name }) => ExpectTest { name }.execute(config).await,

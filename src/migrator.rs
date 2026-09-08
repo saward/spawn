@@ -50,6 +50,7 @@ impl Migrator {
     pub async fn generate_streaming(
         &self,
         variables: Option<crate::variables::Variables>,
+        secrets_mode: crate::secrets::SecretsRenderMode,
     ) -> Result<template::StreamingGeneration> {
         let lock_file = if self.use_pinned {
             let path = self.config.pather().migration_lock_file_path(&self.name);
@@ -58,6 +59,7 @@ impl Migrator {
             None
         };
         let script_path = &self.config.pather().migration_script_file_path(&self.name);
-        template::generate_streaming(&self.config, lock_file, script_path, variables).await
+        template::generate_streaming(&self.config, lock_file, script_path, variables, secrets_mode)
+            .await
     }
 }

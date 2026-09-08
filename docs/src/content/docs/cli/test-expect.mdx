@@ -25,6 +25,10 @@ Runs a test and saves its output as the new expected result for future compariso
 
 Use this command when test behavior changes intentionally and you want to update the baseline for [`spawn test compare`](/cli/test-compare/).
 
+## Secrets
+
+`test expect` runs the test for real, so it always reveals real `secret()` values — the saved `expected` file will contain real secret values if the test outputs them. See the [Secrets guide](/guides/secrets/) for how secrets are configured.
+
 ## Example
 
 ```bash

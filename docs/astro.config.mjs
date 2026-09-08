@@ -40,6 +40,7 @@ export default defineConfig({
               label: "Local Spawn Development",
               slug: "guides/local-development",
             },
+            { label: "Managing Secrets", slug: "guides/secrets" },
           ],
         },
         {

@@ -266,40 +266,50 @@ pub async fn resolve_command_spec(spec: CommandSpec) -> Result<Vec<String>> {
     }
 }
 
-/// Executes a provider command and parses its output as a shell command.
+/// Executes a command and returns its trimmed stdout.
 ///
-/// The provider must output a shell command string (e.g., `ssh -t -i /path/key user@host`).
-/// The parser handles quoted strings properly using POSIX shell-style parsing.
-async fn resolve_provider(provider: &[String]) -> Result<Vec<String>> {
-    if provider.is_empty() {
-        return Err(anyhow!("Provider command cannot be empty"));
+/// Shared by anything that resolves a value by running an external command
+/// (provider commands, command-sourced secrets).
+pub(crate) async fn run_capture_stdout(command: &[String]) -> Result<String> {
+    if command.is_empty() {
+        return Err(anyhow!("command cannot be empty"));
     }
 
-    let output = Command::new(&provider[0])
-        .args(&provider[1..])
+    let output = Command::new(&command[0])
+        .args(&command[1..])
         .output()
         .await
-        .context("Failed to execute provider command")?;
+        .context("Failed to execute command")?;
 
     if !output.status.success() {
         return Err(anyhow!(
-            "Provider command failed (exit {}): {}",
+            "command failed (exit {}): {}",
             output.status.code().unwrap_or(-1),
             String::from_utf8_lossy(&output.stderr)
         ));
     }
 
-    let stdout = String::from_utf8(output.stdout).context("Provider output is not valid UTF-8")?;
+    let stdout = String::from_utf8(output.stdout).context("command output is not valid UTF-8")?;
     let trimmed = stdout.trim();
 
     if trimmed.is_empty() {
-        return Err(anyhow!("Provider returned empty output"));
+        return Err(anyhow!("command returned empty output"));
     }
+
+    Ok(trimmed.to_string())
+}
+
+/// Executes a provider command and parses its output as a shell command.
+///
+/// The provider must output a shell command string (e.g., `ssh -t -i /path/key user@host`).
+/// The parser handles quoted strings properly using POSIX shell-style parsing.
+async fn resolve_provider(provider: &[String]) -> Result<Vec<String>> {
+    let trimmed = run_capture_stdout(provider).await?;
 
     // Parses a shell command string into a Vec<String>, handling quoted arguments.
     //
     // Uses the `shlex` crate for proper POSIX shell-style parsing.
-    shlex::split(trimmed).ok_or_else(|| anyhow!("Failed to parse shell command: {}", trimmed))
+    shlex::split(&trimmed).ok_or_else(|| anyhow!("Failed to parse shell command: {}", trimmed))
 }
 
 /// Type alias for the writer closure used in execute_with_writer

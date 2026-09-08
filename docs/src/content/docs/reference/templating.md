@@ -142,6 +142,16 @@ Generates a time-ordered UUID v7 string.
 INSERT INTO events (id, type) VALUES ({{ gen_uuid_v7() }}, 'user_created');
 ```
 
+### `secret`
+
+Resolves a named secret defined in the `[secrets]` table of `spawn.toml`.
+
+```sql
+CREATE ROLE app_user WITH LOGIN PASSWORD {{ secret("application_password") }};
+```
+
+See the [Secrets guide](/guides/secrets/) for how to define sources (environment variable, file, command, or an explicit `insecure` literal), per-environment overrides, and which commands reveal real values vs. mask them.
+
 ## Filters
 
 Filters transform values in template expressions. Minijinja provides many built-in filters like `upper`, `default`, and `length` — see the [Minijinja filters documentation](https://docs.rs/minijinja/latest/minijinja/filters/index.html) for the complete list.

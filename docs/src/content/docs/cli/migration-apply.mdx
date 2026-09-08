@@ -53,6 +53,10 @@ Shows a list of pending migrations and prompts for confirmation before applying 
 
 By default, `apply` requires migrations to have a `lock.toml`. This ensures the exact same component versions are used every time. Use `--no-pin` to bypass this requirement and use current working tree components (not recommended for production).
 
+## Secrets
+
+`apply` always reveals real `secret()` values, since it executes the rendered SQL against the database. See the [Secrets guide](/guides/secrets/) for how secrets are configured and how other commands mask them for inspection.
+
 ## Retry logic
 
 If a migration previously failed, `apply` will refuse to run it again unless you pass `--retry`. This prevents accidental re-execution of partially applied migrations. Retrying a successful migration will run the same migration again.

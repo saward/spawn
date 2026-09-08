@@ -241,6 +241,7 @@ impl IntegrationTestHelper {
             test_template: None,
             up_template: None,
             targets: Some(targets),
+            secrets: None,
             project_id: None,
             telemetry: Some(false),
         }
@@ -1650,6 +1651,7 @@ async fn test_spawn_database_config() -> Result<()> {
         test_template: None,
         up_template: None,
         targets: Some(targets),
+        secrets: None,
         project_id: None,
         telemetry: Some(false),
     };

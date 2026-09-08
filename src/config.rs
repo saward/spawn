@@ -1,5 +1,6 @@
 use crate::engine::{postgres_psql::PSQL, Engine, EngineType, TargetConfig};
 use crate::pinfile::LockData;
+use crate::secrets::SecretDefinition;
 use crate::variables::Variables;
 use anyhow::{anyhow, Context, Result};
 use opendal::Operator;
@@ -21,6 +22,8 @@ pub struct ConfigLoaderSaver {
     pub spawn_folder: String,
     pub target: Option<String>,
     pub targets: Option<HashMap<String, TargetConfig>>,
+    /// Named secrets available to templates via the `secret()` function.
+    pub secrets: Option<HashMap<String, SecretDefinition>>,
     /// Allows you to override the default template for test new with a
     /// custom one.
     pub test_template: Option<String>,
@@ -45,6 +48,7 @@ impl ConfigLoaderSaver {
             spawn_folder: self.spawn_folder,
             target: self.target,
             targets: self.targets.unwrap_or_default(),
+            secrets: self.secrets.unwrap_or_default(),
             test_template: self.test_template,
             up_template: self.up_template,
             telemetry: self.telemetry.unwrap_or(true),
@@ -189,6 +193,8 @@ pub struct Config {
     spawn_folder: String,
     pub target: Option<String>,
     pub targets: HashMap<String, TargetConfig>,
+    /// Named secrets available to templates via the `secret()` function.
+    pub secrets: HashMap<String, SecretDefinition>,
     /// Allows you to override the default template for test new with a
     /// custom one.
     pub test_template: Option<String>,
