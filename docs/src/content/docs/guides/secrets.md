@@ -40,7 +40,7 @@ source = "command"
 command = ["op", "read", "op://vault/application-password/password"]
 ```
 
-`literal` is not intended to be used for production and therefore has a `insecure` flag to ensure the user understands that this is not for production use. Spawn refuses to use a `literal` secret without it, so a plaintext value committed to `spawn.toml` can't accidentally become a project's "secure default." Reach for it only as a `dev`/local override, never as a `default`:
+`literal` is not intended to be used for production and therefore has an `insecure` flag to ensure the user understands that this is not for production use. Spawn refuses to use a `literal` secret without it, so a plaintext value committed to `spawn.toml` can't accidentally become a project's "secure default." Reach for it only as a `dev`/local override, never as a `default`:
 
 ```toml
 [secrets.application_password.environments.dev]
