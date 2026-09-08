@@ -106,10 +106,13 @@ impl PSQL {
         let safe_status = EscapedLiteral::new(status.as_str());
         let safe_activity = EscapedLiteral::new(activity.as_str());
         let safe_description = EscapedLiteral::new(description.unwrap_or(""));
-        // If no checksum provided, use empty bytea (decode returns empty bytea for empty string)
-        let checksum_expr = checksum
-            .map(|c| format!("decode('{}', 'hex')", c))
-            .unwrap_or_else(|| "decode('', 'hex')".to_string());
+        // If no checksum provided, use empty bytea (decode returns empty bytea for empty string).
+        // checksum is caller-supplied, so it's escaped via EscapedLiteral rather than
+        // interpolated directly — decode() itself rejects anything that isn't valid hex.
+        let checksum_expr = format!(
+            "decode({}, 'hex')",
+            EscapedLiteral::new(checksum.unwrap_or(""))
+        );
         let checksum_raw = InsecureRawSql::new(&checksum_expr);
         let safe_pin_hash = pin_hash.map(|h| EscapedLiteral::new(h));
 
