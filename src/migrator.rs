@@ -62,4 +62,24 @@ impl Migrator {
         template::generate_streaming(&self.config, lock_file, script_path, variables, secrets_mode)
             .await
     }
+
+    /// The pin hash to record for this migration: the real hash from
+    /// `lock.toml` when using pinned components, or an equivalent hash
+    /// computed against the current (unpinned) component tree otherwise —
+    /// `snapshot`'s `store_path: None` computes the same root hash a real
+    /// pin would without writing anything to the persistent `pinned/` store.
+    pub async fn pin_hash(&self) -> Result<String> {
+        if self.use_pinned {
+            let lock_path = self.config.pather().migration_lock_file_path(&self.name);
+            let lock = self.config.load_lock_file(&lock_path).await?;
+            Ok(lock.pin)
+        } else {
+            crate::store::pinner::snapshot(
+                self.config.operator(),
+                None,
+                &self.config.pather().components_folder(),
+            )
+            .await
+        }
+    }
 }

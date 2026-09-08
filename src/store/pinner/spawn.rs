@@ -110,6 +110,6 @@ impl Pinner for Spawn {
     }
 
     async fn snapshot(&mut self, object_store: &Operator) -> Result<String> {
-        super::snapshot(object_store, &self.pin_path, &self.source_path).await
+        super::snapshot(object_store, Some(self.pin_path.as_str()), &self.source_path).await
     }
 }

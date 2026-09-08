@@ -24,7 +24,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use twox_hash::xxhash3_128;
 use twox_hash::XxHash64;
 
 /// Returns the advisory lock key used to prevent concurrent migrations.
@@ -300,6 +299,7 @@ impl Engine for PSQL {
         &self,
         migration_name: &str,
         write_fn: WriterFn,
+        checksum: String,
         pin_hash: Option<String>,
         namespace: &str,
         retry: bool,
@@ -307,6 +307,7 @@ impl Engine for PSQL {
         self.apply_and_record_migration_v1(
             migration_name,
             write_fn,
+            checksum,
             pin_hash,
             EscapedLiteral::new(namespace),
             retry,
@@ -481,37 +482,6 @@ impl tokio::io::AsyncWrite for SharedBufWriter {
     }
 }
 
-/// A writer that tees output to both an inner writer and a hasher for checksum calculation.
-/// This allows streaming the migration SQL while computing the checksum on-the-fly.
-struct TeeWriter<W: Write> {
-    inner: W,
-    hasher: xxhash3_128::Hasher,
-}
-
-impl<W: Write> TeeWriter<W> {
-    fn new(inner: W) -> Self {
-        Self {
-            inner,
-            hasher: xxhash3_128::Hasher::new(),
-        }
-    }
-
-    fn finish(self) -> (W, u128) {
-        (self.inner, self.hasher.finish_128())
-    }
-}
-
-impl<W: Write> Write for TeeWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.hasher.write(buf);
-        self.inner.write(buf)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.flush()
-    }
-}
-
 impl PSQL {
     pub async fn update_schema(&self) -> Result<()> {
         // Create a memory operator from the included directory containing
@@ -582,6 +552,7 @@ impl PSQL {
             let gen = migrator
                 .generate_streaming(Some(variables), SecretsRenderMode::Revealed)
                 .await?;
+            let checksum = gen.raw_checksum();
             let mut buffer = Vec::new();
             gen.render_to_writer(&mut buffer)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -601,6 +572,7 @@ impl PSQL {
                 .apply_and_record_migration_v1(
                     migration_name,
                     write_fn,
+                    checksum,
                     None, // pin_hash not used for engine migrations
                     self.safe_spawn_namespace(),
                     false, // no retry for internal schema migrations
@@ -835,6 +807,7 @@ impl PSQL {
         &self,
         migration_name: &str,
         write_fn: WriterFn,
+        checksum: String,
         pin_hash: Option<String>,
         namespace: EscapedLiteral,
         retry: bool,
@@ -880,10 +853,6 @@ impl PSQL {
         let start_time = Instant::now();
         let lock_checksum = migration_lock_key();
 
-        // Use Arc<Mutex<>> to extract checksum from the closure
-        let checksum_result: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-        let checksum_result_clone = checksum_result.clone();
-
         // Session 1: Run the migration SQL only
         let migration_result = self
             .execute_with_writer(
@@ -897,16 +866,12 @@ impl PSQL {
                         .as_bytes(),
                     )?;
 
-                    // Wrap the writer in a TeeWriter to compute checksum while streaming
-                    let mut tee_writer = TeeWriter::new(writer);
-
-                    // Execute the user's write function (streams migration SQL)
-                    write_fn(&mut tee_writer)?;
-
-                    // Extract the checksum
-                    let (_writer, content_checksum) = tee_writer.finish();
-                    let checksum_hex = format!("{:032x}", content_checksum);
-                    *checksum_result_clone.lock().unwrap() = Some(checksum_hex);
+                    // Stream the migration SQL straight through — no buffering,
+                    // no tee'd hashing. The checksum is a hash of the migration's
+                    // raw template source (see StreamingGeneration::raw_checksum),
+                    // computed by the caller before this closure ever runs, so it
+                    // can never contain a resolved secret value.
+                    write_fn(writer)?;
 
                     Ok(())
                 }),
@@ -916,7 +881,6 @@ impl PSQL {
             .await;
 
         let duration = start_time.elapsed().as_secs_f32();
-        let checksum_hex = checksum_result.lock().unwrap().clone();
 
         // Determine status based on session 1 result
         let (status, migration_error) = match &migration_result {
@@ -948,7 +912,7 @@ impl PSQL {
                 &namespace,
                 status,
                 MigrationActivity::Apply,
-                checksum_hex.as_deref(),
+                Some(checksum.as_str()),
                 Some(duration),
                 pin_hash.as_deref(),
                 None,

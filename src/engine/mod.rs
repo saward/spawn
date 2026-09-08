@@ -335,10 +335,17 @@ pub trait Engine: Send + Sync {
         merge_stderr: bool,
     ) -> Result<(), EngineError>;
 
+    /// Applies a migration and records the outcome.
+    /// - `checksum`: A fingerprint for the migration_history audit trail.
+    ///   Callers should hash the migration's raw (unrendered) template
+    ///   source, not the rendered/executed SQL — the rendered output may
+    ///   contain resolved secret values, which must never be persisted or
+    ///   derivable from what's persisted.
     async fn migration_apply(
         &self,
         migration_name: &str,
         write_fn: WriterFn,
+        checksum: String,
         pin_hash: Option<String>,
         namespace: &str,
         retry: bool,

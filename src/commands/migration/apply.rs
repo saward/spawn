@@ -64,6 +64,14 @@ impl Command for ApplyMigration {
                 .await
             {
                 Ok(streaming) => {
+                    // Fingerprint the raw template source (never the rendered
+                    // output, which may contain resolved secret values that
+                    // could be guessed due to us using a fast hashing method)
+                    // and the component tree it was built against, before the
+                    // streaming generation is consumed below.
+                    let checksum = streaming.raw_checksum();
+                    let pin_hash = mgrtr.pin_hash().await?;
+
                     // Use shared engine if reuse_connection is enabled, otherwise create new
                     let new_engine: Option<Box<dyn Engine>>;
                     let engine: &dyn Engine = match &shared_engine {
@@ -78,7 +86,8 @@ impl Command for ApplyMigration {
                         .migration_apply(
                             &migration,
                             write_fn,
-                            None,
+                            checksum,
+                            Some(pin_hash),
                             super::DEFAULT_NAMESPACE,
                             self.retry,
                         )

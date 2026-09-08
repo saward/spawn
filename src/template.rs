@@ -16,6 +16,7 @@ use uuid::Uuid;
 use anyhow::{Context, Result};
 use minijinja::context;
 use std::sync::Arc;
+use twox_hash::xxhash3_128;
 
 /// Maps an EngineType to the appropriate SQL dialect for formatting.
 ///
@@ -187,6 +188,17 @@ fn secret_function(
 }
 
 /// Reads raw bytes from a file in the components folder via the Store.
+///
+/// IDEA (not implemented): `read_file`/`read_json`/etc. re-fetch and
+/// re-parse their input on every call, with no memoization across separate
+/// render() invocations of the same template. minijinja's `Value` is
+/// Arc-backed internally for its String/Bytes/Object variants (see
+/// minijinja::value::ValueRepr), so cloning an already-built `Value` is
+/// cheap — a filter-level cache keyed by input (e.g. on `Store`) could let
+/// a second render of the same migration reuse an already-loaded large
+/// file via a cheap Arc clone instead of re-fetching/re-parsing it. Only
+/// worth building if a real need for multi-render or repeated large-file
+/// loads comes up; nothing currently requires it.
 fn read_file_bytes(path: &str, store: &Arc<Store>) -> Result<Vec<u8>, minijinja::Error> {
     let bytes = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(async { store.read_file_bytes(path).await })
@@ -313,6 +325,19 @@ pub struct StreamingGeneration {
 }
 
 impl StreamingGeneration {
+    /// Hex-encoded fingerprint of the migration's raw (unrendered) template
+    /// source, for use as a migration_history audit-trail checksum.
+    ///
+    /// Deliberately hashes the raw source rather than the rendered output:
+    /// rendered SQL may contain resolved secret values, which must never be
+    /// persisted (or reconstructible from what's persisted) via the
+    /// checksum. As a side effect, this also means secret rotation never
+    /// changes a migration's recorded checksum.
+    pub fn raw_checksum(&self) -> String {
+        let hash = xxhash3_128::Hasher::oneshot(self.template_contents.as_bytes());
+        format!("{:032x}", hash)
+    }
+
     /// Render the template to the provided writer.
     /// This creates the minijinja environment and renders in one step.
     pub fn render_to_writer<W: std::io::Write + ?Sized>(self, writer: &mut W) -> Result<()> {
@@ -686,7 +711,7 @@ mod tests {
         op.write("components/test.txt", "pinned content")
             .await
             .unwrap();
-        let root_hash = snapshot(&op, "pinned/", "components/").await.unwrap();
+        let root_hash = snapshot(&op, Some("pinned/"), "components/").await.unwrap();
 
         // Delete the original file so it only exists in the pinned CAS store
         op.delete("components/test.txt").await.unwrap();
