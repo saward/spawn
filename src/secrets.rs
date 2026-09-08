@@ -197,6 +197,17 @@ impl SecretsRepository {
             SecretsRenderMode::Revealed => value,
         })
     }
+
+    /// Every secret value actually resolved so far during this render.
+    /// Used to redact captured process output (e.g. psql stderr) that may
+    /// otherwise echo a secret back verbatim — see the Secrets guide's note
+    /// on why this is a render-mode-independent, best-effort measure.
+    pub fn resolved_values(&self) -> Vec<String> {
+        self.secrets
+            .values()
+            .filter_map(|secret| secret.resolved.lock().unwrap().clone())
+            .collect()
+    }
 }
 
 #[cfg(test)]

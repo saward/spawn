@@ -36,7 +36,7 @@ fn engine_to_dialect(engine: &EngineType) -> SqlDialect {
 pub fn template_env(
     store: Store,
     engine: &EngineType,
-    secrets: SecretsRepository,
+    secrets: Arc<SecretsRepository>,
 ) -> Result<Environment<'static>> {
     let mut env = Environment::new();
 
@@ -52,7 +52,6 @@ pub fn template_env(
     env.add_filter("escape_identifier", escape_identifier_filter);
     env.add_filter("escape_literal", escape_literal_filter);
 
-    let secrets = Arc::new(secrets);
     env.add_function(
         "secret",
         move |name: &str| -> Result<Value, minijinja::Error> { secret_function(name, &secrets) },
@@ -321,7 +320,7 @@ pub struct StreamingGeneration {
     environment: String,
     variables: Variables,
     engine: EngineType,
-    secrets: SecretsRepository,
+    secrets: Arc<SecretsRepository>,
 }
 
 impl StreamingGeneration {
@@ -351,12 +350,19 @@ impl StreamingGeneration {
         Ok(())
     }
 
-    /// Convert this streaming generation into a WriterFn that can be passed to migration_apply.
-    pub fn into_writer_fn(self) -> crate::engine::WriterFn {
-        Box::new(move |writer: &mut dyn std::io::Write| {
+    /// Convert this streaming generation into a WriterFn that can be passed
+    /// to migration_apply, along with a handle to the same secrets
+    /// repository the render will use. That handle stays readable after the
+    /// closure runs (e.g. once psql has exited), so a caller whose apply
+    /// failed can find out which secret values were actually resolved and
+    /// redact them from captured output before it's displayed or logged.
+    pub fn into_writer_fn(self) -> (crate::engine::WriterFn, Arc<SecretsRepository>) {
+        let secrets = Arc::clone(&self.secrets);
+        let write_fn = Box::new(move |writer: &mut dyn std::io::Write| {
             self.render_to_writer(writer)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-        })
+        });
+        (write_fn, secrets)
     }
 }
 
@@ -432,7 +438,7 @@ pub async fn generate_streaming_with_store(
         environment: environment.to_string(),
         variables: variables.unwrap_or_default(),
         engine: engine.clone(),
-        secrets,
+        secrets: Arc::new(secrets),
     })
 }
 
@@ -626,7 +632,7 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, secrets).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
@@ -657,7 +663,7 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, secrets).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "binary.dat"|read_file|base64_encode|safe }}"#,
@@ -685,7 +691,7 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, secrets).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "nonexistent.txt"|read_file|to_string_lossy }}"#,
@@ -732,7 +738,7 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, secrets).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
@@ -754,7 +760,7 @@ mod tests {
             spawn_folder: "".to_string(),
         };
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
-        template_env(store, &EngineType::PostgresPSQL, secrets).unwrap()
+        template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap()
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

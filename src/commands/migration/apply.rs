@@ -3,9 +3,27 @@ use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::engine::{Engine, MigrationError};
 use crate::migrator::Migrator;
-use crate::secrets::SecretsRenderMode;
+use crate::secrets::{SecretsRenderMode, SecretsRepository};
 use crate::variables::Variables;
 use anyhow::{anyhow, Result};
+
+/// Replaces every value this render actually resolved with a placeholder,
+/// across the error's full chain, and rebuilds a flat error from the
+/// result. `apply` executes real SQL, and a failing statement (e.g. a
+/// constraint violation) can make Postgres echo a literal value — possibly
+/// a secret — back in its own error output, entirely independent of the
+/// migration_history checksum protection. See the Secrets guide for the
+/// residual risk this doesn't close.
+fn redact_secrets(err: anyhow::Error, secrets: &SecretsRepository) -> anyhow::Error {
+    let mut text = format!("{:?}", err);
+    for value in secrets.resolved_values() {
+        if value.is_empty() {
+            continue;
+        }
+        text = text.replace(&value, "***REDACTED***");
+    }
+    anyhow!(text)
+}
 
 pub struct ApplyMigration {
     pub migration: Option<String>,
@@ -81,7 +99,7 @@ impl Command for ApplyMigration {
                             new_engine.as_ref().unwrap().as_ref()
                         }
                     };
-                    let write_fn = streaming.into_writer_fn();
+                    let (write_fn, secrets) = streaming.into_writer_fn();
                     match engine
                         .migration_apply(
                             &migration,
@@ -113,17 +131,16 @@ impl Command for ApplyMigration {
                             ));
                         }
                         Err(MigrationError::Database(e)) => {
-                            return Err(
-                                e.context(format!("Failed applying migration {}", &migration))
-                            );
+                            let err = e.context(format!("Failed applying migration {}", &migration));
+                            return Err(redact_secrets(err, &secrets));
                         }
                         Err(MigrationError::AdvisoryLock(e)) => {
-                            return Err(
-                                anyhow!("Unable to obtain advisory lock for migration").context(e)
-                            );
+                            let err =
+                                anyhow!("Unable to obtain advisory lock for migration").context(e);
+                            return Err(redact_secrets(err, &secrets));
                         }
                         Err(e @ MigrationError::NotRecorded { .. }) => {
-                            return Err(anyhow!("{}", e));
+                            return Err(redact_secrets(anyhow!("{}", e), &secrets));
                         }
                     }
                 }
@@ -142,5 +159,46 @@ impl Command for ApplyMigration {
             };
         }
         Ok(Outcome::AppliedMigrations)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::secrets::{SecretDefinition, SecretSource};
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn redact_secrets_strips_resolved_values_from_the_full_error_chain() {
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            "application_password".to_string(),
+            SecretDefinition {
+                default: SecretSource::Literal {
+                    value: "hunter2".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let secrets = SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Revealed,
+            op,
+        );
+        // Resolve it, as a real render would while streaming to psql.
+        secrets.resolve("application_password").await.unwrap();
+
+        let simulated_psql_error = anyhow!(
+            "psql exited with code 1: ERROR: duplicate key value\nDETAIL: Key (password)=(hunter2) already exists."
+        );
+
+        let redacted = redact_secrets(simulated_psql_error, &secrets);
+
+        let full_text = format!("{:?}", redacted);
+        assert!(!full_text.contains("hunter2"));
+        assert!(full_text.contains("***REDACTED***"));
     }
 }

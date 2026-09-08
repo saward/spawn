@@ -71,6 +71,18 @@ Whether `secret()` returns the real value or a placeholder like `***MASKED:appli
 
 Masking only affects the value _returned to the template_ — the secret is still fully resolved either way, so a masked `build` still fails if the secret is unreachable or misconfigured (including the `literal`/`insecure` check above). It just never displays the real value. This means `build` doubles as a way to verify your secrets are reachable in a given environment before you ever run `apply`.
 
+## Secrets in failed applies
+
+`migration apply` executes real SQL, and a failing statement can make the database echo a literal value back in its own error message — a unique or check constraint violation reporting the row's actual contents, an `invalid input syntax` error quoting the offending value, and so on. If that statement used `secret()`, the real value could otherwise end up in whatever captures `apply`'s output — a terminal, a CI log, anything.
+
+To prevent this, Spawn replaces every secret value a failed `apply` actually resolved with `***REDACTED***` in the returned error, before it's ever displayed or logged.
+
+:::caution[This is a best-effort substitution, not a guarantee]
+The redaction works by matching the exact resolved value against the error text — it can't distinguish a secret's value from unrelated text that happens to be identical. That has one real consequence worth knowing: someone who can both **author** migrations and **apply** them against a target database could, in principle, deliberately craft a migration to test whether a guessed string matches a currently configured secret — by embedding the guess somewhere designed to fail, applying it, and checking whether the guess comes back redacted.
+
+This is meaningfully harder to exploit than reading a log: it requires apply access to the actual database, not just read access to `_spawn.migration_history`, and each guess is a real, visible, failed apply rather than a silent offline check. But it means this mechanism is a defense against **accidental** disclosure (an ordinary failing migration leaking a value into CI logs), not a substitute for controlling who can author and apply migrations against sensitive targets.
+:::
+
 ## Secrets and pinning
 
 Secrets are entirely outside of [pinning](/cli/migration-pin/): `spawn migration pin` snapshots component _content_ into the content-addressed store and records it in a migration's `lock.toml`. It never touches `[secrets]` or resolved secret values — a secret's source is declared once in `spawn.toml`, and its value is re-resolved fresh every time a migration is built or applied, regardless of pinning.

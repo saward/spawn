@@ -44,6 +44,7 @@ use spawn_db::{
     commands::{AdoptMigration, ApplyMigration, Command, CompareTests, ExpectTest, Outcome},
     config::ConfigLoaderSaver,
     engine::{CommandSpec, EngineType, TargetConfig},
+    secrets::{SecretDefinition, SecretSource},
 };
 use std::collections::HashMap;
 use std::env;
@@ -1327,6 +1328,71 @@ COMMIT;"#;
         !err_msg.contains("previous"),
         "with --retry the error should be from the migration SQL, not PreviousAttemptFailed, got: {}",
         err_msg
+    );
+
+    Ok(())
+}
+
+/// A failed apply must never leak a resolved secret value into the returned
+/// error, even when Postgres itself echoes the offending literal back (as
+/// it does for e.g. "invalid input syntax" errors).
+#[tokio::test]
+#[ignore]
+async fn test_apply_error_redacts_resolved_secret_values() -> Result<()> {
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_apply_error_redacts_resolved_secret_values", None)
+            .await?;
+
+    let secret_value = "hunter2-distinctive-secret-value";
+    let mut secrets = HashMap::new();
+    secrets.insert(
+        "application_password".to_string(),
+        SecretDefinition {
+            default: SecretSource::Literal {
+                value: secret_value.to_string(),
+                insecure: true,
+            },
+            environments: HashMap::new(),
+        },
+    );
+    let mut config_loader =
+        IntegrationTestHelper::create_config(&helper.db_name, &helper.connection_mode);
+    config_loader.secrets = Some(secrets);
+    config_loader
+        .save(helper.migration_helper.config_path(), &helper.migration_helper.fs)
+        .await?;
+
+    // Casting the secret to an integer guarantees Postgres echoes the exact
+    // literal back in its own error message ("invalid input syntax for type
+    // integer: \"...\""), independent of any table/constraint setup.
+    let bad_migration = format!(
+        "BEGIN;\n\nSELECT {{{{ secret(\"application_password\") }}}}::integer;\n\nCOMMIT;"
+    );
+    let migration_name = helper
+        .migration_helper
+        .create_migration_manual("secret-then-fail", bad_migration)
+        .await?;
+
+    let result = helper.apply_migration(&migration_name).await;
+    let err = result.expect_err("expected migration to fail on the bad cast");
+    let full_text = format!("{:?}", err);
+
+    assert!(
+        !full_text.contains(secret_value),
+        "secret value leaked into apply error: {}",
+        full_text
+    );
+    assert!(
+        full_text.contains("***REDACTED***"),
+        "expected a redaction marker in the error, got: {}",
+        full_text
+    );
+    assert!(
+        full_text.contains("invalid input syntax"),
+        "redaction should not have destroyed the rest of the error's useful detail, got: {}",
+        full_text
     );
 
     Ok(())
