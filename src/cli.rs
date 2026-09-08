@@ -65,6 +65,8 @@ pub enum Commands {
     Test {
         #[command(subcommand)]
         command: Option<TestCommands>,
+        #[arg(short, long, global = true)]
+        environment: Option<String>,
     },
 }
 
@@ -89,7 +91,7 @@ impl TelemetryDescribe for Commands {
                 }
                 None => TelemetryInfo::new("migration"),
             },
-            Commands::Test { command } => match command {
+            Commands::Test { command, .. } => match command {
                 Some(cmd) => {
                     let mut info = cmd.telemetry();
                     info.label = format!("test {}", info.label);
@@ -371,7 +373,12 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
             command,
             environment,
         }) => {
-            config.environment = environment;
+            // Only override what was loaded from spawn.toml when --environment
+            // was actually passed; otherwise preserve an explicit top-level
+            // `environment` setting (or the target's own) instead of erasing it.
+            if let Some(environment) = environment {
+                config.environment = Some(environment);
+            }
             match command {
                 Some(MigrationCommands::New { name }) => {
                     NewMigration { name }.execute(config).await
@@ -441,22 +448,166 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                 }
             }
         }
-        Some(Commands::Test { command }) => match command {
-            Some(TestCommands::New { name }) => NewTest { name }.execute(config).await,
-            Some(TestCommands::Build { name, reveal_secrets }) => BuildTest {
-                name,
-                reveal_secrets,
+        Some(Commands::Test {
+            command,
+            environment,
+        }) => {
+            if let Some(environment) = environment {
+                config.environment = Some(environment);
             }
-            .execute(config)
-            .await,
-            Some(TestCommands::Run { name }) => RunTest { name }.execute(config).await,
-            Some(TestCommands::Compare { name }) => CompareTests { name }.execute(config).await,
-            Some(TestCommands::Expect { name }) => ExpectTest { name }.execute(config).await,
-            None => {
-                eprintln!("No test subcommand specified");
-                Ok(Outcome::Unimplemented)
+            match command {
+                Some(TestCommands::New { name }) => NewTest { name }.execute(config).await,
+                Some(TestCommands::Build {
+                    name,
+                    reveal_secrets,
+                }) => {
+                    BuildTest {
+                        name,
+                        reveal_secrets,
+                    }
+                    .execute(config)
+                    .await
+                }
+                Some(TestCommands::Run { name }) => RunTest { name }.execute(config).await,
+                Some(TestCommands::Compare { name }) => {
+                    CompareTests { name }.execute(config).await
+                }
+                Some(TestCommands::Expect { name }) => ExpectTest { name }.execute(config).await,
+                None => {
+                    eprintln!("No test subcommand specified");
+                    Ok(Outcome::Unimplemented)
+                }
             }
-        },
+        }
         None => Ok(Outcome::Unimplemented),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ConfigLoaderSaver;
+    use crate::engine::{EngineType, TargetConfig};
+    use opendal::services::Memory;
+    use std::collections::HashMap;
+
+    /// A config with a target permanently set to "dev", and an optional
+    /// explicit top-level `environment` override (`None` reflects the
+    /// common case: nothing set in spawn.toml).
+    fn test_config(top_level_environment: Option<&str>) -> Config {
+        let mut targets = HashMap::new();
+        targets.insert(
+            "dev_target".to_string(),
+            TargetConfig {
+                engine: EngineType::PostgresPSQL,
+                spawn_database: None,
+                spawn_schema: "_spawn".to_string(),
+                environment: "dev".to_string(),
+                command: None,
+            },
+        );
+        let loader = ConfigLoaderSaver {
+            environment: top_level_environment.map(|s| s.to_string()),
+            project_id: None,
+            spawn_folder: "spawn".to_string(),
+            target: Some("dev_target".to_string()),
+            targets: Some(targets),
+            secrets: None,
+            test_template: None,
+            up_template: None,
+            telemetry: Some(false),
+        };
+        let op = opendal::Operator::new(Memory::default()).unwrap();
+        loader.build(op, None)
+    }
+
+    /// Table-driven coverage of how a target's environment interacts with
+    /// spawn.toml's top-level `environment` and the `--environment` CLI
+    /// flag, for both Migration and Test commands.
+    #[tokio::test]
+    async fn resolved_environment_matrix() {
+        struct Case {
+            name: &'static str,
+            is_test_command: bool,
+            top_level_environment: Option<&'static str>,
+            cli_flag: Option<&'static str>,
+            expected: &'static str,
+        }
+
+        let cases = [
+            Case {
+                name: "test: no config or flag falls back to the target's own environment",
+                is_test_command: true,
+                top_level_environment: None,
+                cli_flag: None,
+                expected: "dev",
+            },
+            Case {
+                name: "test: --environment flag overrides the target",
+                is_test_command: true,
+                top_level_environment: None,
+                cli_flag: Some("staging"),
+                expected: "staging",
+            },
+            Case {
+                name: "test: explicit top-level override is preserved when flag is absent",
+                is_test_command: true,
+                top_level_environment: Some("staging"),
+                cli_flag: None,
+                expected: "staging",
+            },
+            Case {
+                name: "migration: no config or flag falls back to the target's own environment",
+                is_test_command: false,
+                top_level_environment: None,
+                cli_flag: None,
+                expected: "dev",
+            },
+            Case {
+                name: "migration: --environment flag overrides the target",
+                is_test_command: false,
+                top_level_environment: None,
+                cli_flag: Some("staging"),
+                expected: "staging",
+            },
+            Case {
+                name: "migration: explicit top-level override is preserved when flag is absent",
+                is_test_command: false,
+                top_level_environment: Some("staging"),
+                cli_flag: None,
+                expected: "staging",
+            },
+        ];
+
+        for case in cases {
+            let mut config = test_config(case.top_level_environment);
+            let environment = case.cli_flag.map(String::from);
+            let command = if case.is_test_command {
+                Commands::Test {
+                    command: None,
+                    environment,
+                }
+            } else {
+                Commands::Migration {
+                    command: None,
+                    environment,
+                }
+            };
+            let cli = Cli {
+                debug: false,
+                config_file: "spawn.toml".to_string(),
+                target: None,
+                internal_telemetry: false,
+                command: Some(command),
+            };
+
+            run_command(cli, &mut config).await.unwrap();
+            assert_eq!(
+                config.target_config().unwrap().environment,
+                case.expected,
+                "case: {}",
+                case.name
+            );
+        }
     }
 }

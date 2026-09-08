@@ -92,8 +92,6 @@ impl ConfigLoaderSaver {
             // Eg.. `APP_DEBUG=1 ./target/app` would set the `debug` key
             .add_source(config::Environment::with_prefix("SPAWN"))
             .set_override_option("target", target)?
-            .set_default("environment", "prod")
-            .context("could not set default environment")?
             .build()?
             .try_deserialize()?;
 
@@ -279,5 +277,37 @@ impl Config {
         let extension = path.split('.').last().unwrap_or("");
         Variables::from_str(extension, &content_str)
             .context(format!("Failed to parse variables file '{}'", path))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opendal::services::Memory;
+
+    #[tokio::test]
+    async fn load_without_top_level_environment_does_not_manufacture_one() {
+        let op = Operator::new(Memory::default()).unwrap();
+        op.write(
+            "spawn.toml",
+            r#"
+spawn_folder = "spawn"
+target = "dev_target"
+
+[targets.dev_target]
+engine = "postgres-psql"
+environment = "dev"
+"#,
+        )
+        .await
+        .unwrap();
+
+        let config = Config::load("spawn.toml", &op, None).await.unwrap();
+
+        // No top-level `environment` was set in spawn.toml, so this must stay
+        // None rather than defaulting to "prod" — target_config() only
+        // overrides the target's own environment when this is explicitly Some.
+        assert_eq!(config.environment, None);
+        assert_eq!(config.target_config().unwrap().environment, "dev");
     }
 }

@@ -4,11 +4,15 @@ description: Run tests and compare output to expected results.
 ---
 
 import CLICommand from "../../../components/CLICommand.astro";
-import { globalOptions, targetOption } from "../../../components/cli-options";
+import {
+  globalOptions,
+  targetOption,
+  environmentOption,
+} from "../../../components/cli-options";
 
 <CLICommand
   usage="spawn test compare <name>"
-  options={[...targetOption, ...globalOptions]}
+  options={[...environmentOption, ...targetOption, ...globalOptions]}
 >
 
 Runs tests and compares their output against saved expected results, reporting any differences.

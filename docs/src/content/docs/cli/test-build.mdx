@@ -7,12 +7,18 @@ import CLICommand from "../../../components/CLICommand.astro";
 import {
   globalOptions,
   targetOption,
+  environmentOption,
   revealSecretsOption,
 } from "../../../components/cli-options";
 
 <CLICommand
   usage="spawn test build <name> [--reveal-secrets]"
-  options={[...revealSecretsOption, ...targetOption, ...globalOptions]}
+  options={[
+    ...revealSecretsOption,
+    ...environmentOption,
+    ...targetOption,
+    ...globalOptions,
+  ]}
 >
 
 Renders a test's `test.sql` template into final SQL, resolving component includes and template variables. Outputs to stdout.
