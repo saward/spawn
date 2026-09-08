@@ -764,6 +764,43 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_secret_function_escapes_injection_attempt_when_revealed() {
+        use std::collections::HashMap;
+
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            "application_password".to_string(),
+            crate::secrets::SecretDefinition {
+                default: crate::secrets::SecretSource::Literal {
+                    value: "'; DROP TABLE users; --".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        let secrets = SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Revealed,
+            op,
+        );
+
+        let mut env = env_with_secrets(secrets);
+        env.add_template(
+            "test.sql",
+            r#"CREATE ROLE app_user WITH LOGIN PASSWORD {{ secret("application_password") }};"#,
+        )
+        .unwrap();
+        let tmpl = env.get_template("test.sql").unwrap();
+        let result = tmpl.render(context!()).unwrap();
+        assert_eq!(
+            result,
+            "CREATE ROLE app_user WITH LOGIN PASSWORD '''; DROP TABLE users; --';"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_secret_function_masks_when_masked_mode() {
         use std::collections::HashMap;
 
