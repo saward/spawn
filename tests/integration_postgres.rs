@@ -1333,6 +1333,82 @@ COMMIT;"#;
     Ok(())
 }
 
+/// A writer failure (e.g. an undefined `secret()` call) is a different
+/// failure path than a nonzero psql exit, and must still record a FAILURE
+/// row rather than abandoning the migration with no history.
+#[tokio::test]
+#[ignore]
+async fn test_migration_writer_failure_still_records_history() -> Result<()> {
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_migration_writer_failure_still_records_history", None)
+            .await?;
+
+    // CREATE TABLE autocommits before the engine reaches the failing
+    // secret() call, proving streamed SQL persists past a writer failure.
+    let bad_migration = r#"CREATE TABLE writer_failure_check (id integer);
+
+BEGIN;
+
+SELECT {{ secret("does_not_exist") }};
+
+COMMIT;"#;
+
+    let migration_name = helper
+        .migration_helper
+        .create_migration_manual("writer-failure", bad_migration.to_string())
+        .await?;
+
+    let result = helper.apply_migration(&migration_name).await;
+    assert!(
+        result.is_err(),
+        "Expected migration with an undefined secret() call to fail"
+    );
+
+    assert!(
+        helper.table_exists("public", "writer_failure_check")?,
+        "SQL streamed before the writer failure should already have executed against the database"
+    );
+
+    let status_check = helper.execute_sql(&format!(
+        "SELECT mh.status_id_status FROM _spawn.migration m \
+         JOIN _spawn.migration_history mh ON m.migration_id = mh.migration_id_migration \
+         WHERE m.name = '{}' ORDER BY mh.created_at DESC LIMIT 1;",
+        migration_name
+    ))?;
+    assert!(
+        status_check.contains("FAILURE"),
+        "Migration should be recorded with FAILURE status even though psql itself never \
+         reported a nonzero exit, got: {}",
+        status_check
+    );
+
+    // Confirms the FAILURE row is actually persisted, not just transient.
+    let config = helper.migration_helper.load_config().await?;
+    let cmd = ApplyMigration {
+        migration: Some(migration_name.clone()),
+        pinned: false,
+        variables: None,
+        yes: true,
+        retry: false,
+        reuse_connection: false,
+    };
+    let result = cmd.execute(&config).await;
+    assert!(
+        result.is_err(),
+        "apply without --retry should fail after a previous writer-failure attempt"
+    );
+    let err_msg = result.err().unwrap().to_string();
+    assert!(
+        err_msg.contains("previous") && err_msg.contains("FAILURE"),
+        "error should mention previous FAILURE attempt, got: {}",
+        err_msg
+    );
+
+    Ok(())
+}
+
 /// A failed apply must never leak a resolved secret value into the returned
 /// error, even when Postgres itself echoes the offending literal back (as
 /// it does for e.g. "invalid input syntax" errors).

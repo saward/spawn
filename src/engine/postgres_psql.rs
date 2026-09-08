@@ -268,10 +268,13 @@ impl Engine for PSQL {
             Ok(())
         });
 
-        // 6. Wait for writing to complete
-        writer_handle
+        // 6. Wait for writing to complete. Captured rather than propagated
+        // immediately — psql may still be running and must be reaped (step 8)
+        // before we return, even on a writer failure.
+        let writer_result = writer_handle
             .await
-            .map_err(|e| EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))??;
+            .map_err(|e| EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))
+            .and_then(|r| r.map_err(EngineError::Io));
 
         // 7. Wait for stdout copy if applicable (must complete before we read the buffer)
         if let Some(handle) = stdout_handle {
@@ -284,6 +287,10 @@ impl Engine for PSQL {
             Some(handle) => handle.await.unwrap_or_default(),
             None => Vec::new(),
         };
+
+        // Takes precedence over psql's own status: an aborted render can
+        // leave psql exiting 0 (e.g. a quiet rollback on early EOF).
+        writer_result?;
 
         if !status.success() {
             return Err(EngineError::ExecutionFailed {
@@ -898,10 +905,12 @@ impl PSQL {
                 )
             }
             Err(EngineError::Io(e)) => {
-                return Err(MigrationError::Database(anyhow!(
-                    "IO error running migration: {}",
-                    e
-                )));
+                // Writer failed (e.g. an unresolved secret), not psql itself.
+                // Still record a Failure row — SQL may already have run.
+                (
+                    MigrationStatus::Failure,
+                    Some(format!("failed while streaming migration SQL: {}", e)),
+                )
             }
         };
 
