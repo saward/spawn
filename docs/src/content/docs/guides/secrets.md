@@ -11,7 +11,7 @@ Each secret has a `default` source, and optional per-environment overrides keyed
 
 ```toml
 [secrets.application_password.default]
-source = "file"
+source = "host_file"
 path = "/run/secrets/application-password"
 
 [secrets.application_password.environments.dev]
@@ -25,10 +25,11 @@ See the [configuration reference](/reference/config/#secrets) for the exact fiel
 
 ## Choosing a source
 
-There are four ways to tell Spawn where a secret's value actually lives:
+There are five ways to tell Spawn where a secret's value actually lives:
 
 - **`env`** reads an OS environment variable — the natural fit when a secret is already injected that way, e.g. by a CI/CD pipeline or a container orchestrator's own secret injection.
-- **`file`** reads a file's contents. Covers Docker/Kubernetes secrets mounted under `/run/secrets`, systemd's `LoadCredential=`, or an already-decrypted `sops`/`gpg` output file.
+- **`file`** reads a file via spawn's configured operator, resolved the same way any other file spawn reads is. For now, this is restricted to the project's path.
+- **`host_file`** reads a file directly from the host filesystem, bypassing the operator. Use this for secrets mounted on the host outside spawn's storage — Docker/Kubernetes secrets under `/run/secrets`, systemd's `LoadCredential=`, or an already-decrypted `sops`/`gpg` output file. This is the one to use whenever the path is a real absolute host path.
 - **`command`** runs a command and uses its trimmed stdout as the value.
 - **`literal`** is an inline value in `spawn.toml`, gated behind an explicit `insecure = true` flag.
 

@@ -254,7 +254,7 @@ Each secret has a `default` source and optional per-environment overrides, keyed
 
 ```toml
 [secrets.application_password.default]
-source = "file"
+source = "host_file"
 path = "/run/secrets/application-password"
 
 [secrets.application_password.environments.dev]
@@ -278,11 +278,21 @@ name = "APPLICATION_PASSWORD"
 
 #### `file`
 
-Reads the contents of a file, with any trailing newline stripped.
+Reads a file via spawn's configured operator, with any trailing newline stripped — resolved the same way any other file spawn reads is (`read_file`, migration/component lookups, etc.). It is **not** a real filesystem path, so an absolute path here will not reach a real host location — use `host_file` for that.
+
+```toml
+[secrets.application_password.environments.dev]
+source = "file"
+path = "./local-secrets/application-password.txt"
+```
+
+#### `host_file`
+
+Reads a file directly from the host filesystem, bypassing the operator, with any trailing newline stripped. Use this for secrets mounted on the host outside spawn's storage — Docker/Kubernetes secrets under `/run/secrets`, systemd's `LoadCredential=`, or an already-decrypted `sops`/`gpg` output file.
 
 ```toml
 [secrets.application_password.default]
-source = "file"
+source = "host_file"
 path = "/run/secrets/application-password"
 ```
 

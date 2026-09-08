@@ -10,8 +10,15 @@ use std::sync::Mutex;
 pub enum SecretSource {
     /// Read from an OS environment variable.
     Env { name: String },
-    /// Read the contents of a file (trailing newline stripped).
+    /// Read a file via spawn's configured operator (trailing newline
+    /// stripped), resolved the same way any other file spawn reads is. Not
+    /// a real filesystem path — use `host_file` for that.
     File { path: String },
+    /// Read a file directly from the host filesystem (trailing newline
+    /// stripped), bypassing the operator. For secrets mounted on the host
+    /// outside spawn's storage, e.g. Docker/Kubernetes secrets under
+    /// `/run/secrets`, systemd's `LoadCredential=`, etc.
+    HostFile { path: String },
     /// Run a command and use its trimmed stdout as the value.
     Command { command: Vec<String> },
     /// An inline value. Requires `insecure = true`, so a plaintext secret
@@ -40,6 +47,14 @@ impl SecretSource {
                     .to_bytes();
                 let text =
                     String::from_utf8(bytes.to_vec()).context("secret file is not valid UTF-8")?;
+                Ok(text.trim_end_matches(['\n', '\r']).to_string())
+            }
+            SecretSource::HostFile { path } => {
+                let bytes = tokio::fs::read(path)
+                    .await
+                    .with_context(|| format!("could not read secret host file '{}'", path))?;
+                let text = String::from_utf8(bytes)
+                    .context("secret host file is not valid UTF-8")?;
                 Ok(text.trim_end_matches(['\n', '\r']).to_string())
             }
             SecretSource::Command { command } => crate::engine::run_capture_stdout(command).await,
@@ -422,4 +437,63 @@ mod tests {
         assert_eq!(first, second);
     }
 
+    #[tokio::test]
+    async fn host_file_source_reads_absolute_path_regardless_of_operator_root() {
+        // Operator rooted somewhere unrelated, to prove host_file bypasses it.
+        let secret_dir = tempfile::tempdir().unwrap();
+        let secret_path = secret_dir.path().join("application-password");
+        std::fs::write(&secret_path, "host-secret\n").unwrap();
+
+        let definitions = defs(vec![(
+            "application_password",
+            SecretDefinition {
+                default: SecretSource::HostFile {
+                    path: secret_path.to_str().unwrap().to_string(),
+                },
+                environments: HashMap::new(),
+            },
+        )]);
+        let repository = repo(definitions, "prod", SecretsRenderMode::Revealed);
+        let value = repository.resolve("application_password").await.unwrap();
+        assert_eq!(value, "host-secret");
+    }
+
+    #[tokio::test]
+    async fn file_source_cannot_reach_an_absolute_host_path() {
+        // opendal resolves paths relative to the operator's root even when
+        // they look absolute, so this must fail rather than silently
+        // resolve somewhere under the root.
+        let unrelated_root = tempfile::tempdir().unwrap();
+        let op = Operator::new(
+            opendal::services::Fs::default().root(unrelated_root.path().to_str().unwrap()),
+        )
+        .unwrap();
+
+        let secret_dir = tempfile::tempdir().unwrap();
+        let secret_path = secret_dir.path().join("application-password");
+        std::fs::write(&secret_path, "host-secret").unwrap();
+
+        let definitions = defs(vec![(
+            "application_password",
+            SecretDefinition {
+                default: SecretSource::File {
+                    path: secret_path.to_str().unwrap().to_string(),
+                },
+                environments: HashMap::new(),
+            },
+        )]);
+        let repository = SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Revealed,
+            op,
+        );
+        let err = repository
+            .resolve("application_password")
+            .await
+            .unwrap_err();
+        // .to_string() only prints the outer context; the underlying "could
+        // not read secret file" is deeper in the anyhow chain.
+        assert!(format!("{:?}", err).contains("could not read secret file"));
+    }
 }
