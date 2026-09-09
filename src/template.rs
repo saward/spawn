@@ -321,6 +321,13 @@ pub struct StreamingGeneration {
     variables: Variables,
     engine: EngineType,
     secrets: Arc<SecretsRepository>,
+    /// The pin loaded from lock.toml to build this render's component
+    /// store (`None` when generated with `--no-pin`), captured at the same
+    /// time that lock is read — a caller recording it to migration_history
+    /// should use this instead of re-reading lock.toml, which could race a
+    /// concurrent re-pin and record a hash that doesn't match what was
+    /// actually rendered.
+    pin_hash: Option<String>,
 }
 
 impl StreamingGeneration {
@@ -335,6 +342,13 @@ impl StreamingGeneration {
     pub fn raw_checksum(&self) -> String {
         let hash = xxhash3_128::Hasher::oneshot(self.template_contents.as_bytes());
         format!("{:032x}", hash)
+    }
+
+    /// The pin actually used to build this render's component store — see
+    /// the `pin_hash` field doc comment for why this should be preferred
+    /// over separately re-reading lock.toml.
+    pub fn pin_hash(&self) -> Option<&str> {
+        self.pin_hash.as_deref()
     }
 
     /// Render the template to the provided writer.
@@ -375,7 +389,8 @@ pub async fn generate_streaming(
     variables: Option<Variables>,
     secrets_mode: SecretsRenderMode,
 ) -> Result<StreamingGeneration> {
-    let pinner: Box<dyn Pinner> = if let Some(lock_file) = lock_file {
+    let (pinner, pin_hash): (Box<dyn Pinner>, Option<String>) = if let Some(lock_file) = lock_file
+    {
         let lock = cfg
             .load_lock_file(&lock_file)
             .await
@@ -388,10 +403,10 @@ pub async fn generate_streaming(
         )
         .await
         .context("could not get new root with hash")?;
-        Box::new(pinner)
+        (Box::new(pinner), Some(lock.pin))
     } else {
         let pinner = Latest::new(cfg.pather().spawn_folder_path())?;
-        Box::new(pinner)
+        (Box::new(pinner), None)
     };
 
     let store = Store::new(pinner, cfg.operator().clone(), cfg.pather())
@@ -413,6 +428,7 @@ pub async fn generate_streaming(
         &target_config.engine,
         store,
         secrets,
+        pin_hash,
     )
     .await
 }
@@ -425,6 +441,7 @@ pub async fn generate_streaming_with_store(
     engine: &EngineType,
     store: Store,
     secrets: SecretsRepository,
+    pin_hash: Option<String>,
 ) -> Result<StreamingGeneration> {
     // Read contents from our object store first:
     let contents = store
@@ -439,6 +456,7 @@ pub async fn generate_streaming_with_store(
         variables: variables.unwrap_or_default(),
         engine: engine.clone(),
         secrets: Arc::new(secrets),
+        pin_hash,
     })
 }
 
@@ -893,6 +911,7 @@ mod tests {
             variables: crate::variables::Variables::default(),
             engine: EngineType::PostgresPSQL,
             secrets: Arc::new(secrets),
+            pin_hash: None,
         }
     }
 

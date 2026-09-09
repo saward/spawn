@@ -109,7 +109,15 @@ impl Command for ApplyMigration {
                     // and the component tree it was built against, before the
                     // streaming generation is consumed below.
                     let checksum = streaming.raw_checksum();
-                    let pin_hash = mgrtr.pin_hash().await?;
+                    // Prefer the pin this render actually used over a fresh
+                    // re-read of lock.toml: a second, later read here could
+                    // race a concurrent re-pin and record a hash that
+                    // doesn't match what was rendered. Only --no-pin (no
+                    // lock file involved) falls back to recomputing one.
+                    let pin_hash = match streaming.pin_hash() {
+                        Some(hash) => hash.to_string(),
+                        None => mgrtr.recompute_pin_hash().await?,
+                    };
 
                     // Use shared engine if reuse_connection is enabled, otherwise create new
                     let new_engine: Option<Box<dyn Engine>>;

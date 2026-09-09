@@ -1584,7 +1584,7 @@ async fn test_migration_history_records_expected_checksum_and_pin_hash() -> Resu
         .generate_streaming(None, SecretsRenderMode::Masked)
         .await?
         .raw_checksum();
-    let pin_hash = mgrtr.pin_hash().await?;
+    let pin_hash = mgrtr.recompute_pin_hash().await?;
     assert_latest_row("1", &checksum, &pin_hash)?;
 
     // Rotating the secret and re-applying must leave both columns unchanged.
