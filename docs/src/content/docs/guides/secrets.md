@@ -41,6 +41,8 @@ source = "command"
 command = ["op", "read", "op://vault/application-password/password"]
 ```
 
+If a `command` source fails, Spawn never learns its value — so unlike every other secret-disclosure path, that value can't be found and redacted afterwards. To guard against a provider script that logs its own inputs on failure (e.g. `echo "got: $PASSWORD" >&2; exit 1`), a failed command's stderr is not shown by default — only its exit code. Set `SPAWN_DEBUG_COMMAND_STDERR=1` to see the real stderr for local debugging. Never set this in CI or anywhere output may be logged or shared, since that's exactly what the default behavior protects against.
+
 `literal` is not intended to be used for production and therefore has an `insecure` flag to ensure the user understands that this is not for production use. Spawn refuses to use a `literal` secret without it, so a plaintext value committed to `spawn.toml` can't accidentally become a project's "secure default." Reach for it only as a `dev`/local override, never as a `default`:
 
 ```toml

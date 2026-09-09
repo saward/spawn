@@ -268,8 +268,11 @@ pub async fn resolve_command_spec(spec: CommandSpec) -> Result<Vec<String>> {
 
 /// Executes a command and returns its trimmed stdout.
 ///
-/// Shared by anything that resolves a value by running an external command
-/// (provider commands, command-sourced secrets).
+/// Shared by provider commands and command-sourced secrets, so a failing
+/// command's stderr is withheld by default — a secret source that fails
+/// never gets its value cached for later redaction, so a provider script
+/// echoing its input on failure would otherwise leak unredactably. Set
+/// `SPAWN_DEBUG_COMMAND_STDERR=1` to see it for local debugging.
 pub(crate) async fn run_capture_stdout(command: &[String]) -> Result<String> {
     if command.is_empty() {
         return Err(anyhow!("command cannot be empty"));
@@ -282,10 +285,19 @@ pub(crate) async fn run_capture_stdout(command: &[String]) -> Result<String> {
         .context("Failed to execute command")?;
 
     if !output.status.success() {
+        let exit_code = output.status.code().unwrap_or(-1);
+        if std::env::var("SPAWN_DEBUG_COMMAND_STDERR").is_ok() {
+            return Err(anyhow!(
+                "command failed (exit {}): {}",
+                exit_code,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
         return Err(anyhow!(
-            "command failed (exit {}): {}",
-            output.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&output.stderr)
+            "command failed (exit {}). Its output is not shown, since this command may be \
+             resolving a secret whose value would then be unredactable. Set \
+             SPAWN_DEBUG_COMMAND_STDERR=1 to see it for local debugging.",
+            exit_code
         ));
     }
 
@@ -368,4 +380,45 @@ pub trait Engine: Send + Sync {
         &self,
         namespace: Option<&str>,
     ) -> MigrationResult<Vec<MigrationDbInfo>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Both scenarios live in one test (rather than two) since they share a
+    // process-global env var: running them as separate tests would race
+    // against Rust's default parallel test execution.
+    #[tokio::test]
+    async fn run_capture_stdout_only_includes_stderr_when_opted_in() {
+        std::env::remove_var("SPAWN_DEBUG_COMMAND_STDERR");
+        let command = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "echo secret-provider-detail >&2; exit 1".to_string(),
+        ];
+
+        let err = run_capture_stdout(&command).await.unwrap_err();
+        let message = err.to_string();
+        assert!(
+            !message.contains("secret-provider-detail"),
+            "stderr should be suppressed by default, got: {}",
+            message
+        );
+        assert!(
+            message.contains("exit 1"),
+            "exit code should still be shown, got: {}",
+            message
+        );
+
+        std::env::set_var("SPAWN_DEBUG_COMMAND_STDERR", "1");
+        let err = run_capture_stdout(&command).await.unwrap_err();
+        let message = err.to_string();
+        std::env::remove_var("SPAWN_DEBUG_COMMAND_STDERR");
+        assert!(
+            message.contains("secret-provider-detail"),
+            "stderr should be included when opted in, got: {}",
+            message
+        );
+    }
 }
