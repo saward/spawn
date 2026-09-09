@@ -78,9 +78,14 @@ impl Tester {
 
     // Runs the test and compares the actual output to expected.
     pub async fn run(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
-        // Tests execute against a real database, so secrets must always be revealed here.
+        // Masked, not revealed: the output here is printed, diffed, and (via
+        // save_expected) committed to the repo, so a real secret value could
+        // end up persisted in an `expected` file or echoed back by a failing
+        // statement's diagnostics. Masking still fully resolves the secret
+        // (so an unreachable/misconfigured one still fails the test), it
+        // just never puts the real value in the SQL sent to the database.
         let content = self
-            .generate(variables.clone(), SecretsRenderMode::Revealed)
+            .generate(variables.clone(), SecretsRenderMode::Masked)
             .await?;
 
         let engine = self.config.new_engine().await?;

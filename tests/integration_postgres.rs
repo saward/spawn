@@ -1624,6 +1624,68 @@ async fn test_migration_history_records_expected_checksum_and_pin_hash() -> Resu
     Ok(())
 }
 
+/// `test run` (and by extension `compare`/`expect`, which build on it) must
+/// mask secrets by default: its output is printed, diffed, and — via `test
+/// expect` — committed to the repo, so a revealed secret risks both a
+/// transient leak (a failing statement's diagnostics) and a permanent one
+/// (baked into a checked-in `expected` file).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_test_run_masks_secrets_by_default() -> Result<()> {
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_test_run_masks_secrets_by_default", None).await?;
+
+    let mut secrets = HashMap::new();
+    secrets.insert(
+        "application_password".to_string(),
+        SecretDefinition {
+            default: SecretSource::Literal {
+                value: "hunter2-distinctive".to_string(),
+                insecure: true,
+            },
+            environments: HashMap::new(),
+        },
+    );
+    let mut config_loader =
+        IntegrationTestHelper::create_config(&helper.db_name, &helper.connection_mode);
+    config_loader.secrets = Some(secrets);
+    config_loader
+        .save(
+            helper.migration_helper.config_path(),
+            &helper.migration_helper.fs,
+        )
+        .await?;
+
+    let test_name = helper.migration_helper.create_test("secret-test").await?;
+    let config = helper.migration_helper.load_config().await?;
+    helper
+        .migration_helper
+        .fs
+        .write(
+            &config.pather().test_file_path(&test_name),
+            "SELECT {{ secret(\"application_password\") }};",
+        )
+        .await?;
+
+    let tester = spawn_db::sqltest::Tester::new(&config, &test_name);
+    let output = tester.run(None).await?;
+
+    assert!(
+        !output.contains("hunter2-distinctive"),
+        "test run output should not contain the real secret value, got: {}",
+        output
+    );
+    assert!(
+        output.contains("***MASKED:application_password***"),
+        "expected the masked placeholder in test run output, got: {}",
+        output
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore]
 async fn test_cli_test_compare() -> Result<()> {

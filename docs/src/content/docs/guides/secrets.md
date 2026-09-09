@@ -67,11 +67,12 @@ Whether `secret()` returns the real value or a placeholder like `***MASKED:appli
 | Command                                                                                                | Secrets                                                                            |
 | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
 | [`migration apply`](/cli/migration-apply/)                                                             | Always revealed — it executes the rendered SQL for real.                           |
-| [`migration build`](/cli/migration-build/)                                                             | Masked by default. Pass `--reveal-secrets` to see real values for local debugging. |
-| [`test run`](/cli/test-run/), [`test compare`](/cli/test-compare/), [`test expect`](/cli/test-expect/) | Always revealed — they execute the rendered SQL against a real database.           |
-| [`test build`](/cli/test-build/)                                                                       | Masked by default. Pass `--reveal-secrets` to see real values for local debugging. |
+| [`migration build`](/cli/migration-build/), [`test build`](/cli/test-build/)                           | Masked by default. Pass `--reveal-secrets` to see real values for local debugging. |
+| [`test run`](/cli/test-run/), [`test compare`](/cli/test-compare/), [`test expect`](/cli/test-expect/) | Always masked, with no way to reveal — see below.                                  |
 
 Masking only affects the value _returned to the template_ — the secret is still fully resolved either way, so a masked `build` still fails if the secret is unreachable or misconfigured (including the `literal`/`insecure` check above). It just never displays the real value. This means `build` doubles as a way to verify your secrets are reachable in a given environment before you ever run `apply`.
+
+`test run`/`compare`/`expect` mask unconditionally, with no `--reveal-secrets` equivalent: unlike a terminal or a CI log, their output is diffed against — and, via `test expect`, written into — an `expected` file that gets committed to the repo. A revealed secret there wouldn't just risk a transient leak (e.g. a failing statement's diagnostics echoing it back); it would be permanently baked into git history the first time a test happened to touch it. If you need a test that depends on a secret's real value, that's a real limitation today — there's no per-test override, since a use case for one hasn't come up yet. Please open an issue outlining your use case, so that we can understand better why this might be needed and therefore how to provide it.
 
 ## Secrets in failed applies
 
