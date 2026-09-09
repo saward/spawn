@@ -1615,11 +1615,41 @@ async fn test_migration_history_records_expected_checksum_and_pin_hash() -> Resu
     retry_apply(&config, &migration_name, false).await?;
     assert_latest_row("3", &checksum, &pin_hash)?;
 
-    // Pinning and re-applying pinned must change the pin_hash to the real
-    // lock.toml value, without touching the checksum (up.sql is unchanged).
-    let pin_hash = helper.migration_helper.pin_migration(&migration_name).await?;
+    // Adding a component, pinning, then editing the component *again*
+    // diverges the live tree from what's frozen in lock.toml. A pinned
+    // apply must record the frozen (pinned) value, not a fresh live
+    // recompute — proving apply actually reads lock.toml here, not just
+    // that pinning changes something. Without the second edit, live and
+    // pinned would still agree at apply time even if apply's pinned path
+    // regressed to reusing the unpinned computation instead.
+    let component_path = format!("{}/placeholder.sql", config.pather().components_folder());
+    helper
+        .migration_helper
+        .fs
+        .write(&component_path, "-- component v1")
+        .await?;
+    let pinned_hash = helper.migration_helper.pin_migration(&migration_name).await?;
+    assert_ne!(
+        pin_hash, pinned_hash,
+        "test setup error: adding a component should have changed the pin hash"
+    );
+
+    helper
+        .migration_helper
+        .fs
+        .write(&component_path, "-- component v2")
+        .await?;
+    let live_hash_after_pin = Migrator::new(&config, &migration_name, false)
+        .recompute_pin_hash()
+        .await?;
+    assert_ne!(
+        pinned_hash, live_hash_after_pin,
+        "test setup error: editing the component again after pinning should diverge \
+         the live tree from what's frozen in lock.toml"
+    );
+
     retry_apply(&config, &migration_name, true).await?;
-    assert_latest_row("4", &checksum, &pin_hash)?;
+    assert_latest_row("4", &checksum, &pinned_hash)?;
 
     Ok(())
 }
