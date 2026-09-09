@@ -80,7 +80,7 @@ The `provider` array specifies a command that outputs a shell command string to 
 
 ### The Problem with Direct gcloud SSH
 
-When connecting to Google Cloud SQL instances via SSH, using `gcloud compute ssh` directly works but is **significantly slower** because gcloud must.
+When connecting to Google Cloud SQL instances via SSH, using `gcloud compute ssh` directly works but is **significantly slower** because gcloud must re-authenticate and re-establish the SSH tunnel on every invocation.
 
 This overhead happens **every time** spawn executes SQL, making migrations and tests much slower.
 
