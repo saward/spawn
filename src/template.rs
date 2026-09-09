@@ -23,7 +23,7 @@ use twox_hash::xxhash3_128;
 /// Multiple engine types may share the same dialect. For example,
 /// both a psql CLI engine and a native PostgreSQL driver would use
 /// the Postgres dialect.
-fn engine_to_dialect(engine: &EngineType) -> SqlDialect {
+pub(crate) fn engine_to_dialect(engine: &EngineType) -> SqlDialect {
     match engine {
         EngineType::PostgresPSQL => SqlDialect::Postgres,
         // Future engines:

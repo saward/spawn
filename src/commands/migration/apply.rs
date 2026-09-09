@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::engine::{Engine, MigrationError};
 use crate::migrator::Migrator;
 use crate::secrets::{SecretsRenderMode, SecretsRepository};
+use crate::sql_formatter::{self, SqlDialect};
 use crate::variables::Variables;
 use anyhow::{anyhow, Result};
 
@@ -14,13 +15,27 @@ use anyhow::{anyhow, Result};
 /// a secret — back in its own error output, entirely independent of the
 /// migration_history checksum protection. See the Secrets guide for the
 /// residual risk this doesn't close.
-fn redact_secrets(err: anyhow::Error, secrets: &SecretsRepository) -> anyhow::Error {
+///
+/// Redacts both the raw resolved value and its SQL-escaped form (via the
+/// engine's own dialect-specific escaper, so this stays correct as more
+/// engines are added). Some errors echo back a parsed value (matching the
+/// raw form), but others — e.g. a "LINE 1: ..." context on a syntax error —
+/// echo the submitted SQL text verbatim, which shows the escaped literal
+/// (quotes doubled, wrapped in quotes) rather than the raw string. A secret
+/// containing a quote or other special character would otherwise leak
+/// through that path untouched.
+fn redact_secrets(err: anyhow::Error, secrets: &SecretsRepository, dialect: SqlDialect) -> anyhow::Error {
     let mut text = format!("{:?}", err);
-    // Longest first: if a shorter secret is a substring of a longer one,
-    // redacting the shorter one first would consume part of the longer one
-    // and leave the rest of it exposed.
     let mut values = secrets.resolved_values();
-    values.sort_by_key(|b| std::cmp::Reverse(b.len()));
+    let escaped: Vec<String> = values
+        .iter()
+        .map(|value| sql_formatter::escape_string(dialect, value))
+        .collect();
+    values.extend(escaped);
+    // Longest first: if a shorter value (raw or escaped) is a substring of a
+    // longer one, redacting the shorter one first would consume part of the
+    // longer one and leave the rest of it exposed.
+    values.sort_by_key(|v| std::cmp::Reverse(v.len()));
     for value in values {
         if value.is_empty() {
             continue;
@@ -61,6 +76,7 @@ impl Command for ApplyMigration {
         };
 
         let total = migrations.len();
+        let dialect = crate::template::engine_to_dialect(&config.target_config()?.engine);
 
         // Optionally reuse the same engine (database connection) across all migrations
         let shared_engine = if self.reuse_connection {
@@ -138,15 +154,15 @@ impl Command for ApplyMigration {
                         Err(MigrationError::Database(e)) => {
                             let err =
                                 e.context(format!("Failed applying migration {}", &migration));
-                            return Err(redact_secrets(err, &secrets));
+                            return Err(redact_secrets(err, &secrets, dialect));
                         }
                         Err(MigrationError::AdvisoryLock(e)) => {
                             let err =
                                 anyhow!("Unable to obtain advisory lock for migration").context(e);
-                            return Err(redact_secrets(err, &secrets));
+                            return Err(redact_secrets(err, &secrets, dialect));
                         }
                         Err(e @ MigrationError::NotRecorded { .. }) => {
-                            return Err(redact_secrets(anyhow!("{}", e), &secrets));
+                            return Err(redact_secrets(anyhow!("{}", e), &secrets, dialect));
                         }
                     }
                 }
@@ -201,7 +217,7 @@ mod tests {
             "psql exited with code 1: ERROR: duplicate key value\nDETAIL: Key (password)=(hunter2) already exists."
         );
 
-        let redacted = redact_secrets(simulated_psql_error, &secrets);
+        let redacted = redact_secrets(simulated_psql_error, &secrets, SqlDialect::Postgres);
 
         let full_text = format!("{:?}", redacted);
         assert!(!full_text.contains("hunter2"));
@@ -247,7 +263,7 @@ mod tests {
             "psql exited with code 1: ERROR: duplicate key value\nDETAIL: Key (password)=(hunter2suffix) already exists."
         );
 
-        let redacted = redact_secrets(simulated_psql_error, &secrets);
+        let redacted = redact_secrets(simulated_psql_error, &secrets, SqlDialect::Postgres);
 
         // Regardless of which order resolved_values() happens to hand back
         // the two secrets, the longer one must be redacted whole — not just
@@ -255,6 +271,49 @@ mod tests {
         let full_text = format!("{:?}", redacted);
         assert!(!full_text.contains("hunter2"), "got: {}", full_text);
         assert!(!full_text.contains("suffix"), "got: {}", full_text);
+        assert!(full_text.contains("***REDACTED***"), "got: {}", full_text);
+    }
+
+    #[tokio::test]
+    async fn redact_secrets_also_strips_the_escaped_form_of_a_secret() {
+        // A secret containing a quote renders into the SQL sent to psql as
+        // an escaped literal (quotes doubled, wrapped in quotes). Some
+        // Postgres errors echo back the submitted SQL text verbatim (e.g. a
+        // "LINE 1: ..." context on a syntax error) rather than the parsed
+        // value, so that escaped form — not just the raw value — must be
+        // redacted too.
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            "application_password".to_string(),
+            SecretDefinition {
+                default: SecretSource::Literal {
+                    value: "hunter'2".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let secrets = SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Revealed,
+            op,
+        );
+        secrets.resolve("application_password").await.unwrap();
+
+        // Simulates a "LINE 1: ..." context echoing the submitted SQL text,
+        // which shows the escaped literal 'hunter''2' rather than the raw
+        // value hunter'2.
+        let simulated_psql_error = anyhow!(
+            "psql exited with code 1: ERROR: syntax error at or near \"FRIM\"\n\
+             LINE 1: SELECT * FRIM foo WHERE password = 'hunter''2';"
+        );
+
+        let redacted = redact_secrets(simulated_psql_error, &secrets, SqlDialect::Postgres);
+
+        let full_text = format!("{:?}", redacted);
+        assert!(!full_text.contains("hunter"), "got: {}", full_text);
         assert!(full_text.contains("***REDACTED***"), "got: {}", full_text);
     }
 }
