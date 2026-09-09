@@ -33,7 +33,7 @@ Similar to [`spawn migration build`](/cli/migration-build/), but for tests. Proc
 
 ## Secrets
 
-Any `secret()` calls are masked by default; pass `--reveal-secrets` to render real values for local debugging. `test run`/`test compare`/`test expect` always reveal real values, since they execute against a real database. See the [Secrets guide](/guides/secrets/#masking) for full details, including why a masked build still verifies each secret is reachable.
+Any `secret()` calls are masked by default; pass `--reveal-secrets` to render real values for local debugging. `test run`/`test compare`/`test expect` always mask values so secrets cannot be printed, diffed, or persisted in expected output. See the [Secrets guide](/guides/secrets/#masking) for full details, including why a masked build still verifies each secret is reachable.
 
 ## Examples
 
