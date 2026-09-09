@@ -50,7 +50,7 @@ cargo test test_name -- --ignored --nocapture         # Single integration test 
 ## Architecture Notes
 
 - **Engine trait** (`src/engine/mod.rs`): Async trait for database operations. Currently only `PSQL` (postgres via psql CLI). Migration apply uses two separate psql sessions: one runs the migration, the second records the outcome (success or failure) to `_spawn.migration_history`.
-- **Streaming**: Templates render directly to a writer (piped to psql stdin) without materialising the full SQL in memory. A `TeeWriter` computes checksums during streaming.
+- **Streaming**: Templates render directly to a writer (piped to psql stdin) without materialising the full SQL in memory. The `migration_history.checksum` audit-trail fingerprint is a hash of the migration's raw (unrendered) template source (`StreamingGeneration::raw_checksum`), computed separately from the streamed render — never the rendered/executed SQL, since that may contain resolved secret values.
 - **Advisory locking**: Prevents concurrent migration application via `pg_try_advisory_lock`.
 - **Command pattern**: Each CLI command is a struct implementing `Command` trait with `execute(&self, config) -> Result<Outcome>`.
 - **Storage**: Uses `opendal::Operator` for filesystem abstraction. Tests use in-memory operators.

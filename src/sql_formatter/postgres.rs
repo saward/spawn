@@ -41,6 +41,14 @@ pub fn auto_escape_callback(_name: &str) -> AutoEscape {
     AutoEscape::Custom(FORMAT_NAME)
 }
 
+/// Escapes a raw string the same way a `String` value would be escaped when
+/// interpolated into a PostgreSQL template — e.g. to redact both the raw and
+/// post-escaping forms of a value that must never leak, without needing a
+/// full minijinja render to produce the escaped form.
+pub fn escape_string(raw: &str) -> String {
+    escape_literal(raw)
+}
+
 /// Recursively formats a minijinja Value for safe PostgreSQL interpolation.
 ///
 /// This handles all ValueKind variants appropriately for PostgreSQL syntax.
@@ -53,10 +61,7 @@ fn format_value_for_postgres(value: &Value) -> Result<String, minijinja::Error> 
             Ok(if b { "TRUE" } else { "FALSE" }.to_string())
         }
         ValueKind::Number => Ok(value.to_string()),
-        ValueKind::String => {
-            let s = value.to_string();
-            Ok(escape_literal(&s))
-        }
+        ValueKind::String => Ok(escape_string(&value.to_string())),
         ValueKind::Bytes => {
             // Convert to PostgreSQL bytea hex format: '\xDEADBEEF'::bytea
             if let Some(bytes) = value.as_bytes() {
@@ -87,13 +92,11 @@ fn format_value_for_postgres(value: &Value) -> Result<String, minijinja::Error> 
             // Maps don't have a native SQL representation.
             // Convert to JSON-like string representation and escape it.
             // Users can cast to ::jsonb if needed: {{ my_map }}::jsonb
-            let s = value.to_string();
-            Ok(escape_literal(&s))
+            Ok(escape_string(&value.to_string()))
         }
         ValueKind::Plain => {
             // For custom objects, stringify and escape as a string
-            let s = value.to_string();
-            Ok(escape_literal(&s))
+            Ok(escape_string(&value.to_string()))
         }
         ValueKind::Invalid => {
             // Invalid values contain errors - propagate them
@@ -105,8 +108,7 @@ fn format_value_for_postgres(value: &Value) -> Result<String, minijinja::Error> 
         // ValueKind is non-exhaustive, handle any future variants safely
         _ => {
             // For unknown types, stringify and escape as a string (safe default)
-            let s = value.to_string();
-            Ok(escape_literal(&s))
+            Ok(escape_string(&value.to_string()))
         }
     }
 }

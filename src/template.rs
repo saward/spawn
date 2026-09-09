@@ -1,6 +1,7 @@
 use crate::config;
 use crate::engine::EngineType;
 use crate::escape::{EscapedIdentifier, EscapedLiteral};
+use crate::secrets::{SecretsRenderMode, SecretsRepository};
 use crate::store::pinner::latest::Latest;
 use crate::store::pinner::spawn::Spawn;
 use crate::store::pinner::Pinner;
@@ -15,13 +16,14 @@ use uuid::Uuid;
 use anyhow::{Context, Result};
 use minijinja::context;
 use std::sync::Arc;
+use twox_hash::xxhash3_128;
 
 /// Maps an EngineType to the appropriate SQL dialect for formatting.
 ///
 /// Multiple engine types may share the same dialect. For example,
 /// both a psql CLI engine and a native PostgreSQL driver would use
 /// the Postgres dialect.
-fn engine_to_dialect(engine: &EngineType) -> SqlDialect {
+pub(crate) fn engine_to_dialect(engine: &EngineType) -> SqlDialect {
     match engine {
         EngineType::PostgresPSQL => SqlDialect::Postgres,
         // Future engines:
@@ -31,7 +33,11 @@ fn engine_to_dialect(engine: &EngineType) -> SqlDialect {
     }
 }
 
-pub fn template_env(store: Store, engine: &EngineType) -> Result<Environment<'static>> {
+pub fn template_env(
+    store: Store,
+    engine: &EngineType,
+    secrets: Arc<SecretsRepository>,
+) -> Result<Environment<'static>> {
     let mut env = Environment::new();
 
     let store = Arc::new(store);
@@ -45,6 +51,11 @@ pub fn template_env(store: Store, engine: &EngineType) -> Result<Environment<'st
     env.add_function("gen_uuid_v7", gen_uuid_v7);
     env.add_filter("escape_identifier", escape_identifier_filter);
     env.add_filter("escape_literal", escape_literal_filter);
+
+    env.add_function(
+        "secret",
+        move |name: &str| -> Result<Value, minijinja::Error> { secret_function(name, &secrets) },
+    );
 
     let read_file_store = Arc::clone(&store);
     env.add_filter(
@@ -158,7 +169,35 @@ fn escape_literal_filter(value: &Value) -> Result<Value, minijinja::Error> {
     Ok(Value::from_safe_string(escaped.to_string()))
 }
 
+/// Resolves a named secret via the SecretsRepository, returning either its
+/// real value or a masked placeholder depending on the current render mode.
+///
+/// Usage in templates: `{{ secret("application_password") }}`
+fn secret_function(
+    name: &str,
+    secrets: &Arc<SecretsRepository>,
+) -> Result<Value, minijinja::Error> {
+    let result = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async { secrets.resolve(name).await })
+    });
+
+    result.map(Value::from).map_err(|e| {
+        minijinja::Error::new(minijinja::ErrorKind::InvalidOperation, format!("{:#}", e))
+    })
+}
+
 /// Reads raw bytes from a file in the components folder via the Store.
+///
+/// IDEA (not implemented): `read_file`/`read_json`/etc. re-fetch and
+/// re-parse their input on every call, with no memoization across separate
+/// render() invocations of the same template. minijinja's `Value` is
+/// Arc-backed internally for its String/Bytes/Object variants (see
+/// minijinja::value::ValueRepr), so cloning an already-built `Value` is
+/// cheap — a filter-level cache keyed by input (e.g. on `Store`) could let
+/// a second render of the same migration reuse an already-loaded large
+/// file via a cheap Arc clone instead of re-fetching/re-parsing it. Only
+/// worth building if a real need for multi-render or repeated large-file
+/// loads comes up; nothing currently requires it.
 fn read_file_bytes(path: &str, store: &Arc<Store>) -> Result<Vec<u8>, minijinja::Error> {
     let bytes = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(async { store.read_file_bytes(path).await })
@@ -281,13 +320,41 @@ pub struct StreamingGeneration {
     environment: String,
     variables: Variables,
     engine: EngineType,
+    secrets: Arc<SecretsRepository>,
+    /// The pin loaded from lock.toml to build this render's component
+    /// store (`None` when generated with `--no-pin`), captured at the same
+    /// time that lock is read — a caller recording it to migration_history
+    /// should use this instead of re-reading lock.toml, which could race a
+    /// concurrent re-pin and record a hash that doesn't match what was
+    /// actually rendered.
+    pin_hash: Option<String>,
 }
 
 impl StreamingGeneration {
+    /// Hex-encoded fingerprint of the migration's raw (unrendered) template
+    /// source, for use as a migration_history audit-trail checksum.
+    ///
+    /// Deliberately hashes the raw source rather than the rendered output:
+    /// rendered SQL may contain resolved secret values, which must never be
+    /// persisted (or reconstructible from what's persisted) via the
+    /// checksum. As a side effect, this also means secret rotation never
+    /// changes a migration's recorded checksum.
+    pub fn raw_checksum(&self) -> String {
+        let hash = xxhash3_128::Hasher::oneshot(self.template_contents.as_bytes());
+        format!("{:032x}", hash)
+    }
+
+    /// The pin actually used to build this render's component store — see
+    /// the `pin_hash` field doc comment for why this should be preferred
+    /// over separately re-reading lock.toml.
+    pub fn pin_hash(&self) -> Option<&str> {
+        self.pin_hash.as_deref()
+    }
+
     /// Render the template to the provided writer.
     /// This creates the minijinja environment and renders in one step.
     pub fn render_to_writer<W: std::io::Write + ?Sized>(self, writer: &mut W) -> Result<()> {
-        let mut env = template_env(self.store, &self.engine)?;
+        let mut env = template_env(self.store, &self.engine, self.secrets)?;
         env.add_template("migration.sql", &self.template_contents)?;
         let tmpl = env.get_template("migration.sql")?;
         tmpl.render_to_write(
@@ -297,12 +364,19 @@ impl StreamingGeneration {
         Ok(())
     }
 
-    /// Convert this streaming generation into a WriterFn that can be passed to migration_apply.
-    pub fn into_writer_fn(self) -> crate::engine::WriterFn {
-        Box::new(move |writer: &mut dyn std::io::Write| {
+    /// Convert this streaming generation into a WriterFn that can be passed
+    /// to migration_apply, along with a handle to the same secrets
+    /// repository the render will use. That handle stays readable after the
+    /// closure runs (e.g. once psql has exited), so a caller whose apply
+    /// failed can find out which secret values were actually resolved and
+    /// redact them from captured output before it's displayed or logged.
+    pub fn into_writer_fn(self) -> (crate::engine::WriterFn, Arc<SecretsRepository>) {
+        let secrets = Arc::clone(&self.secrets);
+        let write_fn = Box::new(move |writer: &mut dyn std::io::Write| {
             self.render_to_writer(writer)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-        })
+        });
+        (write_fn, secrets)
     }
 }
 
@@ -313,8 +387,10 @@ pub async fn generate_streaming(
     lock_file: Option<String>,
     name: &str,
     variables: Option<Variables>,
+    secrets_mode: SecretsRenderMode,
 ) -> Result<StreamingGeneration> {
-    let pinner: Box<dyn Pinner> = if let Some(lock_file) = lock_file {
+    let (pinner, pin_hash): (Box<dyn Pinner>, Option<String>) = if let Some(lock_file) = lock_file
+    {
         let lock = cfg
             .load_lock_file(&lock_file)
             .await
@@ -327,10 +403,10 @@ pub async fn generate_streaming(
         )
         .await
         .context("could not get new root with hash")?;
-        Box::new(pinner)
+        (Box::new(pinner), Some(lock.pin))
     } else {
         let pinner = Latest::new(cfg.pather().spawn_folder_path())?;
-        Box::new(pinner)
+        (Box::new(pinner), None)
     };
 
     let store = Store::new(pinner, cfg.operator().clone(), cfg.pather())
@@ -338,6 +414,12 @@ pub async fn generate_streaming(
     let target_config = cfg
         .target_config()
         .context("could not get target config for generate")?;
+    let secrets = SecretsRepository::new(
+        cfg.secrets.clone(),
+        target_config.environment.clone(),
+        secrets_mode,
+        cfg.operator().clone(),
+    );
 
     generate_streaming_with_store(
         name,
@@ -345,6 +427,8 @@ pub async fn generate_streaming(
         &target_config.environment,
         &target_config.engine,
         store,
+        secrets,
+        pin_hash,
     )
     .await
 }
@@ -356,6 +440,8 @@ pub async fn generate_streaming_with_store(
     environment: &str,
     engine: &EngineType,
     store: Store,
+    secrets: SecretsRepository,
+    pin_hash: Option<String>,
 ) -> Result<StreamingGeneration> {
     // Read contents from our object store first:
     let contents = store
@@ -369,6 +455,8 @@ pub async fn generate_streaming_with_store(
         environment: environment.to_string(),
         variables: variables.unwrap_or_default(),
         engine: engine.clone(),
+        secrets: Arc::new(secrets),
+        pin_hash,
     })
 }
 
@@ -559,9 +647,10 @@ mod tests {
         let pather = FolderPather {
             spawn_folder: "".to_string(),
         };
+        let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
@@ -589,9 +678,10 @@ mod tests {
         let pather = FolderPather {
             spawn_folder: "".to_string(),
         };
+        let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "binary.dat"|read_file|base64_encode|safe }}"#,
@@ -616,9 +706,10 @@ mod tests {
         let pather = FolderPather {
             spawn_folder: "".to_string(),
         };
+        let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "nonexistent.txt"|read_file|to_string_lossy }}"#,
@@ -644,7 +735,7 @@ mod tests {
         op.write("components/test.txt", "pinned content")
             .await
             .unwrap();
-        let root_hash = snapshot(&op, "pinned/", "components/").await.unwrap();
+        let root_hash = snapshot(&op, Some("pinned/"), "components/").await.unwrap();
 
         // Delete the original file so it only exists in the pinned CAS store
         op.delete("components/test.txt").await.unwrap();
@@ -662,9 +753,10 @@ mod tests {
         let pather = FolderPather {
             spawn_folder: "".to_string(),
         };
+        let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
@@ -673,5 +765,220 @@ mod tests {
         let tmpl = env.get_template("test.sql").unwrap();
         let result = tmpl.render(context!()).unwrap();
         assert_eq!(result, "pinned content");
+    }
+
+    fn env_with_secrets(secrets: SecretsRepository) -> Environment<'static> {
+        use crate::config::FolderPather;
+        use opendal::services::Memory;
+        use opendal::Operator;
+
+        let op = Operator::new(Memory::default()).unwrap();
+        let pinner = Latest::new("").unwrap();
+        let pather = FolderPather {
+            spawn_folder: "".to_string(),
+        };
+        let store = Store::new(Box::new(pinner), op, pather).unwrap();
+        template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_secret_function_reveals_when_revealed_mode() {
+        use std::collections::HashMap;
+
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            "application_password".to_string(),
+            crate::secrets::SecretDefinition {
+                default: crate::secrets::SecretSource::Literal {
+                    value: "hunter2".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        let secrets = SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Revealed,
+            op,
+        );
+
+        let mut env = env_with_secrets(secrets);
+        env.add_template("test.sql", r#"{{ secret("application_password") }}"#)
+            .unwrap();
+        let tmpl = env.get_template("test.sql").unwrap();
+        let result = tmpl.render(context!()).unwrap();
+        assert_eq!(result, "'hunter2'");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_secret_function_escapes_injection_attempt_when_revealed() {
+        use std::collections::HashMap;
+
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            "application_password".to_string(),
+            crate::secrets::SecretDefinition {
+                default: crate::secrets::SecretSource::Literal {
+                    value: "'; DROP TABLE users; --".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        let secrets = SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Revealed,
+            op,
+        );
+
+        let mut env = env_with_secrets(secrets);
+        env.add_template(
+            "test.sql",
+            r#"CREATE ROLE app_user WITH LOGIN PASSWORD {{ secret("application_password") }};"#,
+        )
+        .unwrap();
+        let tmpl = env.get_template("test.sql").unwrap();
+        let result = tmpl.render(context!()).unwrap();
+        assert_eq!(
+            result,
+            "CREATE ROLE app_user WITH LOGIN PASSWORD '''; DROP TABLE users; --';"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_secret_function_masks_when_masked_mode() {
+        use std::collections::HashMap;
+
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            "application_password".to_string(),
+            crate::secrets::SecretDefinition {
+                default: crate::secrets::SecretSource::Literal {
+                    value: "hunter2".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        let secrets = SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Masked,
+            op,
+        );
+
+        let mut env = env_with_secrets(secrets);
+        env.add_template("test.sql", r#"{{ secret("application_password") }}"#)
+            .unwrap();
+        let tmpl = env.get_template("test.sql").unwrap();
+        let result = tmpl.render(context!()).unwrap();
+        assert_eq!(result, "'***MASKED:application_password***'");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_secret_function_errors_for_unknown_secret() {
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let secrets = SecretsRepository::empty(op);
+        let mut env = env_with_secrets(secrets);
+        env.add_template("test.sql", r#"{{ secret("nope") }}"#)
+            .unwrap();
+        let tmpl = env.get_template("test.sql").unwrap();
+        let result = tmpl.render(context!());
+        assert!(result.is_err());
+    }
+
+    fn streaming_generation(template_contents: &str, secrets: SecretsRepository) -> StreamingGeneration {
+        use crate::config::FolderPather;
+        use opendal::services::Memory;
+        use opendal::Operator;
+
+        let op = Operator::new(Memory::default()).unwrap();
+        let pinner = Latest::new("").unwrap();
+        let pather = FolderPather {
+            spawn_folder: "".to_string(),
+        };
+        let store = Store::new(Box::new(pinner), op, pather).unwrap();
+
+        StreamingGeneration {
+            store,
+            template_contents: template_contents.to_string(),
+            environment: "prod".to_string(),
+            variables: crate::variables::Variables::default(),
+            engine: EngineType::PostgresPSQL,
+            secrets: Arc::new(secrets),
+            pin_hash: None,
+        }
+    }
+
+    fn literal_secret_repo(value: &str) -> SecretsRepository {
+        use std::collections::HashMap;
+
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            "application_password".to_string(),
+            crate::secrets::SecretDefinition {
+                default: crate::secrets::SecretSource::Literal {
+                    value: value.to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Revealed,
+            op,
+        )
+    }
+
+    // Regression coverage for the checksum's security-critical properties
+    // (see StreamingGeneration::raw_checksum's doc comment): it must be a
+    // fingerprint of the raw template source specifically — not the
+    // rendered output, and not something secret-independent-but-otherwise-
+    // arbitrary either — so a future change can't silently start hashing
+    // rendered SQL (and disclose secret values via the checksum) again.
+
+    #[test]
+    fn raw_checksum_matches_a_hash_of_the_raw_template_source() {
+        let source = r#"SELECT {{ secret("application_password") }};"#;
+        let gen = streaming_generation(source, literal_secret_repo("hunter2"));
+
+        let expected = format!(
+            "{:032x}",
+            twox_hash::xxhash3_128::Hasher::oneshot(source.as_bytes())
+        );
+        assert_eq!(gen.raw_checksum(), expected);
+    }
+
+    #[test]
+    fn raw_checksum_is_unchanged_by_a_rotated_secret_value() {
+        let source = r#"SELECT {{ secret("application_password") }};"#;
+        let gen_a = streaming_generation(source, literal_secret_repo("hunter2"));
+        let gen_b = streaming_generation(source, literal_secret_repo("a-totally-different-value"));
+
+        assert_eq!(
+            gen_a.raw_checksum(),
+            gen_b.raw_checksum(),
+            "rotating a secret's resolved value must not change the recorded checksum"
+        );
+    }
+
+    #[test]
+    fn raw_checksum_changes_when_the_template_source_changes() {
+        let gen_a = streaming_generation("SELECT 1;", literal_secret_repo("hunter2"));
+        let gen_b = streaming_generation("SELECT 2;", literal_secret_repo("hunter2"));
+
+        assert_ne!(
+            gen_a.raw_checksum(),
+            gen_b.raw_checksum(),
+            "different up.sql content must produce different checksums"
+        );
     }
 }

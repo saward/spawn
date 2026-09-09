@@ -100,6 +100,19 @@ pub fn get_auto_escape_callback(dialect: SqlDialect) -> AutoEscapeCallback {
     }
 }
 
+/// Escapes a raw string the same way this dialect's template auto-escaping
+/// would escape a `String` value, without needing a full minijinja render.
+///
+/// Used to redact both the raw and post-escaping forms of a value that must
+/// never leak (e.g. a secret): some errors echo back a parsed value
+/// (matching the raw form), others echo the submitted SQL text verbatim
+/// (matching this escaped form, quotes and all).
+pub fn escape_string(dialect: SqlDialect, raw: &str) -> String {
+    match dialect {
+        SqlDialect::Postgres => postgres::escape_string(raw),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

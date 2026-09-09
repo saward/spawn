@@ -50,6 +50,7 @@ impl Migrator {
     pub async fn generate_streaming(
         &self,
         variables: Option<crate::variables::Variables>,
+        secrets_mode: crate::secrets::SecretsRenderMode,
     ) -> Result<template::StreamingGeneration> {
         let lock_file = if self.use_pinned {
             let path = self.config.pather().migration_lock_file_path(&self.name);
@@ -58,6 +59,24 @@ impl Migrator {
             None
         };
         let script_path = &self.config.pather().migration_script_file_path(&self.name);
-        template::generate_streaming(&self.config, lock_file, script_path, variables).await
+        template::generate_streaming(&self.config, lock_file, script_path, variables, secrets_mode)
+            .await
+    }
+
+    /// The pin hash `--no-pin` should record: freshly recomputed from the
+    /// current, live component tree on every call, never read from
+    /// `lock.toml`. A pinned migration's pin hash instead comes from
+    /// `StreamingGeneration::pin_hash()`, captured from the same lock read
+    /// used to render, so it can never drift from what was actually
+    /// rendered — the way a second, independent read here once could.
+    /// `snapshot`'s `store_path: None` computes the same root hash a real
+    /// pin would, without writing anything to the persistent `pinned/` store.
+    pub async fn recompute_pin_hash(&self) -> Result<String> {
+        crate::store::pinner::snapshot(
+            self.config.operator(),
+            None,
+            &self.config.pather().components_folder(),
+        )
+        .await
     }
 }

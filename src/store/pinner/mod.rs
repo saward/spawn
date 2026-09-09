@@ -44,12 +44,21 @@ pub struct Entry {
     pub name: String,
 }
 
-pub async fn pin_contents(fs: &Operator, store_path: &str, contents: &[u8]) -> Result<String> {
+/// Hashes `contents` and, if `store_path` is `Some`, persists it there under
+/// its content-addressed path. Pass `None` to compute the hash without
+/// writing anything — used to fingerprint a tree without actually pinning it.
+pub async fn pin_contents(
+    fs: &Operator,
+    store_path: Option<&str>,
+    contents: &[u8],
+) -> Result<String> {
     let hash = xxhash3_128::Hasher::oneshot(contents);
     let hash = format!("{:032x}", hash);
-    let dir = format!("{}/{}", store_path, hash_to_path(&hash)?);
 
-    fs.write(&dir, contents.to_vec()).await?;
+    if let Some(store_path) = store_path {
+        let dir = format!("{}/{}", store_path, hash_to_path(&hash)?);
+        fs.write(&dir, contents.to_vec()).await?;
+    }
 
     Ok(hash)
 }
@@ -64,21 +73,45 @@ pub fn hash_to_path(hash: &str) -> Result<String> {
     Ok(format!("{}/{}", first_two, rest).to_string())
 }
 
+/// Recomputes the content hash of `contents` and errors if it doesn't match
+/// `expected`. Pinned storage is content-addressed by construction, so a
+/// mismatch means the file at `path` was modified (or corrupted) on disk
+/// after it was pinned — trust the hash over whatever bytes are found there.
+pub(crate) fn verify_hash(contents: &[u8], expected: &str, path: &str) -> Result<()> {
+    let actual = format!("{:032x}", xxhash3_128::Hasher::oneshot(contents));
+    if actual != expected {
+        return Err(anyhow::anyhow!(
+            "pinned file '{}' does not match its expected hash '{}' (got '{}') — \
+             its contents appear to have been modified since it was pinned",
+            path,
+            expected,
+            actual
+        ));
+    }
+    Ok(())
+}
+
 /// Reads the file corresponding to the hash from the given base path.
 pub(crate) async fn read_hash_file(fs: &Operator, base_path: &str, hash: &str) -> Result<String> {
     let relative_path = hash_to_path(hash)?;
     let file_path = format!("{}/{}", base_path, relative_path);
 
     let get_result = fs.read(&file_path).await?;
-    let bytes = get_result.to_bytes();
-    let contents = String::from_utf8(bytes.to_vec())?;
+    let bytes = get_result.to_bytes().to_vec();
+    verify_hash(&bytes, hash, &file_path)?;
+    let contents = String::from_utf8(bytes)?;
 
     Ok(contents)
 }
 
 /// Walks through objects in an ObjectStore, creating pinned entries as appropriate for every
-/// directory and file.  Returns a hash of the object.
-pub(crate) async fn snapshot(fs: &Operator, store_path: &str, mut prefix: &str) -> Result<String> {
+/// directory and file.  Returns a hash of the object. Pass `store_path: None` to compute the
+/// hash without persisting anything (used by `Migrator::pin_hash` for `--no-pin` applies).
+pub(crate) async fn snapshot(
+    fs: &Operator,
+    store_path: Option<&str>,
+    mut prefix: &str,
+) -> Result<String> {
     let fixed;
     if !prefix.ends_with("/") {
         fixed = format!("{}/", prefix);
@@ -159,7 +192,7 @@ mod tests {
                 .await?;
 
         let store_loc = "store/";
-        let root = snapshot(&dest_op, store_loc, "components/").await?;
+        let root = snapshot(&dest_op, Some(store_loc), "components/").await?;
 
         assert!(root.len() > 0);
         assert_eq!("cb59728fefa959672ef3c8c9f0b6df95", root);
@@ -175,6 +208,43 @@ mod tests {
         assert_eq!(
             root, content_hash,
             "Snapshot hash should match content hash"
+        );
+
+        Ok(())
+    }
+
+    async fn count_entries(fs: &Operator, prefix: &str) -> Result<usize> {
+        let mut lister = fs.lister_with(prefix).recursive(true).await?;
+        let mut count = 0;
+        while lister.try_next().await?.is_some() {
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_with_no_store_path_matches_real_pin_without_writing() -> Result<()> {
+        let dest_op =
+            store::disk_to_operator("./static/example", None, store::DesiredOperator::Memory)
+                .await?;
+
+        // A real pin against the project's own operator/store path, to compare against.
+        let real_root = snapshot(&dest_op, Some("store/"), "components/").await?;
+        let entry_count_after_real_pin = count_entries(&dest_op, "store/").await?;
+        assert!(
+            entry_count_after_real_pin > 0,
+            "sanity check: real pin should have written something"
+        );
+
+        // store_path: None should produce the same hash...
+        let simulated_root = snapshot(&dest_op, None, "components/").await?;
+        assert_eq!(real_root, simulated_root);
+
+        // ...without having persisted anything as a side effect of computing it.
+        let entry_count_after_simulated = count_entries(&dest_op, "store/").await?;
+        assert_eq!(
+            entry_count_after_real_pin, entry_count_after_simulated,
+            "computing the hash with store_path: None should not have written any new entries"
         );
 
         Ok(())

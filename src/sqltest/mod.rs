@@ -1,5 +1,6 @@
 use crate::config;
 use crate::engine::EngineError;
+use crate::secrets::SecretsRenderMode;
 use crate::template;
 use console::{style, Style};
 
@@ -51,7 +52,11 @@ impl Tester {
 
     /// Opens the specified script file and generates a test script, compiled
     /// using minijinja.
-    pub async fn generate(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
+    pub async fn generate(
+        &self,
+        variables: Option<crate::variables::Variables>,
+        secrets_mode: SecretsRenderMode,
+    ) -> Result<String> {
         let lock_file = None;
 
         let gen = template::generate_streaming(
@@ -59,6 +64,7 @@ impl Tester {
             lock_file,
             &self.test_file_path(),
             variables,
+            secrets_mode,
         )
         .await?;
 
@@ -72,7 +78,15 @@ impl Tester {
 
     // Runs the test and compares the actual output to expected.
     pub async fn run(&self, variables: Option<crate::variables::Variables>) -> Result<String> {
-        let content = self.generate(variables.clone()).await?;
+        // Masked, not revealed: the output here is printed, diffed, and (via
+        // save_expected) committed to the repo, so a real secret value could
+        // end up persisted in an `expected` file or echoed back by a failing
+        // statement's diagnostics. Masking still fully resolves the secret
+        // (so an unreachable/misconfigured one still fails the test), it
+        // just never puts the real value in the SQL sent to the database.
+        let content = self
+            .generate(variables.clone(), SecretsRenderMode::Masked)
+            .await?;
 
         let engine = self.config.new_engine().await?;
 

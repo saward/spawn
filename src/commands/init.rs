@@ -82,6 +82,7 @@ impl Init {
             target: Some("postgres_psql".to_string()),
             environment: None,
             targets: Some(targets),
+            secrets: None,
             project_id: Some(project_id.clone()),
             telemetry: None,
         };

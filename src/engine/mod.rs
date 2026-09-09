@@ -266,40 +266,65 @@ pub async fn resolve_command_spec(spec: CommandSpec) -> Result<Vec<String>> {
     }
 }
 
+/// Executes a command and returns its trimmed stdout.
+///
+/// Shared by provider commands and command-sourced secrets, so a failing
+/// command's stderr is withheld by default — a secret source that fails
+/// never gets its value cached for later redaction, so a provider script
+/// echoing its input on failure would otherwise leak unredactably. Set
+/// `SPAWN_DEBUG_COMMAND_STDERR=1` to see it for local debugging.
+pub(crate) async fn run_capture_stdout(command: &[String]) -> Result<String> {
+    if command.is_empty() {
+        return Err(anyhow!("command cannot be empty"));
+    }
+
+    let output = Command::new(&command[0])
+        .args(&command[1..])
+        .output()
+        .await
+        .context("Failed to execute command")?;
+
+    if !output.status.success() {
+        let exit_code = output.status.code().unwrap_or(-1);
+        if matches!(
+            std::env::var("SPAWN_DEBUG_COMMAND_STDERR").as_deref(),
+            Ok("1")
+        ) {
+            return Err(anyhow!(
+                "command failed (exit {}): {}",
+                exit_code,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        return Err(anyhow!(
+            "command failed (exit {}). Its output is not shown, since this command may be \
+             resolving a secret whose value would then be unredactable. Set \
+             SPAWN_DEBUG_COMMAND_STDERR=1 to see it for local debugging.",
+            exit_code
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout).context("command output is not valid UTF-8")?;
+    let trimmed = stdout.trim();
+
+    if trimmed.is_empty() {
+        return Err(anyhow!("command returned empty output"));
+    }
+
+    Ok(trimmed.to_string())
+}
+
 /// Executes a provider command and parses its output as a shell command.
 ///
 /// The provider must output a shell command string (e.g., `ssh -t -i /path/key user@host`).
 /// The parser handles quoted strings properly using POSIX shell-style parsing.
 async fn resolve_provider(provider: &[String]) -> Result<Vec<String>> {
-    if provider.is_empty() {
-        return Err(anyhow!("Provider command cannot be empty"));
-    }
-
-    let output = Command::new(&provider[0])
-        .args(&provider[1..])
-        .output()
-        .await
-        .context("Failed to execute provider command")?;
-
-    if !output.status.success() {
-        return Err(anyhow!(
-            "Provider command failed (exit {}): {}",
-            output.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-
-    let stdout = String::from_utf8(output.stdout).context("Provider output is not valid UTF-8")?;
-    let trimmed = stdout.trim();
-
-    if trimmed.is_empty() {
-        return Err(anyhow!("Provider returned empty output"));
-    }
+    let trimmed = run_capture_stdout(provider).await?;
 
     // Parses a shell command string into a Vec<String>, handling quoted arguments.
     //
     // Uses the `shlex` crate for proper POSIX shell-style parsing.
-    shlex::split(trimmed).ok_or_else(|| anyhow!("Failed to parse shell command: {}", trimmed))
+    shlex::split(&trimmed).ok_or_else(|| anyhow!("Failed to parse shell command: {}", trimmed))
 }
 
 /// Type alias for the writer closure used in execute_with_writer
@@ -325,10 +350,17 @@ pub trait Engine: Send + Sync {
         merge_stderr: bool,
     ) -> Result<(), EngineError>;
 
+    /// Applies a migration and records the outcome.
+    /// - `checksum`: A fingerprint for the migration_history audit trail.
+    ///   Callers should hash the migration's raw (unrendered) template
+    ///   source, not the rendered/executed SQL — the rendered output may
+    ///   contain resolved secret values, which must never be persisted or
+    ///   derivable from what's persisted.
     async fn migration_apply(
         &self,
         migration_name: &str,
         write_fn: WriterFn,
+        checksum: String,
         pin_hash: Option<String>,
         namespace: &str,
         retry: bool,
@@ -351,4 +383,45 @@ pub trait Engine: Send + Sync {
         &self,
         namespace: Option<&str>,
     ) -> MigrationResult<Vec<MigrationDbInfo>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Both scenarios live in one test (rather than two) since they share a
+    // process-global env var: running them as separate tests would race
+    // against Rust's default parallel test execution.
+    #[tokio::test]
+    async fn run_capture_stdout_only_includes_stderr_when_opted_in() {
+        std::env::remove_var("SPAWN_DEBUG_COMMAND_STDERR");
+        let command = vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "echo secret-provider-detail >&2; exit 1".to_string(),
+        ];
+
+        let err = run_capture_stdout(&command).await.unwrap_err();
+        let message = err.to_string();
+        assert!(
+            !message.contains("secret-provider-detail"),
+            "stderr should be suppressed by default, got: {}",
+            message
+        );
+        assert!(
+            message.contains("exit 1"),
+            "exit code should still be shown, got: {}",
+            message
+        );
+
+        std::env::set_var("SPAWN_DEBUG_COMMAND_STDERR", "1");
+        let err = run_capture_stdout(&command).await.unwrap_err();
+        let message = err.to_string();
+        std::env::remove_var("SPAWN_DEBUG_COMMAND_STDERR");
+        assert!(
+            message.contains("secret-provider-detail"),
+            "stderr should be included when opted in, got: {}",
+            message
+        );
+    }
 }

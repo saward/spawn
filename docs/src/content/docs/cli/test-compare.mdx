@@ -4,11 +4,15 @@ description: Run tests and compare output to expected results.
 ---
 
 import CLICommand from "../../../components/CLICommand.astro";
-import { globalOptions, targetOption } from "../../../components/cli-options";
+import {
+  globalOptions,
+  targetOption,
+  environmentOption,
+} from "../../../components/cli-options";
 
 <CLICommand
   usage="spawn test compare <name>"
-  options={[...targetOption, ...globalOptions]}
+  options={[...environmentOption, ...targetOption, ...globalOptions]}
 >
 
 Runs tests and compares their output against saved expected results, reporting any differences.
@@ -26,6 +30,10 @@ For each test:
 3. Reports differences (if any)
 
 Use [`spawn test expect`](/cli/test-expect/) to update the expected output.
+
+## Secrets
+
+`test compare` always masks `secret()` values so real secrets cannot appear in test output or diffs. See the [Secrets guide](/guides/secrets/#masking) for details.
 
 ## Example
 

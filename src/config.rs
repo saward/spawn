@@ -1,5 +1,6 @@
 use crate::engine::{postgres_psql::PSQL, Engine, EngineType, TargetConfig};
 use crate::pinfile::LockData;
+use crate::secrets::SecretDefinition;
 use crate::variables::Variables;
 use anyhow::{anyhow, Context, Result};
 use opendal::Operator;
@@ -21,6 +22,8 @@ pub struct ConfigLoaderSaver {
     pub spawn_folder: String,
     pub target: Option<String>,
     pub targets: Option<HashMap<String, TargetConfig>>,
+    /// Named secrets available to templates via the `secret()` function.
+    pub secrets: Option<HashMap<String, SecretDefinition>>,
     /// Allows you to override the default template for test new with a
     /// custom one.
     pub test_template: Option<String>,
@@ -45,6 +48,7 @@ impl ConfigLoaderSaver {
             spawn_folder: self.spawn_folder,
             target: self.target,
             targets: self.targets.unwrap_or_default(),
+            secrets: self.secrets.unwrap_or_default(),
             test_template: self.test_template,
             up_template: self.up_template,
             telemetry: self.telemetry.unwrap_or(true),
@@ -88,8 +92,6 @@ impl ConfigLoaderSaver {
             // Eg.. `APP_DEBUG=1 ./target/app` would set the `debug` key
             .add_source(config::Environment::with_prefix("SPAWN"))
             .set_override_option("target", target)?
-            .set_default("environment", "prod")
-            .context("could not set default environment")?
             .build()?
             .try_deserialize()?;
 
@@ -189,6 +191,8 @@ pub struct Config {
     spawn_folder: String,
     pub target: Option<String>,
     pub targets: HashMap<String, TargetConfig>,
+    /// Named secrets available to templates via the `secret()` function.
+    pub secrets: HashMap<String, SecretDefinition>,
     /// Allows you to override the default template for test new with a
     /// custom one.
     pub test_template: Option<String>,
@@ -273,5 +277,37 @@ impl Config {
         let extension = path.split('.').last().unwrap_or("");
         Variables::from_str(extension, &content_str)
             .context(format!("Failed to parse variables file '{}'", path))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opendal::services::Memory;
+
+    #[tokio::test]
+    async fn load_without_top_level_environment_does_not_manufacture_one() {
+        let op = Operator::new(Memory::default()).unwrap();
+        op.write(
+            "spawn.toml",
+            r#"
+spawn_folder = "spawn"
+target = "dev_target"
+
+[targets.dev_target]
+engine = "postgres-psql"
+environment = "dev"
+"#,
+        )
+        .await
+        .unwrap();
+
+        let config = Config::load("spawn.toml", &op, None).await.unwrap();
+
+        // No top-level `environment` was set in spawn.toml, so this must stay
+        // None rather than defaulting to "prod" — target_config() only
+        // overrides the target's own environment when this is explicitly Some.
+        assert_eq!(config.environment, None);
+        assert_eq!(config.target_config().unwrap().environment, "dev");
     }
 }

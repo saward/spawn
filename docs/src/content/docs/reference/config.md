@@ -130,6 +130,13 @@ telemetry = false
 
 Set the `DO_NOT_TRACK` environment variable to disable telemetry globally.
 
+### `secrets`
+
+**Type:** Table  
+**Required:** No
+
+Named secrets available to templates via the [`secret()`](/reference/templating/#secret) function. See [Secrets](#secrets) below for the field format, and the [Secrets guide](/guides/secrets/) for how they're used in templates and which commands reveal vs. mask them.
+
 ## Target configurations
 
 The `[targets]` section defines one or more database connections. Each target is a table with the following fields. For practical setup examples including Docker and Google Cloud SQL, see the [Database Connections guide](/guides/manage-databases/).
@@ -238,6 +245,79 @@ command = {
 ```
 
 The `--dry-run` flag makes `gcloud` output the SSH command as a string instead of executing it.
+
+## Secrets
+
+The `[secrets]` table defines values that templates can read via the [`secret()`](/reference/templating/#secret) function, so passwords and other sensitive values don't need to be committed as plain template variables. See the [Secrets guide](/guides/secrets/) for how secrets are used in templates and which commands reveal vs. mask them; this section covers the `spawn.toml` field format.
+
+Each secret has a `default` source and optional per-environment overrides, keyed by the same environment names used by `[targets.*].environment`.
+
+```toml
+[secrets.application_password.default]
+source = "host_file"
+path = "/run/secrets/application-password"
+
+[secrets.application_password.environments.dev]
+source = "file"
+path = "./local-secrets/application-password.txt"
+```
+
+When a template calls `secret("application_password")`, Spawn looks up `environments.<current environment>` first, falling back to `default` if there's no override for the current environment. `default` is required — there's no implicit "no secret configured" fallback.
+
+### Sources
+
+#### `env`
+
+Reads an OS environment variable.
+
+```toml
+[secrets.application_password.default]
+source = "env"
+name = "APPLICATION_PASSWORD"
+```
+
+#### `file`
+
+Reads a file via spawn's configured operator, with any trailing newline stripped — resolved the same way any other file spawn reads is (`read_file`, migration/component lookups, etc.). It is **not** a real filesystem path, so an absolute path here will not reach a real host location — use `host_file` for that.
+
+```toml
+[secrets.application_password.environments.dev]
+source = "file"
+path = "./local-secrets/application-password.txt"
+```
+
+#### `host_file`
+
+Reads a file directly from the host filesystem, bypassing the operator, with any trailing newline stripped. Use this for secrets mounted on the host outside spawn's storage — Docker/Kubernetes secrets under `/run/secrets`, systemd's `LoadCredential=`, or an already-decrypted `sops`/`gpg` output file.
+
+```toml
+[secrets.application_password.default]
+source = "host_file"
+path = "/run/secrets/application-password"
+```
+
+#### `command`
+
+Runs a command and uses its trimmed stdout as the value. Useful for secret managers with a CLI (Vault, 1Password, `sops`, `systemd-creds`, etc.).
+
+```toml
+[secrets.application_password.default]
+source = "command"
+command = ["op", "read", "op://vault/application-password/password"]
+```
+
+#### `literal`
+
+An inline value. Requires `insecure = true` — Spawn refuses to use a `literal` secret without it, so a plaintext value committed to `spawn.toml` can't accidentally become a project's "secure default". This is enforced whenever the secret is resolved (including a masked `migration build`), not just when it's actually displayed. Intended for local development only.
+
+```toml
+[secrets.application_password.environments.dev]
+source = "literal"
+value = "dev-only-password"
+insecure = true
+```
+
+See [Secrets: Masking](/guides/secrets/#masking) for which commands reveal real values vs. mask them.
 
 ## Complete example
 

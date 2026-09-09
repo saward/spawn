@@ -36,3 +36,12 @@ export const variablesOption: CLIOption[] = [
       "Path to variables file (JSON, TOML, or YAML). Values are available in templates under {{ variables }}.",
   },
 ];
+
+/** The --reveal-secrets flag used by build commands, which mask secret() values by default. */
+export const revealSecretsOption: CLIOption[] = [
+  {
+    flag: "--reveal-secrets",
+    description:
+      "Render real secret() values instead of masked placeholders. For local debugging only — build output is not executed.",
+  },
+];

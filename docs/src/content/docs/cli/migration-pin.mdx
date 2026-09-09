@@ -36,6 +36,10 @@ Pinning ensures migrations are reproducible:
 3. Stores snapshots in `pinned/<hash>/`
 4. Creates `lock.toml` in the migration directory
 
+## Integrity
+
+Every file read back from `pinned/` has its content hash recomputed and checked against the hash implied by its path. If a pinned file's contents were ever modified (or corrupted) on disk after pinning, the mismatch is detected and the build/apply fails loudly rather than silently using the altered content.
+
 ## Example
 
 ```bash

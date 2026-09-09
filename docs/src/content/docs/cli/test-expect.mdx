@@ -4,11 +4,15 @@ description: Update expected test output.
 ---
 
 import CLICommand from "../../../components/CLICommand.astro";
-import { globalOptions, targetOption } from "../../../components/cli-options";
+import {
+  globalOptions,
+  targetOption,
+  environmentOption,
+} from "../../../components/cli-options";
 
 <CLICommand
   usage="spawn test expect <name>"
-  options={[...targetOption, ...globalOptions]}
+  options={[...environmentOption, ...targetOption, ...globalOptions]}
 >
 
 Runs a test and saves its output as the new expected result for future comparisons.
@@ -24,6 +28,10 @@ Runs a test and saves its output as the new expected result for future compariso
 3. Writes it to `tests/<name>/expected`
 
 Use this command when test behavior changes intentionally and you want to update the baseline for [`spawn test compare`](/cli/test-compare/).
+
+## Secrets
+
+`test expect` always masks `secret()` values so real secrets cannot be written into the saved `expected` file. See the [Secrets guide](/guides/secrets/#masking) for details.
 
 ## Example
 

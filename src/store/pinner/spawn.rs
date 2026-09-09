@@ -7,9 +7,18 @@ use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct Spawn {
-    files: Option<HashMap<String, String>>,
+    files: Option<HashMap<String, PinnedFile>>,
     pin_path: String,
     source_path: String,
+}
+
+/// Where a pinned file's contents live, and the hash its path is supposed to
+/// correspond to — kept alongside the path so a load can verify the two
+/// still agree.
+#[derive(Debug, Clone)]
+struct PinnedFile {
+    path: String,
+    hash: String,
 }
 
 impl Spawn {
@@ -44,7 +53,7 @@ impl Spawn {
     async fn read_root_hash(
         object_store: &Operator,
         store_path: &str,
-        files: &mut HashMap<String, String>,
+        files: &mut HashMap<String, PinnedFile>,
         base_path: &str,
         root_hash: &str,
     ) -> Result<()> {
@@ -62,7 +71,13 @@ impl Spawn {
                         format!("{}/{}", base_path, &entry.name)
                     };
                     let full_path = format!("{}/{}", store_path, super::hash_to_path(&entry.hash)?);
-                    files.insert(full_name, full_path);
+                    files.insert(
+                        full_name,
+                        PinnedFile {
+                            path: full_path,
+                            hash: entry.hash.clone(),
+                        },
+                    );
                 }
                 super::EntryKind::Tree => {
                     let new_base = if base_path.is_empty() {
@@ -96,11 +111,12 @@ impl Pinner for Spawn {
             .as_ref()
             .ok_or(anyhow!("files not initialized, was a root hash specified?"))?;
 
-        if let Some(path) = files.get(name) {
-            match object_store.read(path).await {
+        if let Some(pinned) = files.get(name) {
+            match object_store.read(&pinned.path).await {
                 Ok(get_result) => {
-                    let bytes = get_result.to_bytes();
-                    Ok(Some(bytes.to_vec()))
+                    let bytes = get_result.to_bytes().to_vec();
+                    super::verify_hash(&bytes, &pinned.hash, &pinned.path)?;
+                    Ok(Some(bytes))
                 }
                 Err(_) => Ok(None),
             }
@@ -110,6 +126,6 @@ impl Pinner for Spawn {
     }
 
     async fn snapshot(&mut self, object_store: &Operator) -> Result<String> {
-        super::snapshot(object_store, &self.pin_path, &self.source_path).await
+        super::snapshot(object_store, Some(self.pin_path.as_str()), &self.source_path).await
     }
 }

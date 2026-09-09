@@ -42,8 +42,10 @@ use opendal::services::Memory;
 use opendal::Operator;
 use spawn_db::{
     commands::{AdoptMigration, ApplyMigration, Command, CompareTests, ExpectTest, Outcome},
-    config::ConfigLoaderSaver,
+    config::{Config, ConfigLoaderSaver},
     engine::{CommandSpec, EngineType, TargetConfig},
+    migrator::Migrator,
+    secrets::{SecretDefinition, SecretSource, SecretsRenderMode},
 };
 use std::collections::HashMap;
 use std::env;
@@ -241,6 +243,7 @@ impl IntegrationTestHelper {
             test_template: None,
             up_template: None,
             targets: Some(targets),
+            secrets: None,
             project_id: None,
             telemetry: Some(false),
         }
@@ -1331,6 +1334,388 @@ COMMIT;"#;
     Ok(())
 }
 
+/// A writer failure (e.g. an undefined `secret()` call) is a different
+/// failure path than a nonzero psql exit, and must still record a FAILURE
+/// row rather than abandoning the migration with no history.
+#[tokio::test]
+#[ignore]
+async fn test_migration_writer_failure_still_records_history() -> Result<()> {
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_migration_writer_failure_still_records_history", None)
+            .await?;
+
+    // CREATE TABLE autocommits before the engine reaches the failing
+    // secret() call, proving streamed SQL persists past a writer failure.
+    let bad_migration = r#"CREATE TABLE writer_failure_check (id integer);
+
+BEGIN;
+
+SELECT {{ secret("does_not_exist") }};
+
+COMMIT;"#;
+
+    let migration_name = helper
+        .migration_helper
+        .create_migration_manual("writer-failure", bad_migration.to_string())
+        .await?;
+
+    let result = helper.apply_migration(&migration_name).await;
+    assert!(
+        result.is_err(),
+        "Expected migration with an undefined secret() call to fail"
+    );
+
+    assert!(
+        helper.table_exists("public", "writer_failure_check")?,
+        "SQL streamed before the writer failure should already have executed against the database"
+    );
+
+    let status_check = helper.execute_sql(&format!(
+        "SELECT mh.status_id_status FROM _spawn.migration m \
+         JOIN _spawn.migration_history mh ON m.migration_id = mh.migration_id_migration \
+         WHERE m.name = '{}' ORDER BY mh.created_at DESC LIMIT 1;",
+        migration_name
+    ))?;
+    assert!(
+        status_check.contains("FAILURE"),
+        "Migration should be recorded with FAILURE status even though psql itself never \
+         reported a nonzero exit, got: {}",
+        status_check
+    );
+
+    // Confirms the FAILURE row is actually persisted, not just transient.
+    let config = helper.migration_helper.load_config().await?;
+    let cmd = ApplyMigration {
+        migration: Some(migration_name.clone()),
+        pinned: false,
+        variables: None,
+        yes: true,
+        retry: false,
+        reuse_connection: false,
+    };
+    let result = cmd.execute(&config).await;
+    assert!(
+        result.is_err(),
+        "apply without --retry should fail after a previous writer-failure attempt"
+    );
+    let err_msg = result.err().unwrap().to_string();
+    assert!(
+        err_msg.contains("previous") && err_msg.contains("FAILURE"),
+        "error should mention previous FAILURE attempt, got: {}",
+        err_msg
+    );
+
+    Ok(())
+}
+
+/// A failed apply must never leak a resolved secret value into the returned
+/// error, even when Postgres itself echoes the offending literal back (as
+/// it does for e.g. "invalid input syntax" errors).
+#[tokio::test]
+#[ignore]
+async fn test_apply_error_redacts_resolved_secret_values() -> Result<()> {
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_apply_error_redacts_resolved_secret_values", None).await?;
+
+    let secret_value = "hunter2-distinctive-secret-value";
+    let mut secrets = HashMap::new();
+    secrets.insert(
+        "application_password".to_string(),
+        SecretDefinition {
+            default: SecretSource::Literal {
+                value: secret_value.to_string(),
+                insecure: true,
+            },
+            environments: HashMap::new(),
+        },
+    );
+    let mut config_loader =
+        IntegrationTestHelper::create_config(&helper.db_name, &helper.connection_mode);
+    config_loader.secrets = Some(secrets);
+    config_loader
+        .save(
+            helper.migration_helper.config_path(),
+            &helper.migration_helper.fs,
+        )
+        .await?;
+
+    // Casting the secret to an integer guarantees Postgres echoes the exact
+    // literal back in its own error message ("invalid input syntax for type
+    // integer: \"...\""), independent of any table/constraint setup.
+    let bad_migration =
+        format!("BEGIN;\n\nSELECT {{{{ secret(\"application_password\") }}}}::integer;\n\nCOMMIT;");
+    let migration_name = helper
+        .migration_helper
+        .create_migration_manual("secret-then-fail", bad_migration)
+        .await?;
+
+    let result = helper.apply_migration(&migration_name).await;
+    let err = result.expect_err("expected migration to fail on the bad cast");
+    let full_text = format!("{:?}", err);
+
+    assert!(
+        !full_text.contains(secret_value),
+        "secret value leaked into apply error: {}",
+        full_text
+    );
+    assert!(
+        full_text.contains("***REDACTED***"),
+        "expected a redaction marker in the error, got: {}",
+        full_text
+    );
+    assert!(
+        full_text.contains("invalid input syntax"),
+        "redaction should not have destroyed the rest of the error's useful detail, got: {}",
+        full_text
+    );
+
+    Ok(())
+}
+
+/// migration_history.checksum and .pin_hash must reflect the raw, unrendered
+/// up.sql and the actual component tree used — never the rendered SQL
+/// (which could embed secret values) and never a stale/non-empty value.
+/// The previous coverage here only checked that both columns were
+/// non-empty. One migration is retried through a sequence of edits to cover
+/// all four properties cheaply: secret rotation and pinning must each leave
+/// their respective column unchanged, while editing up.sql and pinning
+/// history must each move it.
+#[tokio::test]
+#[ignore]
+async fn test_migration_history_records_expected_checksum_and_pin_hash() -> Result<()> {
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new(
+        "test_migration_history_records_expected_checksum_and_pin_hash",
+        None,
+    )
+    .await?;
+
+    let save_secret = |value: &str| {
+        let mut secrets = HashMap::new();
+        secrets.insert(
+            "application_password".to_string(),
+            SecretDefinition {
+                default: SecretSource::Literal {
+                    value: value.to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        let mut config_loader =
+            IntegrationTestHelper::create_config(&helper.db_name, &helper.connection_mode);
+        config_loader.secrets = Some(secrets);
+        config_loader
+    };
+    save_secret("hunter2")
+        .save(
+            helper.migration_helper.config_path(),
+            &helper.migration_helper.fs,
+        )
+        .await?;
+
+    // A plain SELECT has no side effects, so retrying it below is trivially
+    // safe to repeat.
+    let migration_name = helper
+        .migration_helper
+        .create_migration_manual(
+            "checksum-and-pin-hash",
+            "BEGIN;\n\nSELECT {{ secret(\"application_password\") }}::text;\n\nCOMMIT;"
+                .to_string(),
+        )
+        .await?;
+
+    let row_query = format!(
+        "SELECT encode(mh.checksum, 'hex'), mh.pin_hash FROM _spawn.migration m \
+         JOIN _spawn.migration_history mh ON m.migration_id = mh.migration_id_migration \
+         WHERE m.name = '{}' ORDER BY mh.created_at DESC LIMIT 1;",
+        migration_name
+    );
+    let count_query = format!(
+        "SELECT COUNT(*) FROM _spawn.migration m \
+         JOIN _spawn.migration_history mh ON m.migration_id = mh.migration_id_migration \
+         WHERE m.name = '{}';",
+        migration_name
+    );
+    // Asserts against the latest history row, and that `count` rows exist —
+    // the latter proves each retry actually recorded a new row rather than
+    // this just re-reading a previous one.
+    let assert_latest_row = |count: &str, checksum: &str, pin_hash: &str| -> Result<()> {
+        let got_count = helper.execute_sql(&count_query)?;
+        assert!(
+            got_count.contains(count),
+            "expected {} history row(s), got: {}",
+            count,
+            got_count
+        );
+        let row = helper.execute_sql(&row_query)?;
+        assert!(
+            row.contains(checksum) && row.contains(pin_hash),
+            "expected checksum '{}' and pin_hash '{}' in latest row, got: {}",
+            checksum,
+            pin_hash,
+            row
+        );
+        Ok(())
+    };
+    async fn retry_apply(config: &Config, migration_name: &str, pinned: bool) -> Result<()> {
+        ApplyMigration {
+            migration: Some(migration_name.to_string()),
+            pinned,
+            variables: None,
+            yes: true,
+            retry: true,
+            reuse_connection: false,
+        }
+        .execute(config)
+        .await?;
+        Ok(())
+    }
+
+    helper.apply_migration(&migration_name).await?;
+    let config = helper.migration_helper.load_config().await?;
+    let mgrtr = Migrator::new(&config, &migration_name, false);
+    let checksum = mgrtr
+        .generate_streaming(None, SecretsRenderMode::Masked)
+        .await?
+        .raw_checksum();
+    let pin_hash = mgrtr.recompute_pin_hash().await?;
+    assert_latest_row("1", &checksum, &pin_hash)?;
+
+    // Rotating the secret and re-applying must leave both columns unchanged.
+    save_secret("a-totally-different-value")
+        .save(
+            helper.migration_helper.config_path(),
+            &helper.migration_helper.fs,
+        )
+        .await?;
+    let config = helper.migration_helper.load_config().await?;
+    retry_apply(&config, &migration_name, false).await?;
+    assert_latest_row("2", &checksum, &pin_hash)?;
+
+    // Editing up.sql itself (secret unchanged) must change the checksum,
+    // but not the pin_hash (no components are involved either way).
+    helper
+        .migration_helper
+        .fs
+        .write(
+            &config.pather().migration_script_file_path(&migration_name),
+            "BEGIN;\n\nSELECT {{ secret(\"application_password\") }}::text; -- edited\n\nCOMMIT;",
+        )
+        .await?;
+    let checksum = Migrator::new(&config, &migration_name, false)
+        .generate_streaming(None, SecretsRenderMode::Masked)
+        .await?
+        .raw_checksum();
+    retry_apply(&config, &migration_name, false).await?;
+    assert_latest_row("3", &checksum, &pin_hash)?;
+
+    // Adding a component, pinning, then editing the component *again*
+    // diverges the live tree from what's frozen in lock.toml. A pinned
+    // apply must record the frozen (pinned) value, not a fresh live
+    // recompute — proving apply actually reads lock.toml here, not just
+    // that pinning changes something. Without the second edit, live and
+    // pinned would still agree at apply time even if apply's pinned path
+    // regressed to reusing the unpinned computation instead.
+    let component_path = format!("{}/placeholder.sql", config.pather().components_folder());
+    helper
+        .migration_helper
+        .fs
+        .write(&component_path, "-- component v1")
+        .await?;
+    let pinned_hash = helper.migration_helper.pin_migration(&migration_name).await?;
+    assert_ne!(
+        pin_hash, pinned_hash,
+        "test setup error: adding a component should have changed the pin hash"
+    );
+
+    helper
+        .migration_helper
+        .fs
+        .write(&component_path, "-- component v2")
+        .await?;
+    let live_hash_after_pin = Migrator::new(&config, &migration_name, false)
+        .recompute_pin_hash()
+        .await?;
+    assert_ne!(
+        pinned_hash, live_hash_after_pin,
+        "test setup error: editing the component again after pinning should diverge \
+         the live tree from what's frozen in lock.toml"
+    );
+
+    retry_apply(&config, &migration_name, true).await?;
+    assert_latest_row("4", &checksum, &pinned_hash)?;
+
+    Ok(())
+}
+
+/// `test run` (and by extension `compare`/`expect`, which build on it) must
+/// mask secrets by default: its output is printed, diffed, and — via `test
+/// expect` — committed to the repo, so a revealed secret risks both a
+/// transient leak (a failing statement's diagnostics) and a permanent one
+/// (baked into a checked-in `expected` file).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_test_run_masks_secrets_by_default() -> Result<()> {
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_test_run_masks_secrets_by_default", None).await?;
+
+    let mut secrets = HashMap::new();
+    secrets.insert(
+        "application_password".to_string(),
+        SecretDefinition {
+            default: SecretSource::Literal {
+                value: "hunter2-distinctive".to_string(),
+                insecure: true,
+            },
+            environments: HashMap::new(),
+        },
+    );
+    let mut config_loader =
+        IntegrationTestHelper::create_config(&helper.db_name, &helper.connection_mode);
+    config_loader.secrets = Some(secrets);
+    config_loader
+        .save(
+            helper.migration_helper.config_path(),
+            &helper.migration_helper.fs,
+        )
+        .await?;
+
+    let test_name = helper.migration_helper.create_test("secret-test").await?;
+    let config = helper.migration_helper.load_config().await?;
+    helper
+        .migration_helper
+        .fs
+        .write(
+            &config.pather().test_file_path(&test_name),
+            "SELECT {{ secret(\"application_password\") }};",
+        )
+        .await?;
+
+    let tester = spawn_db::sqltest::Tester::new(&config, &test_name);
+    let output = tester.run(None).await?;
+
+    assert!(
+        !output.contains("hunter2-distinctive"),
+        "test run output should not contain the real secret value, got: {}",
+        output
+    );
+    assert!(
+        output.contains("***MASKED:application_password***"),
+        "expected the masked placeholder in test run output, got: {}",
+        output
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore]
 async fn test_cli_test_compare() -> Result<()> {
@@ -1650,6 +2035,7 @@ async fn test_spawn_database_config() -> Result<()> {
         test_template: None,
         up_template: None,
         targets: Some(targets),
+        secrets: None,
         project_id: None,
         telemetry: Some(false),
     };

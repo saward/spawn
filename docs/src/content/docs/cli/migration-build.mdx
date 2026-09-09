@@ -9,13 +9,15 @@ import {
   targetOption,
   environmentOption,
   variablesOption,
+  revealSecretsOption,
 } from "../../../components/cli-options";
 
 <CLICommand
-  usage="spawn migration build <migration> [--pinned] [--variables <path>]"
+  usage="spawn migration build <migration> [--pinned] [--variables <path>] [--reveal-secrets]"
   options={[
     { flag: "--pinned", description: "Use pinned component versions from lock.toml" },
     ...variablesOption,
+    ...revealSecretsOption,
     ...environmentOption,
     ...targetOption,
     ...globalOptions
@@ -37,6 +39,10 @@ Renders a migration's `up.sql` template into final SQL, resolving component incl
 
 Without `--pinned`, the migration uses the current working tree versions of components. With `--pinned`, it uses the locked versions from the migration's `lock.toml`.
 
+## Secrets
+
+Any `secret()` calls in the template are masked by default (e.g. `***MASKED:name***`); pass `--reveal-secrets` to render real values for local debugging. `migration apply` always reveals real values, since it actually runs the SQL. See the [Secrets guide](/guides/secrets/#masking) for full details, including why a masked build still verifies each secret is reachable.
+
 ## Examples
 
 Build with current components:
@@ -55,6 +61,12 @@ Build with custom variables:
 
 ```bash
 spawn migration build 20260131120000-add-users-table --variables ./prod-vars.json
+```
+
+Build and show real secret values for debugging:
+
+```bash
+spawn migration build 20260131120000-add-users-table --reveal-secrets
 ```
 
 </CLICommand>

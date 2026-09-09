@@ -4,11 +4,21 @@ description: Build a test into final SQL.
 ---
 
 import CLICommand from "../../../components/CLICommand.astro";
-import { globalOptions, targetOption } from "../../../components/cli-options";
+import {
+  globalOptions,
+  targetOption,
+  environmentOption,
+  revealSecretsOption,
+} from "../../../components/cli-options";
 
 <CLICommand
-  usage="spawn test build <name>"
-  options={[...targetOption, ...globalOptions]}
+  usage="spawn test build <name> [--reveal-secrets]"
+  options={[
+    ...revealSecretsOption,
+    ...environmentOption,
+    ...targetOption,
+    ...globalOptions,
+  ]}
 >
 
 Renders a test's `test.sql` template into final SQL, resolving component includes and template variables. Outputs to stdout.
@@ -21,10 +31,18 @@ Renders a test's `test.sql` template into final SQL, resolving component include
 
 Similar to [`spawn migration build`](/cli/migration-build/), but for tests. Processes the `test.sql` template and resolves any component includes or template logic.
 
-## Example
+## Secrets
+
+Any `secret()` calls are masked by default; pass `--reveal-secrets` to render real values for local debugging. `test run`/`test compare`/`test expect` always mask values so secrets cannot be printed, diffed, or persisted in expected output. See the [Secrets guide](/guides/secrets/#masking) for full details, including why a masked build still verifies each secret is reachable.
+
+## Examples
 
 ```bash
 spawn test build user-creation
+```
+
+```bash
+spawn test build user-creation --reveal-secrets
 ```
 
 </CLICommand>
