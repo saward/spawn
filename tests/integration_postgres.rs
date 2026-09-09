@@ -44,7 +44,8 @@ use spawn_db::{
     commands::{AdoptMigration, ApplyMigration, Command, CompareTests, ExpectTest, Outcome},
     config::ConfigLoaderSaver,
     engine::{CommandSpec, EngineType, TargetConfig},
-    secrets::{SecretDefinition, SecretSource},
+    migrator::Migrator,
+    secrets::{SecretDefinition, SecretSource, SecretsRenderMode},
 };
 use std::collections::HashMap;
 use std::env;
@@ -1418,8 +1419,7 @@ async fn test_apply_error_redacts_resolved_secret_values() -> Result<()> {
     require_postgres()?;
 
     let helper =
-        IntegrationTestHelper::new("test_apply_error_redacts_resolved_secret_values", None)
-            .await?;
+        IntegrationTestHelper::new("test_apply_error_redacts_resolved_secret_values", None).await?;
 
     let secret_value = "hunter2-distinctive-secret-value";
     let mut secrets = HashMap::new();
@@ -1437,15 +1437,17 @@ async fn test_apply_error_redacts_resolved_secret_values() -> Result<()> {
         IntegrationTestHelper::create_config(&helper.db_name, &helper.connection_mode);
     config_loader.secrets = Some(secrets);
     config_loader
-        .save(helper.migration_helper.config_path(), &helper.migration_helper.fs)
+        .save(
+            helper.migration_helper.config_path(),
+            &helper.migration_helper.fs,
+        )
         .await?;
 
     // Casting the secret to an integer guarantees Postgres echoes the exact
     // literal back in its own error message ("invalid input syntax for type
     // integer: \"...\""), independent of any table/constraint setup.
-    let bad_migration = format!(
-        "BEGIN;\n\nSELECT {{{{ secret(\"application_password\") }}}}::integer;\n\nCOMMIT;"
-    );
+    let bad_migration =
+        format!("BEGIN;\n\nSELECT {{{{ secret(\"application_password\") }}}}::integer;\n\nCOMMIT;");
     let migration_name = helper
         .migration_helper
         .create_migration_manual("secret-then-fail", bad_migration)
@@ -1469,6 +1471,212 @@ async fn test_apply_error_redacts_resolved_secret_values() -> Result<()> {
         full_text.contains("invalid input syntax"),
         "redaction should not have destroyed the rest of the error's useful detail, got: {}",
         full_text
+    );
+
+    Ok(())
+}
+
+/// migration_history.checksum must fingerprint the raw, unrendered up.sql —
+/// never the rendered SQL, which would embed resolved secret values (see
+/// StreamingGeneration::raw_checksum's doc comment, and the template.rs unit
+/// tests for the pure-function version of this property). This exercises
+/// the real `apply` pipeline end to end.
+#[tokio::test]
+#[ignore]
+async fn test_migration_history_checksum_is_raw_source_and_secret_rotation_invariant() -> Result<()>
+{
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new(
+        "test_migration_history_checksum_is_raw_source_and_secret_rotation_invariant",
+        None,
+    )
+    .await?;
+
+    let save_secret = |value: &str| {
+        let mut secrets = HashMap::new();
+        secrets.insert(
+            "application_password".to_string(),
+            SecretDefinition {
+                default: SecretSource::Literal {
+                    value: value.to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        let mut config_loader =
+            IntegrationTestHelper::create_config(&helper.db_name, &helper.connection_mode);
+        config_loader.secrets = Some(secrets);
+        config_loader
+    };
+
+    save_secret("hunter2")
+        .save(
+            helper.migration_helper.config_path(),
+            &helper.migration_helper.fs,
+        )
+        .await?;
+
+    // A plain SELECT has no side effects, so re-applying it via --retry
+    // below is trivially safe to repeat.
+    let migration_content =
+        "BEGIN;\n\nSELECT {{ secret(\"application_password\") }}::text;\n\nCOMMIT;";
+    let migration_name = helper
+        .migration_helper
+        .create_migration_manual("checksum-rotation", migration_content.to_string())
+        .await?;
+
+    helper.apply_migration(&migration_name).await?;
+
+    // Computed via the same production code path `apply` uses, independent
+    // of the round trip through the database.
+    let config = helper.migration_helper.load_config().await?;
+    let expected_checksum = Migrator::new(&config, &migration_name, false)
+        .generate_streaming(None, SecretsRenderMode::Masked)
+        .await?
+        .raw_checksum();
+
+    let checksum_query = format!(
+        "SELECT encode(mh.checksum, 'hex') FROM _spawn.migration m \
+         JOIN _spawn.migration_history mh ON m.migration_id = mh.migration_id_migration \
+         WHERE m.name = '{}' ORDER BY mh.created_at DESC LIMIT 1;",
+        migration_name
+    );
+    let history_count_query = format!(
+        "SELECT COUNT(*) FROM _spawn.migration m \
+         JOIN _spawn.migration_history mh ON m.migration_id = mh.migration_id_migration \
+         WHERE m.name = '{}';",
+        migration_name
+    );
+
+    let first_checksum = helper.execute_sql(&checksum_query)?;
+    assert!(
+        first_checksum.contains(&expected_checksum),
+        "expected checksum '{}' in result, got: {}",
+        expected_checksum,
+        first_checksum
+    );
+    let history_count_after_first = helper.execute_sql(&history_count_query)?;
+    assert!(
+        history_count_after_first.contains("1"),
+        "expected exactly 1 history row after the first apply, got: {}",
+        history_count_after_first
+    );
+
+    // Rotate the secret's value and re-apply the same up.sql — the checksum
+    // must not move.
+    save_secret("a-totally-different-value")
+        .save(
+            helper.migration_helper.config_path(),
+            &helper.migration_helper.fs,
+        )
+        .await?;
+
+    let config = helper.migration_helper.load_config().await?;
+    let cmd = ApplyMigration {
+        migration: Some(migration_name.clone()),
+        pinned: false,
+        variables: None,
+        yes: true,
+        retry: true,
+        reuse_connection: false,
+    };
+    cmd.execute(&config).await?;
+
+    // Prove the retry actually recorded a second row rather than the
+    // checksum query below just re-reading the first one — otherwise this
+    // test would pass even if --retry silently no-op'd.
+    let history_count_after_retry = helper.execute_sql(&history_count_query)?;
+    assert!(
+        history_count_after_retry.contains("2"),
+        "expected exactly 2 history rows after the --retry apply, got: {}",
+        history_count_after_retry
+    );
+
+    let second_checksum = helper.execute_sql(&checksum_query)?;
+    assert!(
+        second_checksum.contains(&expected_checksum),
+        "checksum changed after rotating the secret's value, expected '{}' in: {}",
+        expected_checksum,
+        second_checksum
+    );
+
+    Ok(())
+}
+
+/// migration_history.pin_hash must record the actual component-tree hash
+/// used to render the migration — the real pinned hash from lock.toml when
+/// pinned, or the equivalent hash of the current tree when applied with
+/// --no-pin. The previous test coverage here only checked that the stored
+/// pin_hash was non-empty.
+#[tokio::test]
+#[ignore]
+async fn test_migration_history_records_the_expected_pin_hash() -> Result<()> {
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_migration_history_records_the_expected_pin_hash", None)
+            .await?;
+
+    // --no-pin case: pin_hash should equal an independently-computed hash of
+    // the current (unpinned) component tree. Nothing here checks for a
+    // lasting side effect, so a plain SELECT is enough.
+    let unpinned_content = "BEGIN;\n\nSELECT true;\n\nCOMMIT;";
+    let unpinned_name = helper
+        .migration_helper
+        .create_migration_manual("pin-hash-unpinned", unpinned_content.to_string())
+        .await?;
+    helper.apply_migration(&unpinned_name).await?;
+
+    let config = helper.migration_helper.load_config().await?;
+    let expected_unpinned_pin_hash = Migrator::new(&config, &unpinned_name, false)
+        .pin_hash()
+        .await?;
+
+    let unpinned_pin_hash = helper.execute_sql(&format!(
+        "SELECT mh.pin_hash FROM _spawn.migration m \
+         JOIN _spawn.migration_history mh ON m.migration_id = mh.migration_id_migration \
+         WHERE m.name = '{}' ORDER BY mh.created_at DESC LIMIT 1;",
+        unpinned_name
+    ))?;
+    assert!(
+        unpinned_pin_hash.contains(&expected_unpinned_pin_hash),
+        "expected pin_hash '{}' for --no-pin apply, got: {}",
+        expected_unpinned_pin_hash,
+        unpinned_pin_hash
+    );
+
+    // Pinned case: pin_hash should equal the hash recorded in lock.toml.
+    let pinned_content = "BEGIN;\n\nSELECT true;\n\nCOMMIT;";
+    let pinned_name = helper
+        .migration_helper
+        .create_migration_manual("pin-hash-pinned", pinned_content.to_string())
+        .await?;
+    let pin_hash = helper.migration_helper.pin_migration(&pinned_name).await?;
+
+    let cmd = ApplyMigration {
+        migration: Some(pinned_name.clone()),
+        pinned: true,
+        variables: None,
+        yes: true,
+        retry: false,
+        reuse_connection: false,
+    };
+    let config = helper.migration_helper.load_config().await?;
+    cmd.execute(&config).await?;
+
+    let pinned_pin_hash = helper.execute_sql(&format!(
+        "SELECT mh.pin_hash FROM _spawn.migration m \
+         JOIN _spawn.migration_history mh ON m.migration_id = mh.migration_id_migration \
+         WHERE m.name = '{}' ORDER BY mh.created_at DESC LIMIT 1;",
+        pinned_name
+    ))?;
+    assert!(
+        pinned_pin_hash.contains(&pin_hash),
+        "expected pin_hash '{}' for pinned apply, got: {}",
+        pin_hash,
+        pinned_pin_hash
     );
 
     Ok(())

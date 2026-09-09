@@ -873,4 +873,93 @@ mod tests {
         let result = tmpl.render(context!());
         assert!(result.is_err());
     }
+
+    fn streaming_generation(template_contents: &str, secrets: SecretsRepository) -> StreamingGeneration {
+        use crate::config::FolderPather;
+        use opendal::services::Memory;
+        use opendal::Operator;
+
+        let op = Operator::new(Memory::default()).unwrap();
+        let pinner = Latest::new("").unwrap();
+        let pather = FolderPather {
+            spawn_folder: "".to_string(),
+        };
+        let store = Store::new(Box::new(pinner), op, pather).unwrap();
+
+        StreamingGeneration {
+            store,
+            template_contents: template_contents.to_string(),
+            environment: "prod".to_string(),
+            variables: crate::variables::Variables::default(),
+            engine: EngineType::PostgresPSQL,
+            secrets: Arc::new(secrets),
+        }
+    }
+
+    fn literal_secret_repo(value: &str) -> SecretsRepository {
+        use std::collections::HashMap;
+
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            "application_password".to_string(),
+            crate::secrets::SecretDefinition {
+                default: crate::secrets::SecretSource::Literal {
+                    value: value.to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Revealed,
+            op,
+        )
+    }
+
+    // Regression coverage for the checksum's security-critical properties
+    // (see StreamingGeneration::raw_checksum's doc comment): it must be a
+    // fingerprint of the raw template source specifically — not the
+    // rendered output, and not something secret-independent-but-otherwise-
+    // arbitrary either — so a future change can't silently start hashing
+    // rendered SQL (and disclose secret values via the checksum) again.
+
+    #[test]
+    fn raw_checksum_matches_a_hash_of_the_raw_template_source() {
+        let source = r#"SELECT {{ secret("application_password") }};"#;
+        let gen = streaming_generation(source, literal_secret_repo("hunter2"));
+
+        let expected = format!(
+            "{:032x}",
+            twox_hash::xxhash3_128::Hasher::oneshot(source.as_bytes())
+        );
+        assert_eq!(gen.raw_checksum(), expected);
+    }
+
+    #[test]
+    fn raw_checksum_is_unchanged_by_a_rotated_secret_value() {
+        let source = r#"SELECT {{ secret("application_password") }};"#;
+        let gen_a = streaming_generation(source, literal_secret_repo("hunter2"));
+        let gen_b = streaming_generation(source, literal_secret_repo("a-totally-different-value"));
+
+        assert_eq!(
+            gen_a.raw_checksum(),
+            gen_b.raw_checksum(),
+            "rotating a secret's resolved value must not change the recorded checksum"
+        );
+    }
+
+    #[test]
+    fn raw_checksum_changes_when_the_template_source_changes() {
+        let gen_a = streaming_generation("SELECT 1;", literal_secret_repo("hunter2"));
+        let gen_b = streaming_generation("SELECT 2;", literal_secret_repo("hunter2"));
+
+        assert_ne!(
+            gen_a.raw_checksum(),
+            gen_b.raw_checksum(),
+            "different up.sql content must produce different checksums"
+        );
+    }
 }
