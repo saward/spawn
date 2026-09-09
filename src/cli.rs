@@ -1,7 +1,7 @@
 use crate::commands::{
     AdoptMigration, ApplyMigration, BuildMigration, BuildTest, Check, Command, CompareTests,
     ExpectTest, Init, MigrationStatus, NewMigration, NewTest, Outcome, PinCleanup, PinMigration,
-    RunTest, TelemetryDescribe, TelemetryInfo,
+    PinVerify, RunTest, TelemetryDescribe, TelemetryInfo,
 };
 use crate::completions::{complete_migrations, complete_tests};
 use crate::config::{Config, DEFAULT_CONFIG_FILE};
@@ -225,6 +225,10 @@ pub enum PinCommands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Verify the integrity of the pinned store: that every pinned file still
+    /// matches its content hash, and that every migration's lock.toml points
+    /// to a root hash that exists in the store.
+    Verify,
 }
 
 impl TelemetryDescribe for PinCommands {
@@ -232,6 +236,7 @@ impl TelemetryDescribe for PinCommands {
         match self {
             PinCommands::Cleanup { dry_run } => TelemetryInfo::new("cleanup")
                 .with_properties(vec![("dry_run", dry_run.to_string())]),
+            PinCommands::Verify => TelemetryInfo::new("verify"),
         }
     }
 }
@@ -364,6 +369,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
         Some(Commands::Check) => Check.execute(config).await,
         Some(Commands::Pin { command }) => match command {
             Some(PinCommands::Cleanup { dry_run }) => PinCleanup { dry_run }.execute(config).await,
+            Some(PinCommands::Verify) => PinVerify.execute(config).await,
             None => {
                 eprintln!("No pin subcommand specified");
                 Ok(Outcome::Unimplemented)

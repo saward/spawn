@@ -4,6 +4,7 @@ pub mod completions;
 pub mod config;
 pub mod engine;
 pub mod escape;
+pub mod hash;
 pub mod migrator;
 pub mod pinfile;
 pub mod secrets;

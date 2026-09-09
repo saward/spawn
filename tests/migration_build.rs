@@ -6,7 +6,7 @@ use pretty_assertions::assert_eq;
 use spawn_db::{
     commands::{
         BuildMigration, Check, Command, NewMigration, NewTest, Outcome, PinCleanup, PinError,
-        PinMigration,
+        PinMigration, PinVerify,
     },
     config::{Config, ConfigLoaderSaver},
     engine::{CommandSpec, EngineType, TargetConfig},
@@ -843,6 +843,107 @@ async fn test_pin_cleanup_finds_and_deletes_orphans() -> Result<(), Box<dyn std:
         files_after_cleanup.len(),
         "cleanup should delete 4 orphaned pinned files"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_pin_verify_passes_on_untampered_store() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    let migration_name = helper.create_migration("test-migration").await?;
+    helper.pin_migration(&migration_name).await?;
+
+    let config = helper.load_config().await?;
+    let outcome = PinVerify.execute(&config).await?;
+
+    let Outcome::PinVerify {
+        corrupted_count,
+        missing_root_count,
+    } = outcome
+    else {
+        panic!("Expected Outcome::PinVerify");
+    };
+
+    assert_eq!(corrupted_count, 0);
+    assert_eq!(missing_root_count, 0);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_pin_verify_detects_corrupted_file() -> Result<(), Box<dyn std::error::Error>> {
+    let helper =
+        MigrationTestHelper::new_from_local_folder("./static/tests/build_with_component").await?;
+
+    let migration_name = "20240907212659-initial";
+    helper.pin_migration(migration_name).await?;
+
+    // Tamper with a pinned blob directly on disk, the same way a stray edit
+    // to a file under pinned/ would: its path stays content-addressed by the
+    // *original* content's hash, so the path and the bytes at that path now
+    // disagree.
+    let original_component = helper
+        .fs
+        .read("/db/components/util/add_func.sql")
+        .await?
+        .to_bytes();
+    let hash = store::pinner::pin_contents(&helper.fs, None, &original_component).await?;
+    let pinned_path = format!("/db/pinned/{}", store::pinner::hash_to_path(&hash)?);
+    helper
+        .fs
+        .write(&pinned_path, "-- tampered contents".to_string())
+        .await?;
+
+    let config = helper.load_config().await?;
+    let outcome = PinVerify.execute(&config).await?;
+
+    let Outcome::PinVerify {
+        corrupted_count,
+        missing_root_count,
+    } = outcome
+    else {
+        panic!("Expected Outcome::PinVerify");
+    };
+
+    assert_eq!(corrupted_count, 1, "should detect the one tampered file");
+    assert_eq!(missing_root_count, 0);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_pin_verify_detects_missing_root() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    let migration_name = helper.create_migration("test-migration").await?;
+    helper.pin_migration(&migration_name).await?;
+
+    // Point the migration's lock.toml at a root hash that doesn't exist in
+    // the store, simulating a pinned file (or its whole subtree) having been
+    // deleted out from under a migration that still references it.
+    let lock_path = format!("/db/migrations/{}/lock.toml", migration_name);
+    helper
+        .fs
+        .write(
+            &lock_path,
+            "pin = \"00000000000000000000000000000000\"".to_string(),
+        )
+        .await?;
+
+    let config = helper.load_config().await?;
+    let outcome = PinVerify.execute(&config).await?;
+
+    let Outcome::PinVerify {
+        corrupted_count,
+        missing_root_count,
+    } = outcome
+    else {
+        panic!("Expected Outcome::PinVerify");
+    };
+
+    assert_eq!(corrupted_count, 0);
+    assert_eq!(missing_root_count, 1, "should detect the missing root hash");
 
     Ok(())
 }

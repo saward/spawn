@@ -6,7 +6,8 @@ use opendal::Operator;
 use serde::{Deserialize, Serialize};
 
 use std::fmt::Debug;
-use twox_hash::xxhash3_128;
+
+use crate::hash::content_hash;
 
 pub mod gc;
 pub mod latest;
@@ -52,8 +53,7 @@ pub async fn pin_contents(
     store_path: Option<&str>,
     contents: &[u8],
 ) -> Result<String> {
-    let hash = xxhash3_128::Hasher::oneshot(contents);
-    let hash = format!("{:032x}", hash);
+    let hash = content_hash(contents);
 
     if let Some(store_path) = store_path {
         let dir = format!("{}/{}", store_path, hash_to_path(&hash)?);
@@ -73,12 +73,75 @@ pub fn hash_to_path(hash: &str) -> Result<String> {
     Ok(format!("{}/{}", first_two, rest).to_string())
 }
 
+/// Recovers the hash encoded in a store path like `<store_path>/c6/b8e869fa...`
+/// — the inverse of `hash_to_path`. Returns `None` if the path doesn't have
+/// at least the two components `hash_to_path` produces.
+fn path_to_hash(path: &str) -> Option<String> {
+    let components: Vec<&str> = path.split('/').collect();
+    if components.len() < 2 {
+        return None;
+    }
+    let prefix_part = components[components.len() - 2];
+    let rest_part = components[components.len() - 1];
+    let hash = format!("{}{}", prefix_part, rest_part);
+    if hash.is_empty() {
+        None
+    } else {
+        Some(hash)
+    }
+}
+
+/// A file found while walking a content-addressed store. Its hash isn't
+/// stored alongside it — the store's own naming convention means the path
+/// *is* the hash (see `path_to_hash`), so keeping a separate field would
+/// just be a second copy of the same value that could drift from the path.
+pub(crate) struct StoreFile {
+    pub path: String,
+}
+
+impl StoreFile {
+    /// The hash encoded in this file's path — not a freshly computed content
+    /// hash. Compare against `content_hash(&contents)` to check the two
+    /// still agree.
+    pub fn hash(&self) -> String {
+        path_to_hash(&self.path)
+            .expect("list_store_files only yields paths with a valid hash suffix")
+    }
+}
+
+/// Recursively walks every file under `store_path`. Used by both pin
+/// verification (does the file's content still match its path-encoded
+/// hash?) and garbage collection (which hashes currently exist in the
+/// store?).
+pub(crate) async fn list_store_files(fs: &Operator, store_path: &str) -> Result<Vec<StoreFile>> {
+    let prefix = format!("{}/", store_path.trim_end_matches('/'));
+    let mut lister = fs
+        .lister_with(&prefix)
+        .recursive(true)
+        .await
+        .context("failed to list pinned folder")?;
+
+    let mut files = Vec::new();
+    while let Some(entry) = lister.try_next().await? {
+        if entry.path().ends_with('/') {
+            continue;
+        }
+        if path_to_hash(entry.path()).is_some() {
+            files.push(StoreFile {
+                path: entry.path().to_string(),
+            });
+        }
+    }
+
+    Ok(files)
+}
+
 /// Recomputes the content hash of `contents` and errors if it doesn't match
 /// `expected`. Pinned storage is content-addressed by construction, so a
 /// mismatch means the file at `path` was modified (or corrupted) on disk
 /// after it was pinned — trust the hash over whatever bytes are found there.
 pub(crate) fn verify_hash(contents: &[u8], expected: &str, path: &str) -> Result<()> {
-    let actual = format!("{:032x}", xxhash3_128::Hasher::oneshot(contents));
+    let actual = content_hash(contents);
     if actual != expected {
         return Err(anyhow::anyhow!(
             "pinned file '{}' does not match its expected hash '{}' (got '{}') — \
@@ -201,12 +264,9 @@ mod tests {
         let root_content = read_hash_file(&dest_op, store_loc, &root).await?;
 
         // Verify that the hash of the root content matches the snapshot hash
-        let content_hash = format!(
-            "{:032x}",
-            xxhash3_128::Hasher::oneshot(root_content.as_bytes())
-        );
+        let computed_hash = content_hash(root_content.as_bytes());
         assert_eq!(
-            root, content_hash,
+            root, computed_hash,
             "Snapshot hash should match content hash"
         );
 

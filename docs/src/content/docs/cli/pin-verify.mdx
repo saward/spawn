@@ -1,0 +1,72 @@
+---
+title: spawn pin verify
+description: Verify the integrity of the pinned store.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import { globalOptions, targetOption } from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn pin verify"
+  options={[...targetOption, ...globalOptions]}
+>
+
+## Overview
+
+The pinned store in `pinned/` is content-addressed: each file is stored at a path derived from a hash of its own contents, and each migration's `lock.toml` records the root hash of the tree it was pinned against. Both of these can, in principle, get out of sync with reality — a stray edit, a bad merge, or manual tampering with `pinned/` can leave a file's contents disagreeing with its path, or a migration pointing at a root hash that no longer exists.
+
+The `verify` command checks both invariants without modifying anything.
+
+## Behavior
+
+1. Walks every file in the `pinned/` directory and recomputes its content hash, comparing it against the hash encoded in its path
+2. Reads every migration's `lock.toml` and checks that its root hash has a corresponding file in `pinned/`
+
+## Examples
+
+### A healthy store
+
+```bash
+spawn pin verify
+```
+
+Output:
+
+```
+Checked 12 pinned file(s): all match their content hash.
+All migration lock files point to a root hash that exists in the store.
+```
+
+### A tampered file
+
+```bash
+spawn pin verify
+```
+
+Output:
+
+```
+Checked 12 pinned file(s): 1 corrupted.
+  pinned/7a/3f5e8b9c2d1a4e6f8b0c2d4e6f8a0b — expected hash '7a3f5e8b9c2d1a4e6f8b0c2d4e6f8a0b', got '93b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8'
+All migration lock files point to a root hash that exists in the store.
+```
+
+### A missing root
+
+```bash
+spawn pin verify
+```
+
+Output:
+
+```
+Checked 12 pinned file(s): all match their content hash.
+1 migration(s) point to a missing root hash:
+  20240907212659-initial — missing root hash '00000000000000000000000000000000'
+```
+
+## Exit status
+
+`spawn pin verify` exits with a non-zero status if any corrupted file or missing root hash is found, so it can be used as a CI check.
+
+</CLICommand>

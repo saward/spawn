@@ -5,6 +5,7 @@ pub mod check;
 pub mod init;
 pub mod migration;
 pub mod pin_cleanup;
+pub mod pin_verify;
 pub mod test;
 
 pub use check::Check;
@@ -14,6 +15,7 @@ pub use migration::{
     PinMigration,
 };
 pub use pin_cleanup::PinCleanup;
+pub use pin_verify::PinVerify;
 pub use test::{BuildTest, CompareTests, ExpectTest, NewTest, RunTest};
 
 /// Telemetry information for a command.
@@ -70,6 +72,12 @@ pub enum Outcome {
         referenced_count: usize,
         /// Whether this was a dry run.
         dry_run: bool,
+    },
+    PinVerify {
+        /// Number of pinned files whose contents no longer match their hash.
+        corrupted_count: usize,
+        /// Number of migrations whose lock.toml root hash is missing from the store.
+        missing_root_count: usize,
     },
     NewMigration(String),
     NewTest(String),
