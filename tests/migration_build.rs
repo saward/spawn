@@ -471,6 +471,43 @@ COMMIT;"#
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_build_with_pinned_fails_if_pinned_file_tampered_with(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper =
+        MigrationTestHelper::new_from_local_folder("./static/tests/build_with_component").await?;
+
+    let migration_name = "20240907212659-initial";
+    helper.pin_migration(migration_name).await?;
+
+    // Corrupt the pinned blob directly on disk (bypassing pin/build), the
+    // same way a stray edit to a file under pinned/ would. Its path is
+    // content-addressed by the *original* content's hash, so this simulates
+    // the path and the bytes at that path disagreeing.
+    let original_component = helper
+        .fs
+        .read("/db/components/util/add_func.sql")
+        .await?
+        .to_bytes();
+    let hash = store::pinner::pin_contents(&helper.fs, None, &original_component).await?;
+    let pinned_path = format!("/db/pinned/{}", store::pinner::hash_to_path(&hash)?);
+    helper
+        .fs
+        .write(&pinned_path, "-- tampered contents".to_string())
+        .await?;
+
+    let result = helper.build_migration(migration_name, true).await;
+    let err = result.expect_err("build with a tampered pinned file should fail");
+    let err_msg = format!("{:?}", err);
+    assert!(
+        err_msg.contains("does not match its expected hash"),
+        "expected a hash-mismatch error, got: {}",
+        err_msg
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_migration_build_with_variables() -> Result<(), Box<dyn std::error::Error>> {
     let helper =
         MigrationTestHelper::new_from_local_folder("./static/tests/build_with_variables").await?;

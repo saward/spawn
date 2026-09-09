@@ -73,14 +73,33 @@ pub fn hash_to_path(hash: &str) -> Result<String> {
     Ok(format!("{}/{}", first_two, rest).to_string())
 }
 
+/// Recomputes the content hash of `contents` and errors if it doesn't match
+/// `expected`. Pinned storage is content-addressed by construction, so a
+/// mismatch means the file at `path` was modified (or corrupted) on disk
+/// after it was pinned — trust the hash over whatever bytes are found there.
+pub(crate) fn verify_hash(contents: &[u8], expected: &str, path: &str) -> Result<()> {
+    let actual = format!("{:032x}", xxhash3_128::Hasher::oneshot(contents));
+    if actual != expected {
+        return Err(anyhow::anyhow!(
+            "pinned file '{}' does not match its expected hash '{}' (got '{}') — \
+             its contents appear to have been modified since it was pinned",
+            path,
+            expected,
+            actual
+        ));
+    }
+    Ok(())
+}
+
 /// Reads the file corresponding to the hash from the given base path.
 pub(crate) async fn read_hash_file(fs: &Operator, base_path: &str, hash: &str) -> Result<String> {
     let relative_path = hash_to_path(hash)?;
     let file_path = format!("{}/{}", base_path, relative_path);
 
     let get_result = fs.read(&file_path).await?;
-    let bytes = get_result.to_bytes();
-    let contents = String::from_utf8(bytes.to_vec())?;
+    let bytes = get_result.to_bytes().to_vec();
+    verify_hash(&bytes, hash, &file_path)?;
+    let contents = String::from_utf8(bytes)?;
 
     Ok(contents)
 }

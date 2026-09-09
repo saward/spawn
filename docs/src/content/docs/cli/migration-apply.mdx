@@ -51,7 +51,9 @@ Shows a list of pending migrations and prompts for confirmation before applying 
 
 ## Pin requirement
 
-By default, `apply` requires migrations to have a `lock.toml`. This ensures the exact same component versions are used every time. Use `--no-pin` to bypass this requirement and use current working tree components (not recommended for production).
+By default, `apply` requires migrations to have a `lock.toml`. This ensures the exact same component versions are used every time. Use `--no-pin` to bypass this requirement and use current working tree components — **not recommended**, and never for production applies.
+
+With `--no-pin`, the `pin_hash` recorded to the audit trail is computed by walking the current component tree in a pass separate from the actual template render. If a component file on disk changes between (or during) those two passes, the recorded `pin_hash` can end up not matching what was actually rendered and executed. Only a pinned migration guarantees the components used are exactly the ones snapshotted in `lock.toml`, immune to concurrent edits — always apply pinned migrations in any shared or production environment.
 
 ## Secrets
 
