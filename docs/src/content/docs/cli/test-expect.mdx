@@ -31,7 +31,7 @@ Use this command when test behavior changes intentionally and you want to update
 
 ## Secrets
 
-`test expect` runs the test for real, so it always reveals real `secret()` values — the saved `expected` file will contain real secret values if the test outputs them. See the [Secrets guide](/guides/secrets/) for how secrets are configured.
+`test expect` always masks `secret()` values so real secrets cannot be written into the saved `expected` file. See the [Secrets guide](/guides/secrets/#masking) for details.
 
 ## Example
 
