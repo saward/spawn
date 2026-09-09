@@ -34,6 +34,7 @@ This is just the tip of the iceberg. View [features](#features) below to see mor
   - [Data from JSON](#data-from-json)
   - [GitHub action](#github-action)
   - [Multiple database targets](#multiple-database-targets)
+  - [Managing secrets](#managing-secrets)
 - [Comparison](#comparison)
 - [Roadmap](#roadmap)
 - [Documentation](#documentation)
