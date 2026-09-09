@@ -825,6 +825,59 @@ Related docs:
 - [Database Connections](https://docs.spawn.dev/guides/manage-databases/)
 - [Configuration File (spawn.toml)](https://docs.spawn.dev/reference/config/)
 
+### Managing secrets
+
+If you want to include secrets in a migration, Spawn provides ways to include them that help to protect them from accidentally leaking in logs, or being committed to git history. Include a secret in your migration like this:
+
+```
+CREATE ROLE app_user WITH LOGIN PASSWORD {{ secret("application_password") }};
+```
+
+And update your `spawn.toml` to let Spawn know how to find the secret:
+
+```toml
+[secrets.application_password.default]
+source = "host_file"
+path = "/run/secrets/application-password"
+
+[secrets.application_password.environments.dev]
+source = "literal"
+value = "some-local-dev's-pass"
+insecure = true
+```
+
+The default password source will be used for all environments other than `dev`. For `dev` database targets, we have an override specified so that it will use a hard-coded literal.
+
+When you build the migration, the secret will be fetched by Spawn, but will be masked in the output:
+
+```bash
+% spawn migration build 20260909055412-secrets-example
+BEGIN;
+
+CREATE ROLE app_user WITH LOGIN PASSWORD '***MASKED:application_password***';
+
+COMMIT;
+```
+
+If you want to see the real password in the build output, use `--reveal-secrets`:
+
+```bash
+% spawn migration build 20260909055412-secrets-example --reveal-secrets
+BEGIN;
+
+CREATE ROLE app_user WITH LOGIN PASSWORD 'some-local-dev''s-pass';
+
+COMMIT;
+```
+
+When applying a migration, the secret will be used unmasked. Tests _always_ mask secrets.
+
+Related docs:
+
+- [Managing Secrets](https://docs.spawn.dev/guides/secrets/)
+- [Configuration File (Secrets)](https://docs.spawn.dev/reference/config/#secrets-1)
+- [Templating](https://docs.spawn.dev/reference/templating/#secret)
+
 ## Comparison
 
 | Feature              | **Spawn**                                                                            | **Sqitch**                                                                               | **Flyway**                                                                    | **dbmate**                                                     |
