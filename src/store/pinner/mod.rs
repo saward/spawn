@@ -123,7 +123,7 @@ pub(crate) async fn list_store_files(fs: &Operator, store_path: &str) -> Result<
 
     let mut files = Vec::new();
     while let Some(entry) = lister.try_next().await? {
-        if entry.path().ends_with('/') {
+        if entry.path().ends_with('/') || entry.name() == ".gitkeep" {
             continue;
         }
         if path_to_hash(entry.path()).is_some() {
