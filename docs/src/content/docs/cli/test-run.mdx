@@ -27,7 +27,7 @@ Runs the SQL for the test against the database, showing the output from that tes
 
 ## Secrets
 
-`test run` always reveals real `secret()` values, since it executes the rendered SQL against the database. See the [Secrets guide](/guides/secrets/) for how secrets are configured.
+`test run` always masks `secret()` values, even though it executes the rendered SQL against the database, so secrets cannot leak through test output. See the [Secrets guide](/guides/secrets/#masking) for details.
 
 ## Examples
 
