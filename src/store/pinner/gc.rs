@@ -3,12 +3,11 @@
 //! Finds and removes pinned files that are no longer referenced by any migration's lock.toml.
 
 use anyhow::{Context, Result};
-use futures::TryStreamExt;
 use opendal::Operator;
 use std::collections::HashSet;
 
 use crate::config::FolderPather;
-use crate::pinfile::LockData;
+use crate::pinfile;
 use crate::store::list_migration_fs_status;
 
 use super::{hash_to_path, read_hash_file, EntryKind, Tree};
@@ -72,14 +71,9 @@ async fn collect_referenced_hashes(
 
         // Load lock.toml
         let lock_path = pather.migration_lock_file_path(&name);
-        let contents = fs
-            .read(&lock_path)
+        let lock_data = pinfile::load_lock_file(fs, &lock_path)
             .await
-            .with_context(|| format!("failed to read lock file for migration {}", name))?
-            .to_bytes();
-        let contents = String::from_utf8(contents.to_vec())?;
-        let lock_data: LockData = toml::from_str(&contents)
-            .with_context(|| format!("failed to parse lock file for migration {}", name))?;
+            .with_context(|| format!("failed to load lock file for migration {}", name))?;
 
         // Walk tree and collect all hashes
         walk_tree_hashes(fs, &pather.pinned_folder(), &lock_data.pin, &mut referenced)
@@ -92,37 +86,11 @@ async fn collect_referenced_hashes(
 
 /// List all files in the pinned folder and return their hashes.
 async fn list_pinned_hashes(fs: &Operator, pinned_folder: &str) -> Result<HashSet<String>> {
-    let mut hashes = HashSet::new();
-
-    let prefix = format!("{}/", pinned_folder.trim_end_matches('/'));
-    let mut lister = fs
-        .lister_with(&prefix)
-        .recursive(true)
-        .await
-        .context("failed to list pinned folder")?;
-
-    while let Some(entry) = lister.try_next().await? {
-        // Skip directories
-        if entry.path().ends_with('/') {
-            continue;
-        }
-
-        // The path structure is: <pinned_folder>/<XX>/<rest_of_hash>
-        // We want to extract just the hash: XX + rest_of_hash
-        // Split by '/' and take the last two components
-        let path = entry.path();
-        let components: Vec<&str> = path.split('/').collect();
-        if components.len() >= 2 {
-            let prefix_part = components[components.len() - 2];
-            let rest_part = components[components.len() - 1];
-            let hash = format!("{}{}", prefix_part, rest_part);
-            if !hash.is_empty() {
-                hashes.insert(hash);
-            }
-        }
-    }
-
-    Ok(hashes)
+    Ok(super::list_store_files(fs, pinned_folder)
+        .await?
+        .into_iter()
+        .map(|file| file.hash())
+        .collect())
 }
 
 /// Run garbage collection on the pinned folder.

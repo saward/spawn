@@ -1,6 +1,7 @@
 use crate::config;
 use crate::engine::EngineType;
 use crate::escape::{EscapedIdentifier, EscapedLiteral};
+use crate::hash::content_hash;
 use crate::secrets::{SecretsRenderMode, SecretsRepository};
 use crate::store::pinner::latest::Latest;
 use crate::store::pinner::spawn::Spawn;
@@ -16,7 +17,6 @@ use uuid::Uuid;
 use anyhow::{Context, Result};
 use minijinja::context;
 use std::sync::Arc;
-use twox_hash::xxhash3_128;
 
 /// Maps an EngineType to the appropriate SQL dialect for formatting.
 ///
@@ -340,8 +340,7 @@ impl StreamingGeneration {
     /// checksum. As a side effect, this also means secret rotation never
     /// changes a migration's recorded checksum.
     pub fn raw_checksum(&self) -> String {
-        let hash = xxhash3_128::Hasher::oneshot(self.template_contents.as_bytes());
-        format!("{:032x}", hash)
+        content_hash(self.template_contents.as_bytes())
     }
 
     /// The pin actually used to build this render's component store — see
@@ -950,10 +949,7 @@ mod tests {
         let source = r#"SELECT {{ secret("application_password") }};"#;
         let gen = streaming_generation(source, literal_secret_repo("hunter2"));
 
-        let expected = format!(
-            "{:032x}",
-            twox_hash::xxhash3_128::Hasher::oneshot(source.as_bytes())
-        );
+        let expected = content_hash(source.as_bytes());
         assert_eq!(gen.raw_checksum(), expected);
     }
 

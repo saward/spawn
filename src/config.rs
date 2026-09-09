@@ -255,11 +255,7 @@ impl Config {
     }
 
     pub async fn load_lock_file(&self, lock_file_path: &str) -> Result<LockData> {
-        let contents = self.operator().read(lock_file_path).await?.to_bytes();
-        let contents = String::from_utf8(contents.to_vec())?;
-        let lock_data: LockData = toml::from_str(&contents)?;
-
-        Ok(lock_data)
+        crate::pinfile::load_lock_file(self.operator(), lock_file_path).await
     }
 
     /// Load variables from a file path.

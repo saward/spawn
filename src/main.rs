@@ -102,6 +102,15 @@ async fn async_main(cli: Cli) -> Result<()> {
         Outcome::PinCleanup { .. } => {
             // Output is handled by the command itself
         }
+        Outcome::PinVerify {
+            corrupted_count,
+            missing_root_count,
+        } => {
+            // Output is handled by the command itself
+            if corrupted_count > 0 || missing_root_count > 0 {
+                std::process::exit(1);
+            }
+        }
         Outcome::Success => {}
         Outcome::Unimplemented => {
             println!("Unimplemented command.");
