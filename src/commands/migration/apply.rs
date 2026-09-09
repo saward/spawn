@@ -16,7 +16,12 @@ use anyhow::{anyhow, Result};
 /// residual risk this doesn't close.
 fn redact_secrets(err: anyhow::Error, secrets: &SecretsRepository) -> anyhow::Error {
     let mut text = format!("{:?}", err);
-    for value in secrets.resolved_values() {
+    // Longest first: if a shorter secret is a substring of a longer one,
+    // redacting the shorter one first would consume part of the longer one
+    // and leave the rest of it exposed.
+    let mut values = secrets.resolved_values();
+    values.sort_by_key(|b| std::cmp::Reverse(b.len()));
+    for value in values {
         if value.is_empty() {
             continue;
         }
@@ -131,7 +136,8 @@ impl Command for ApplyMigration {
                             ));
                         }
                         Err(MigrationError::Database(e)) => {
-                            let err = e.context(format!("Failed applying migration {}", &migration));
+                            let err =
+                                e.context(format!("Failed applying migration {}", &migration));
                             return Err(redact_secrets(err, &secrets));
                         }
                         Err(MigrationError::AdvisoryLock(e)) => {
@@ -200,5 +206,55 @@ mod tests {
         let full_text = format!("{:?}", redacted);
         assert!(!full_text.contains("hunter2"));
         assert!(full_text.contains("***REDACTED***"));
+    }
+
+    #[tokio::test]
+    async fn redact_secrets_fully_redacts_a_secret_that_contains_another_as_a_substring() {
+        // This test will only fail some of the time if the sort order is ever
+        // changed to be random, but that's better than nothing.
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            "short".to_string(),
+            SecretDefinition {
+                default: SecretSource::Literal {
+                    value: "hunter2".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        definitions.insert(
+            "long".to_string(),
+            SecretDefinition {
+                default: SecretSource::Literal {
+                    value: "hunter2suffix".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let secrets = SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Revealed,
+            op,
+        );
+        secrets.resolve("short").await.unwrap();
+        secrets.resolve("long").await.unwrap();
+
+        let simulated_psql_error = anyhow!(
+            "psql exited with code 1: ERROR: duplicate key value\nDETAIL: Key (password)=(hunter2suffix) already exists."
+        );
+
+        let redacted = redact_secrets(simulated_psql_error, &secrets);
+
+        // Regardless of which order resolved_values() happens to hand back
+        // the two secrets, the longer one must be redacted whole — not just
+        // the "hunter2" prefix it shares with the shorter secret.
+        let full_text = format!("{:?}", redacted);
+        assert!(!full_text.contains("hunter2"), "got: {}", full_text);
+        assert!(!full_text.contains("suffix"), "got: {}", full_text);
+        assert!(full_text.contains("***REDACTED***"), "got: {}", full_text);
     }
 }
