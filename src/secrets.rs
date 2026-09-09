@@ -97,10 +97,10 @@ impl SecretDefinition {
 /// even though they mask the result. It's decided once per render, not per
 /// secret: Spawn renders a whole template in a single streaming pass to a
 /// single destination, so there's no case where part of one render should be
-/// masked and another part not. Commands that execute the rendered SQL for
-/// real (`migration apply`, `test run`) always reveal; commands that only
-/// display it for inspection (`migration build`, `test build`) mask by
-/// default.
+    /// masked and another part not. Migration applies reveal secrets because
+    /// they execute the rendered SQL for real. Build commands mask by default,
+    /// while `test run`/`compare`/`expect` always mask secrets to prevent them
+    /// from being printed or persisted in expected output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SecretsRenderMode {
     Masked,
