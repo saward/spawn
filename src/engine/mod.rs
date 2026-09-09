@@ -286,7 +286,10 @@ pub(crate) async fn run_capture_stdout(command: &[String]) -> Result<String> {
 
     if !output.status.success() {
         let exit_code = output.status.code().unwrap_or(-1);
-        if std::env::var("SPAWN_DEBUG_COMMAND_STDERR").is_ok() {
+        if matches!(
+            std::env::var("SPAWN_DEBUG_COMMAND_STDERR").as_deref(),
+            Ok("1")
+        ) {
             return Err(anyhow!(
                 "command failed (exit {}): {}",
                 exit_code,
