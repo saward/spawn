@@ -18,7 +18,7 @@ impl Command for NewTest {
         println!("creating test with name {}", &self.name);
         let tester = Tester::new(config, &self.name);
 
-        let test_template: Option<String> = match &config.test_template {
+        let test_template: Option<String> = match &config.template_test {
             Some(t) => {
                 let path = config.pather().any_path(t);
                 let content = config

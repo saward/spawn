@@ -105,8 +105,8 @@ impl MigrationTestHelper {
             spawn_folder: "/db".to_string(),
             target: Some("postgres_psql".to_string()),
             environment: Some("dev".to_string()),
-            up_template: None,
-            test_template: None,
+            template_up: None,
+            template_test: None,
             targets: Some(targets),
             secrets: None,
             project_id: None,
@@ -277,14 +277,14 @@ async fn test_create_migration() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// Run a create migration test using a custom up_template:
+// Run a create migration test using a custom template_up:
 #[tokio::test]
 async fn test_create_migration_with_custom_template() -> Result<(), Box<dyn std::error::Error>> {
     const CUSTOM_TEMPLATE_CONTENT: &str = "-- custom migration template\nBEGIN;\n\nCOMMIT;\n";
 
     let mem_op = Operator::new(Memory::default())?;
     let mut config_loader = MigrationTestHelper::default_config_loadersaver();
-    config_loader.up_template = Some("templates/custom.sql".to_string());
+    config_loader.template_up = Some("templates/custom.sql".to_string());
     let helper = MigrationTestHelper::new_from_operator_with_config(mem_op, config_loader).await?;
 
     let cfg = helper.load_config().await?;
@@ -331,14 +331,14 @@ async fn test_create_test() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// Run a create test test using a custom test_template:
+// Run a create test test using a custom template_test:
 #[tokio::test]
 async fn test_create_test_with_custom_template() -> Result<(), Box<dyn std::error::Error>> {
     const CUSTOM_TEMPLATE_CONTENT: &str = "-- custom test template\nSELECT 2;\n";
 
     let mem_op = Operator::new(Memory::default())?;
     let mut config_loader = MigrationTestHelper::default_config_loadersaver();
-    config_loader.test_template = Some("templates/custom.sql".to_string());
+    config_loader.template_test = Some("templates/custom.sql".to_string());
     let helper = MigrationTestHelper::new_from_operator_with_config(mem_op, config_loader).await?;
 
     let cfg = helper.load_config().await?;
@@ -987,8 +987,8 @@ async fn test_migration_build_with_secrets() -> Result<(), Box<dyn std::error::E
         spawn_folder: "/db".to_string(),
         target: Some("postgres_psql".to_string()),
         environment: Some("dev".to_string()),
-        up_template: None,
-        test_template: None,
+        template_up: None,
+        template_test: None,
         targets: Some(targets),
         secrets: Some(secrets),
         project_id: None,

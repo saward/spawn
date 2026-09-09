@@ -26,10 +26,10 @@ pub struct ConfigLoaderSaver {
     pub secrets: Option<HashMap<String, SecretDefinition>>,
     /// Allows you to override the default template for test new with a
     /// custom one.
-    pub test_template: Option<String>,
+    pub template_test: Option<String>,
     /// Allows you to override the default template for migration new with a
     /// custom one.
-    pub up_template: Option<String>,
+    pub template_up: Option<String>,
     /// Set to false to disable telemetry
     #[serde(default = "default_telemetry", skip_serializing_if = "Option::is_none")]
     pub telemetry: Option<bool>,
@@ -49,8 +49,8 @@ impl ConfigLoaderSaver {
             target: self.target,
             targets: self.targets.unwrap_or_default(),
             secrets: self.secrets.unwrap_or_default(),
-            test_template: self.test_template,
-            up_template: self.up_template,
+            template_test: self.template_test,
+            template_up: self.template_up,
             telemetry: self.telemetry.unwrap_or(true),
             base_fs,
             spawn_fs,
@@ -195,10 +195,10 @@ pub struct Config {
     pub secrets: HashMap<String, SecretDefinition>,
     /// Allows you to override the default template for test new with a
     /// custom one.
-    pub test_template: Option<String>,
+    pub template_test: Option<String>,
     /// Allows you to override the default template for migration new with a
     /// custom one.
-    pub up_template: Option<String>,
+    pub template_up: Option<String>,
     /// Whether telemetry is enabled in config
     pub telemetry: bool,
 
