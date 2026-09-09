@@ -226,7 +226,8 @@ async fn verify_lock_roots(fs: &Operator, pather: &FolderPather) -> Result<Vec<M
             pather.pinned_folder(),
             super::hash_to_path(&lock_data.pin)?
         );
-        if !fs.exists(&root_path).await? {
+        let root_is_file = fs.exists(&root_path).await? && fs.stat(&root_path).await?.is_file();
+        if !root_is_file {
             missing.push(MissingRoot {
                 migration: name,
                 hash: lock_data.pin,
