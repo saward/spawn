@@ -64,12 +64,13 @@ Metadata about the current render. Currently exposes:
 - `builtin.engine` — the target engine (e.g. `"postgres-psql"`).
 
 ```sql
-INSERT INTO _spawn.migration_notes (migration, note)
-VALUES ({{ builtin.script_name }}, 'backfilled by hand, see runbook');
+UPDATE users
+SET plan = 'pro', plan_notes = 'granted via ' || {{ builtin.script_name }}
+WHERE email = 'vip@example.com';
 
-{% if builtin.script_type == "test" %}
--- Skip this in tests; it's only meaningful against a real target
-CALL notify_external_system();
+{% if builtin.script_type != "test" %}
+-- Only notify the real billing system outside of tests
+CALL notify_billing_system();
 {% endif %}
 ```
 
