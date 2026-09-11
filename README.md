@@ -1,26 +1,10 @@
 # Spawn
 
-## Database Migrations, Testing, and Reproducibility
-
-[![License](https://img.shields.io/badge/license-AGPL-blue.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-spawn.dev-green)](https://docs.spawn.dev)
-
-Spawn lets you maintain functions, views, triggers, and other database logic as normal editable source files, while compiling immutable historical migrations from them. It was built to support developers who like to lean heavily on the database, but find existing tooling lacking in support for doing so.
-
-Other tools require you to copy your view/function/etc into a new migration when updating it, and then edit the copy. This results in hard-to-read pull requests. Spawn lets you keep your snippets in components that you can edit in place, making changes easy to read and review, while keeping reproducibility of old migrations over time via pinning.
-
-This is just the tip of the iceberg. View [features](#features) below to see more of what Spawn enables.
-
-**Spawn in action:** create a component, wire it into a migration, build the SQL, pin it, and apply it.
-
-<img src="docs/src/assets/spawn_in_action.png" width="700" alt="Terminal session showing spawn migration new, a colourised SQL build, spawn migration pin, and spawn migration apply, with the migration status table going from Pending to Applied">
-
-**Powerful tests:** loop over a JSON fixture, reuse a macro to seed each row, and run it against a fresh, ephemeral database. Use the result as your test's expected output.
-
-<img src="docs/src/assets/powerful_tests.png" width="700" alt="SQL test file that creates a fresh ephemeral database, loops over a JSON fixture of customers, and calls a reusable create_customer macro to seed each one">
+<img src="docs/src/assets/powerful_tests_cropped.png" width="700" alt="SQL test file that creates a fresh ephemeral database, loops over a JSON fixture of customers, and calls a reusable create_customer macro to seed each one">
 
 ## Table of Contents
 
+- [Introduction](#introduction)
 - [Installing](#installing)
 - [Quick Start](#quick-start)
 - [Features](#features)
@@ -41,6 +25,27 @@ This is just the tip of the iceberg. View [features](#features) below to see mor
 - [Telemetry](#telemetry)
 - [Contributing](#contributing)
 - [LLM Disclaimer](#llm-disclaimer)
+
+## Introduction
+
+Database Migrations, Testing, and Reproducibility
+
+[![License](https://img.shields.io/badge/license-AGPL-blue.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-spawn.dev-green)](https://docs.spawn.dev)
+
+Spawn lets you maintain functions, views, triggers, and other database logic as normal editable source files, while compiling immutable historical migrations from them. It was built to support developers who like to lean heavily on the database, but find existing tooling lacking in support for doing so.
+
+Other tools require you to copy your view/function/etc into a new migration when updating it, and then edit the copy. This results in hard-to-read pull requests. Spawn lets you keep your snippets in components that you can edit in place, making changes easy to read and review, while keeping reproducibility of old migrations over time via pinning.
+
+This is just the tip of the iceberg. View [features](#features) below to see more of what Spawn enables.
+
+**Spawn in action:** create a component, wire it into a migration, build the SQL, pin it, and apply it.
+
+<img src="docs/src/assets/spawn_in_action.png" width="700" alt="Terminal session showing spawn migration new, a colourised SQL build, spawn migration pin, and spawn migration apply, with the migration status table going from Pending to Applied">
+
+**Powerful tests:** loop over a JSON fixture, reuse a macro to seed each row, and run it against a fresh, ephemeral database. Use the result as your test's expected output.
+
+<img src="docs/src/assets/powerful_tests_cropped.png" width="700" alt="SQL test file that creates a fresh ephemeral database, loops over a JSON fixture of customers, and calls a reusable create_customer macro to seed each one">
 
 ## Installing
 
