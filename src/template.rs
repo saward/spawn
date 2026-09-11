@@ -16,7 +16,43 @@ use uuid::Uuid;
 
 use anyhow::{Context, Result};
 use minijinja::context;
+use serde::Serialize;
 use std::sync::Arc;
+
+/// Whether a template is being rendered as part of a migration or a test.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScriptType {
+    Migration,
+    Test,
+}
+
+/// Values describing the current render, exposed to templates as globals
+/// under the `builtin` namespace (e.g. `{{ builtin.script_name }}`).
+#[derive(Debug, Clone, Serialize)]
+pub struct BuiltinContext {
+    /// Name of the migration or test being rendered (e.g. as passed to
+    /// `Migrator::new`/`Tester::new`), not the object-store file path.
+    pub script_name: String,
+    /// Whether this render is a migration or a test.
+    pub script_type: ScriptType,
+    /// The target engine (e.g. `postgres-psql`).
+    pub engine: EngineType,
+}
+
+impl BuiltinContext {
+    pub fn new(
+        script_name: impl Into<String>,
+        script_type: ScriptType,
+        engine: EngineType,
+    ) -> Self {
+        BuiltinContext {
+            script_name: script_name.into(),
+            script_type,
+            engine,
+        }
+    }
+}
 
 /// Maps an EngineType to the appropriate SQL dialect for formatting.
 ///
@@ -37,8 +73,11 @@ pub fn template_env(
     store: Store,
     engine: &EngineType,
     secrets: Arc<SecretsRepository>,
+    builtin: BuiltinContext,
 ) -> Result<Environment<'static>> {
     let mut env = Environment::new();
+
+    env.add_global("builtin", Value::from_serialize(&builtin));
 
     let store = Arc::new(store);
 
@@ -317,6 +356,12 @@ pub struct Generation {
 pub struct StreamingGeneration {
     store: Store,
     template_contents: String,
+    /// Name of the migration or test being rendered, exposed to templates
+    /// as `builtin.script_name` (see `BuiltinContext`).
+    script_name: String,
+    /// Whether this render is a migration or a test, exposed to templates
+    /// as `builtin.script_type`.
+    script_type: ScriptType,
     environment: String,
     variables: Variables,
     engine: EngineType,
@@ -353,7 +398,12 @@ impl StreamingGeneration {
     /// Render the template to the provided writer.
     /// This creates the minijinja environment and renders in one step.
     pub fn render_to_writer<W: std::io::Write + ?Sized>(self, writer: &mut W) -> Result<()> {
-        let mut env = template_env(self.store, &self.engine, self.secrets)?;
+        let builtin = BuiltinContext::new(
+            self.script_name.clone(),
+            self.script_type,
+            self.engine.clone(),
+        );
+        let mut env = template_env(self.store, &self.engine, self.secrets, builtin)?;
         env.add_template("migration.sql", &self.template_contents)?;
         let tmpl = env.get_template("migration.sql")?;
         tmpl.render_to_write(
@@ -384,7 +434,9 @@ impl StreamingGeneration {
 pub async fn generate_streaming(
     cfg: &config::Config,
     lock_file: Option<String>,
-    name: &str,
+    script_name: &str,
+    script_type: ScriptType,
+    path: &str,
     variables: Option<Variables>,
     secrets_mode: SecretsRenderMode,
 ) -> Result<StreamingGeneration> {
@@ -421,7 +473,9 @@ pub async fn generate_streaming(
     );
 
     generate_streaming_with_store(
-        name,
+        script_name,
+        script_type,
+        path,
         variables,
         &target_config.environment,
         &target_config.engine,
@@ -434,7 +488,9 @@ pub async fn generate_streaming(
 
 /// Generate a streaming migration with an existing store.
 pub async fn generate_streaming_with_store(
-    name: &str,
+    script_name: &str,
+    script_type: ScriptType,
+    path: &str,
     variables: Option<Variables>,
     environment: &str,
     engine: &EngineType,
@@ -444,13 +500,15 @@ pub async fn generate_streaming_with_store(
 ) -> Result<StreamingGeneration> {
     // Read contents from our object store first:
     let contents = store
-        .load_migration(name)
+        .load_migration(path)
         .await
         .context("generate_streaming_with_store could not read migration")?;
 
     Ok(StreamingGeneration {
         store,
         template_contents: contents,
+        script_name: script_name.to_string(),
+        script_type,
         environment: environment.to_string(),
         variables: variables.unwrap_or_default(),
         engine: engine.clone(),
@@ -649,7 +707,7 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", ScriptType::Migration, EngineType::PostgresPSQL)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
@@ -680,7 +738,7 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", ScriptType::Migration, EngineType::PostgresPSQL)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "binary.dat"|read_file|base64_encode|safe }}"#,
@@ -708,7 +766,7 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", ScriptType::Migration, EngineType::PostgresPSQL)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "nonexistent.txt"|read_file|to_string_lossy }}"#,
@@ -755,7 +813,7 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", ScriptType::Migration, EngineType::PostgresPSQL)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
@@ -777,7 +835,7 @@ mod tests {
             spawn_folder: "".to_string(),
         };
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
-        template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets)).unwrap()
+        template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", ScriptType::Migration, EngineType::PostgresPSQL)).unwrap()
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -906,6 +964,8 @@ mod tests {
         StreamingGeneration {
             store,
             template_contents: template_contents.to_string(),
+            script_name: "test".to_string(),
+            script_type: ScriptType::Migration,
             environment: "prod".to_string(),
             variables: crate::variables::Variables::default(),
             engine: EngineType::PostgresPSQL,
@@ -935,6 +995,22 @@ mod tests {
             SecretsRenderMode::Revealed,
             op,
         )
+    }
+
+    #[test]
+    fn builtin_context_is_available_in_templates() {
+        let gen = streaming_generation(
+            "{{ builtin.script_name }} {{ builtin.script_type }} {{ builtin.engine }}",
+            literal_secret_repo("hunter2"),
+        );
+
+        let mut buffer = Vec::new();
+        gen.render_to_writer(&mut buffer).unwrap();
+        // SQL auto-escaping wraps string output in literal quotes.
+        assert_eq!(
+            String::from_utf8(buffer).unwrap(),
+            "'test' 'migration' 'postgres-psql'"
+        );
     }
 
     // Regression coverage for the checksum's security-critical properties

@@ -62,6 +62,8 @@ impl Tester {
         let gen = template::generate_streaming(
             &self.config,
             lock_file,
+            &self.script_path,
+            template::ScriptType::Test,
             &self.test_file_path(),
             variables,
             secrets_mode,

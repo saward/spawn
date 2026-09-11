@@ -59,8 +59,16 @@ impl Migrator {
             None
         };
         let script_path = &self.config.pather().migration_script_file_path(&self.name);
-        template::generate_streaming(&self.config, lock_file, script_path, variables, secrets_mode)
-            .await
+        template::generate_streaming(
+            &self.config,
+            lock_file,
+            &self.name,
+            template::ScriptType::Migration,
+            script_path,
+            variables,
+            secrets_mode,
+        )
+        .await
     }
 
     /// The pin hash `--no-pin` should record: freshly recomputed from the
