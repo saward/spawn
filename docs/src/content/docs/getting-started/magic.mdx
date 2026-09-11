@@ -133,7 +133,7 @@ ectory (os error 2)
     2: No such file or directory (os error 2)
 ```
 
-The error tells us that we need to either pin the pingration, or use `--no-pin`. Run like so:
+The error tells us that we need to either pin the migration, or use `--no-pin`. Run like so:
 
 ```bash
 spawn migration pin 20260131075608-add_fee
@@ -582,7 +582,7 @@ $$ LANGUAGE plpgsql;
 COMMIT;
 ```
 
-But if we edit the target in `spawn.toml` to specify that it is a dev environment, like so:
+But if we edit the target in `spawn.toml` to specify that it is a prod environment, like so:
 
 ```toml {6}
 ...

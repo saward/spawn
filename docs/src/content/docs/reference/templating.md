@@ -55,6 +55,24 @@ INSERT INTO {{ variables.table_name | escape_identifier }} (email)
 VALUES ({{ variables.admin_email }});
 ```
 
+### `builtin`
+
+Metadata about the current render. Currently exposes:
+
+- `builtin.script_name` — the name of the migration or test being rendered (e.g. `20260101120000-add-users-table`, or the test's directory name).
+- `builtin.script_type` — `"migration"` or `"test"`, depending on whether this render is a `spawn migration` command or a `spawn test` command.
+- `builtin.engine` — the target engine (e.g. `"postgres-psql"`).
+
+```sql
+INSERT INTO _spawn.migration_notes (migration, note)
+VALUES ({{ builtin.script_name }}, 'backfilled by hand, see runbook');
+
+{% if builtin.script_type == "test" %}
+-- Skip this in tests; it's only meaningful against a real target
+CALL notify_external_system();
+{% endif %}
+```
+
 ## Including components
 
 Use `{% include %}` to insert reusable SQL from the `components/` directory:
