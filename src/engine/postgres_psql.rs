@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::Write;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::io::AsyncReadExt;
@@ -36,6 +37,8 @@ pub fn migration_lock_key() -> i64 {
 pub struct PSQL {
     psql_command: Vec<String>,
     target_config: TargetConfig,
+    // Set once update_schema confirms the tracking tables exist.
+    schema_ready: AtomicBool,
 }
 
 static PROJECT_DIR: Dir<'_> = include_dir!("./static/engine-migrations/postgres-psql");
@@ -53,6 +56,7 @@ impl PSQL {
         let eng = Box::new(Self {
             psql_command,
             target_config: config.clone(),
+            schema_ready: AtomicBool::new(false),
         });
 
         // Ensure we have latest schema:
@@ -597,6 +601,8 @@ impl PSQL {
             }
         }
 
+        self.schema_ready.store(true, Ordering::Relaxed);
+
         Ok(())
     }
 
@@ -822,12 +828,15 @@ impl PSQL {
         namespace: EscapedLiteral,
         retry: bool,
     ) -> MigrationResult<String> {
-        // Check if migration already exists in history (skip if table doesn't exist yet)
-        let existing_status = if self
-            .migration_history_table_exists()
-            .await
-            .map_err(MigrationError::Database)?
-        {
+        // If schema is ready, then history table must exist.
+        let history_table_exists = if self.schema_ready.load(Ordering::Relaxed) {
+            true
+        } else {
+            self.migration_history_table_exists()
+                .await
+                .map_err(MigrationError::Database)?
+        };
+        let existing_status = if history_table_exists {
             self.get_migration_status(migration_name, &namespace)
                 .await
                 .map_err(MigrationError::Database)?
