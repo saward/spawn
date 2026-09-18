@@ -22,6 +22,10 @@ Displays a table showing the status of all migrations from both the filesystem a
 - **Migration** — Migration directory name
 - **Filesystem** — ✓ if `up.sql` exists, ✗ otherwise
 - **Pinned** — ✓ if `lock.toml` exists, ✗ otherwise
+- **Pin Match** — ✓ if the current `lock.toml` pin matches the pin recorded
+  at the last apply, ✗ if they differ, `?` if a pin was recorded but the
+  current `lock.toml` is missing or unreadable, `-` if there isn't enough
+  information to compare (see [Pin Match](#pin-match) below)
 - **Database** — ✓ if recorded in `_spawn.migration_history`, ✗ otherwise
 - **Status** — Current state:
   - ✓ Applied — Successfully applied
@@ -29,6 +33,41 @@ Displays a table showing the status of all migrations from both the filesystem a
   - ⚠ Attempted — Previous attempt failed
   - ✗ Failed — Last execution failed
   - ○ Pending — Not yet applied
+- **Checksum Match** — ✓ if the current `up.sql` content matches the
+  checksum recorded at the last apply, ✗ if they differ, `-` if there isn't
+  enough information to compare (see [Checksum Match](#checksum-match)
+  below)
+
+## Pin Match
+
+Compares the `pin` value in the migration's current `lock.toml` against the
+pin hash that was actually recorded in `_spawn.migration_history` when the
+migration was last applied. A mismatch means the migration was re-pinned
+(e.g. a component it includes changed and `spawn migration pin` was re-run)
+*after* it was applied, so the pinned components on disk no longer reflect
+what's actually running in the database.
+
+This does not re-hash the live `components/` folder against the lock file —
+it only compares the current lock against what was recorded at apply time.
+
+- `?` means a pin *was* recorded at apply time, but the current `lock.toml`
+  is missing or fails to parse — the migration was pinned when applied, and
+  that pin information has since disappeared from disk.
+- `-` means there isn't enough information to compare at all: the migration
+  isn't pinned, or it has never been applied while pinned.
+
+## Checksum Match
+
+Compares a fresh content hash of the migration's current `up.sql` against
+the checksum recorded in `_spawn.migration_history` at the last apply. This
+checksum covers only the raw, unrendered `up.sql` template source — not
+included components, template variables, or secrets — so a mismatch
+specifically means the migration script itself was edited after being
+applied.
+
+The column shows `-` when there isn't enough information to compare: the
+migration's `up.sql` no longer exists on the filesystem, or it has never
+been applied.
 
 ## Example output
 
@@ -39,6 +78,24 @@ Displays a table showing the status of all migrations from both the filesystem a
 │ 20260131120000-add-users-table  │ ✓          │ ✓      │ ✓        │ ✓ Applied │
 │ 20260131130000-add-posts-table  │ ✓          │ ✗      │ ✗        │ ○ Pending │
 └─────────────────────────────────┴────────────┴────────┴──────────┴───────────┘
+```
+
+## Example output with pin and checksum drift
+
+Here, `add-users-table` was applied, then its `up.sql` was edited afterward
+(checksum mismatch); `add-posts-table` was applied, then re-pinned after a
+component it includes changed, without being re-applied (pin mismatch); and
+`add-comments-table` was applied while pinned, but its `lock.toml` has since
+been deleted (pin missing):
+
+```
+┌───────────────────────────────────┬────────────┬────────┬───────────┬──────────┬───────────┬────────────────┐
+│ Migration                         │ Filesystem │ Pinned │ Pin Match │ Database │ Status    │ Checksum Match │
+├───────────────────────────────────┼────────────┼────────┼───────────┼──────────┼───────────┼────────────────┤
+│ 20260131120000-add-users-table    │ ✓          │ ✓      │ ✓         │ ✓        │ ✓ Applied │ ✗              │
+│ 20260131130000-add-posts-table    │ ✓          │ ✓      │ ✗         │ ✓        │ ✓ Applied │ ✓              │
+│ 20260131140000-add-comments-table │ ✓          │ ✗      │ ?         │ ✓        │ ✓ Applied │ ✓              │
+└───────────────────────────────────┴────────────┴────────┴───────────┴──────────┴───────────┴────────────────┘
 ```
 
 ## Example

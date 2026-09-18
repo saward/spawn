@@ -16,10 +16,28 @@ pub const DEFAULT_NAMESPACE: &str = "default";
 
 use crate::config::Config;
 use crate::engine::{MigrationDbInfo, MigrationHistoryStatus};
+use crate::hash::content_hash;
+use crate::pinfile::load_lock_file;
 use crate::store::list_migration_fs_status;
 use anyhow::Result;
 use dialoguer::Confirm;
 use std::collections::{HashMap, HashSet};
+
+/// Result of comparing the current lock.toml pin against the pin_hash
+/// recorded in `_spawn.migration_history` at the last apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinMatchStatus {
+    /// The current lock.toml pin matches what was recorded at apply time.
+    Matches,
+    /// The current lock.toml pin differs from what was recorded at apply time.
+    Differs,
+    /// A pin was recorded at apply time, but the current lock.toml is
+    /// missing or unreadable, so there's nothing left to compare it to.
+    Missing,
+    /// Not enough information exists to compare: the migration isn't
+    /// pinned, or it has never been applied while pinned.
+    NotApplicable,
+}
 
 /// Combined status of a migration from both filesystem and database
 #[derive(Debug, Clone)]
@@ -31,6 +49,12 @@ pub struct MigrationStatusRow {
     pub last_status: Option<MigrationHistoryStatus>,
     pub last_activity: Option<String>,
     pub checksum: Option<String>,
+    pub pin_hash: Option<String>,
+    pub pin_matches: PinMatchStatus,
+    /// Whether the current up.sql's content hash matches the checksum
+    /// recorded at the last apply. `None` when there isn't enough data to
+    /// compare (e.g. the file is missing, or never applied).
+    pub checksum_matches: Option<bool>,
 }
 
 /// Get the combined status of all migrations from both filesystem and database.
@@ -61,23 +85,53 @@ pub async fn get_combined_migration_status(
         .cloned()
         .collect();
 
-    let mut results: Vec<MigrationStatusRow> = all_migration_names
-        .into_iter()
-        .map(|name| {
-            let fs = fs_status.get(&name);
-            let db_info = db_migrations.get(&name);
+    let mut results: Vec<MigrationStatusRow> = Vec::with_capacity(all_migration_names.len());
+    for name in all_migration_names {
+        let fs = fs_status.get(&name);
+        let db_info = db_migrations.get(&name);
 
-            MigrationStatusRow {
-                migration_name: name.clone(),
-                exists_in_filesystem: fs.map_or(false, |s| s.has_up_sql),
-                is_pinned: fs.map_or(false, |s| s.has_lock_toml),
-                exists_in_db: db_info.is_some(),
-                last_status: db_info.and_then(|info| info.last_status),
-                last_activity: db_info.and_then(|info| info.last_activity.clone()),
-                checksum: db_info.and_then(|info| info.checksum.clone()),
+        let has_up_sql = fs.map_or(false, |s| s.has_up_sql);
+        let has_lock_toml = fs.map_or(false, |s| s.has_lock_toml);
+        let checksum = db_info.and_then(|info| info.checksum.clone());
+        let pin_hash = db_info.and_then(|info| info.pin_hash.clone());
+
+        let pin_matches = match &pin_hash {
+            Some(applied_pin) if has_lock_toml => {
+                let lock_path = config.pather().migration_lock_file_path(&name);
+                match load_lock_file(config.operator(), &lock_path).await {
+                    Ok(lock_data) if &lock_data.pin == applied_pin => PinMatchStatus::Matches,
+                    Ok(_) => PinMatchStatus::Differs,
+                    Err(_) => PinMatchStatus::Missing,
+                }
             }
-        })
-        .collect();
+            Some(_) => PinMatchStatus::Missing,
+            None => PinMatchStatus::NotApplicable,
+        };
+
+        let checksum_matches = match (&checksum, has_up_sql) {
+            (Some(recorded_checksum), true) => {
+                let script_path = config.pather().migration_script_file_path(&name);
+                match config.operator().read(&script_path).await {
+                    Ok(buf) => Some(&content_hash(&buf.to_bytes()) == recorded_checksum),
+                    Err(_) => None,
+                }
+            }
+            _ => None,
+        };
+
+        results.push(MigrationStatusRow {
+            migration_name: name.clone(),
+            exists_in_filesystem: has_up_sql,
+            is_pinned: has_lock_toml,
+            exists_in_db: db_info.is_some(),
+            last_status: db_info.and_then(|info| info.last_status),
+            last_activity: db_info.and_then(|info| info.last_activity.clone()),
+            checksum,
+            pin_hash,
+            pin_matches,
+            checksum_matches,
+        });
+    }
 
     // Sort by migration name for consistent output
     results.sort_by(|a, b| a.migration_name.cmp(&b.migration_name));

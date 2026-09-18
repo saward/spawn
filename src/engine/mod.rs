@@ -87,6 +87,7 @@ pub struct MigrationDbInfo {
     pub last_status: Option<MigrationHistoryStatus>,
     pub last_activity: Option<String>,
     pub checksum: Option<String>,
+    pub pin_hash: Option<String>,
 }
 
 /// Errors specific to migration operations

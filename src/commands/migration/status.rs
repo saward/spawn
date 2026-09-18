@@ -1,4 +1,4 @@
-use crate::commands::migration::get_combined_migration_status;
+use crate::commands::migration::{get_combined_migration_status, PinMatchStatus};
 use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::engine::MigrationStatus as EngineStatus;
@@ -15,10 +15,14 @@ struct MigrationStatusDisplay {
     on_filesystem: String,
     #[tabled(rename = "Pinned")]
     pinned: String,
+    #[tabled(rename = "Pin Match")]
+    pin_match: String,
     #[tabled(rename = "Database")]
     in_database: String,
     #[tabled(rename = "Status")]
     status: String,
+    #[tabled(rename = "Checksum Match")]
+    checksum_match: String,
 }
 
 pub struct MigrationStatus;
@@ -54,6 +58,19 @@ impl Command for MigrationStatus {
                     style("✗").red().to_string()
                 };
 
+                let pin_match = match row.pin_matches {
+                    PinMatchStatus::Matches => style("✓").green().to_string(),
+                    PinMatchStatus::Differs => style("✗").red().to_string(),
+                    PinMatchStatus::Missing => style("?").yellow().to_string(),
+                    PinMatchStatus::NotApplicable => style("-").dim().to_string(),
+                };
+
+                let checksum_match = match row.checksum_matches {
+                    Some(true) => style("✓").green().to_string(),
+                    Some(false) => style("✗").red().to_string(),
+                    None => style("-").dim().to_string(),
+                };
+
                 let in_database = if row.exists_in_db {
                     style("✓").green().to_string()
                 } else {
@@ -84,8 +101,10 @@ impl Command for MigrationStatus {
                     name: row.migration_name,
                     on_filesystem,
                     pinned,
+                    pin_match,
                     in_database,
                     status,
+                    checksum_match,
                 }
             })
             .collect();

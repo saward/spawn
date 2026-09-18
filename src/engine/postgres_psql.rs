@@ -396,7 +396,8 @@ impl Engine for PSQL {
                     m.name as migration_name,
                     mh.status_id_status as last_status,
                     mh.activity_id_activity as last_activity,
-                    encode(mh.checksum, 'hex') as checksum
+                    encode(mh.checksum, 'hex') as checksum,
+                    mh.pin_hash as pin_hash
                 FROM {}.migration m
                 LEFT JOIN {}.migration_history mh ON m.migration_id = mh.migration_id_migration
                 WHERE {} IS NULL OR m.namespace = {}
@@ -425,6 +426,7 @@ impl Engine for PSQL {
             last_status: Option<String>,
             last_activity: Option<String>,
             checksum: Option<String>,
+            pin_hash: Option<String>,
         }
 
         // Parse the JSON output
@@ -457,6 +459,7 @@ impl Engine for PSQL {
                     last_status: status,
                     last_activity: row.last_activity,
                     checksum: row.checksum,
+                    pin_hash: row.pin_hash,
                 }
             })
             .collect();
