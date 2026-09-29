@@ -180,11 +180,9 @@ impl SecretsRepository {
 
     /// The error for a `secret()` call naming something that isn't configured.
     ///
-    /// Lists what *is* defined, so a typo is obvious. Names are config keys, not
-    /// values, so printing them is safe.
-    ///
-    /// Single line, because minijinja appends `(in <file>:<line>)` and a
-    /// multi-line detail strands that marker on a line of its own.
+    /// Lists the defined names so a typo is obvious; names are safe to print,
+    /// their values are not. Single line, because minijinja appends
+    /// `(in <file>:<line>)` after it.
     fn undefined_secret(&self, name: &str) -> anyhow::Error {
         let mut known: Vec<&str> = self.secrets.keys().map(String::as_str).collect();
         known.sort_unstable();
@@ -195,8 +193,8 @@ impl SecretsRepository {
         };
 
         anyhow!(
-            "secret '{name}' is not defined in spawn.toml ({defined}); \
-             see https://docs.spawn.dev/guides/secrets/"
+            "secret '{name}' is not defined in spawn.toml ({defined}); see {url}",
+            url = crate::docs::SECRETS
         )
     }
 
@@ -453,7 +451,7 @@ mod tests {
             message.contains("defined: alpha_password, zeta_password"),
             "should list defined names in sorted order, got: {message}"
         );
-        // Names are config keys and safe to print; their values are not.
+        // Names are safe to print; their values are not.
         assert!(
             !message.contains("s3cret-alpha-value") && !message.contains("s3cret-zeta-value"),
             "a configured secret's value must never appear, got: {message}"

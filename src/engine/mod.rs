@@ -111,8 +111,7 @@ pub enum MigrationError {
 
     /// Database or connection error.
     ///
-    /// Transparent: the inner error carries its own context chain, and a prefix
-    /// here would duplicate the line `source()` already provides.
+    /// Transparent: a prefix would duplicate the line `source()` already gives.
     #[error(transparent)]
     Database(#[from] anyhow::Error),
 

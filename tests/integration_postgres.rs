@@ -1346,9 +1346,8 @@ async fn test_migration_writer_failure_still_records_history() -> Result<()> {
         IntegrationTestHelper::new("test_migration_writer_failure_still_records_history", None)
             .await?;
 
-    // The failing secret() sits inside an {% include %}, matching the shape seen
-    // in practice: minijinja hides an include's real cause behind "could not
-    // render include".
+    // Inside an {% include %}: minijinja hides an include's real cause behind
+    // "could not render include".
     let config = helper.migration_helper.load_config().await?;
     helper
         .migration_helper

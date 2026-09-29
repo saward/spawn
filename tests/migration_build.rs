@@ -948,10 +948,8 @@ async fn test_pin_verify_detects_missing_root() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-/// An undefined `secret()` inside an `{% include %}` must surface the real
-/// cause, the component and line it came from, and the migration's real path —
-/// not just minijinja's "could not render include" wrapper. In-memory guard for
-/// the same diagnosis the integration test checks against a database.
+/// The cause, and the component and migration lines it came from, must all
+/// survive minijinja's "could not render include" wrapper.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_migration_build_undefined_secret_in_component_names_cause_and_location(
 ) -> Result<(), Box<dyn std::error::Error>> {

@@ -357,8 +357,7 @@ pub struct StreamingGeneration {
     store: Store,
     template_contents: String,
     /// The template's real path, used as its minijinja template name so render
-    /// errors name the file on disk rather than a label shared by every
-    /// migration. Components already get their real names from the loader.
+    /// errors name the file on disk.
     template_label: String,
     /// Name of the migration or test being rendered, exposed to templates
     /// as `builtin.script_name` (see `BuiltinContext`).
@@ -1060,10 +1059,8 @@ mod tests {
         );
     }
 
-    /// minijinja wraps any `{% include %}` failure in a `BadInclude` error whose
-    /// Display hides the real cause behind "could not render include", leaving it
-    /// reachable only via `.source()`. Guards that the chain leaves the render
-    /// intact, before any engine can flatten it.
+    /// minijinja hides an `{% include %}` failure's real cause behind a
+    /// `BadInclude` wrapper, reachable only via `.source()`.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn include_failure_keeps_the_real_cause_reachable() {
         use crate::config::FolderPather;
@@ -1115,8 +1112,6 @@ mod tests {
         );
     }
 
-    /// The outermost frame must name the path the generation was built from,
-    /// not a label shared by every migration.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn render_errors_are_labelled_with_the_templates_real_path() {
         let gen = streaming_generation(

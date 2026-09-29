@@ -926,8 +926,7 @@ impl PSQL {
                 }
             };
 
-        // NotRecorded holds its detail as owned strings. `{:#}` flattens the
-        // whole chain onto one line, which is what suits a struct field.
+        // NotRecorded holds strings; `{:#}` flattens the chain onto one line.
         let migration_error_text = migration_error.as_ref().map(|e| format!("{:#}", e));
 
         // Session 2: Record the outcome (success or failure)
@@ -965,8 +964,7 @@ impl PSQL {
         }
 
         // If the migration itself failed (but was recorded), return that error.
-        // A context layer, not an interpolated string, so the chain below it
-        // stays reachable.
+        // A context layer, not an interpolated string, so the chain survives.
         if let Some(err) = migration_error {
             return Err(MigrationError::Database(
                 err.context(format!("Migration '{}' failed", migration_name)),

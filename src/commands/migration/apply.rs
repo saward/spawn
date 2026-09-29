@@ -221,10 +221,8 @@ mod tests {
         // Resolve it, as a real render would while streaming to psql.
         secrets.resolve("application_password").await.unwrap();
 
-        // The value surfaces at the deepest level, under the context layers
-        // migration_apply adds. Redaction only reaches it because
-        // redact_secrets formats with `{:?}`, which walks `source()`; with
-        // `{}` it would scan the top line alone and this would leak.
+        // Value at the deepest level. Only reached because redact_secrets
+        // formats with `{:?}`, which walks `source()`; `{}` would leak it.
         let simulated_psql_error = anyhow!(
             "psql exited with code 1: ERROR: duplicate key value\nDETAIL: Key (password)=(hunter2) already exists."
         )
