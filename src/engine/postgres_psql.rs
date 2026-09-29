@@ -901,30 +901,33 @@ impl PSQL {
 
         let duration = start_time.elapsed().as_secs_f32();
 
-        // Determine status based on session 1 result
-        let (status, migration_error) = match &migration_result {
-            Ok(()) => (MigrationStatus::Success, None),
-            Err(EngineError::ExecutionFailed { exit_code, stderr }) => {
-                if stderr.contains("Could not acquire advisory lock") {
-                    return Err(MigrationError::AdvisoryLock(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        stderr.clone(),
-                    )));
+        // Determine status based on session 1 result.
+        let (status, migration_error): (MigrationStatus, Option<anyhow::Error>) =
+            match migration_result {
+                Ok(()) => (MigrationStatus::Success, None),
+                Err(EngineError::ExecutionFailed { exit_code, stderr }) => {
+                    if stderr.contains("Could not acquire advisory lock") {
+                        return Err(MigrationError::AdvisoryLock(std::io::Error::other(stderr)));
+                    }
+                    (
+                        MigrationStatus::Failure,
+                        Some(anyhow!("psql exited with code {}: {}", exit_code, stderr)),
+                    )
                 }
-                (
-                    MigrationStatus::Failure,
-                    Some(format!("psql exited with code {}: {}", exit_code, stderr)),
-                )
-            }
-            Err(EngineError::Io(e)) => {
-                // Writer failed (e.g. an unresolved secret), not psql itself.
-                // Still record a Failure row — SQL may already have run.
-                (
-                    MigrationStatus::Failure,
-                    Some(format!("failed while streaming migration SQL: {}", e)),
-                )
-            }
-        };
+                Err(EngineError::Io(e)) => {
+                    // Writer failed (e.g. an unresolved secret), not psql itself.
+                    // Still record a Failure row — SQL may already have run.
+                    (
+                        MigrationStatus::Failure,
+                        Some(
+                            anyhow::Error::from(e).context("failed while streaming migration SQL"),
+                        ),
+                    )
+                }
+            };
+
+        // NotRecorded holds strings; `{:#}` flattens the chain onto one line.
+        let migration_error_text = migration_error.as_ref().map(|e| format!("{:#}", e));
 
         // Session 2: Record the outcome (success or failure)
         let record_result = self
@@ -948,25 +951,24 @@ impl PSQL {
                     name: migration_name.to_string(),
                     migration_outcome: MigrationStatus::Success,
                     migration_error: None,
-                    recording_error: format!("{}", record_err),
+                    recording_error: format!("{:#}", anyhow::Error::new(record_err)),
                 });
             }
             // Both migration and recording failed
             return Err(MigrationError::NotRecorded {
                 name: migration_name.to_string(),
                 migration_outcome: MigrationStatus::Failure,
-                migration_error: migration_error.clone(),
-                recording_error: format!("{}", record_err),
+                migration_error: migration_error_text,
+                recording_error: format!("{:#}", anyhow::Error::new(record_err)),
             });
         }
 
-        // If the migration itself failed (but was recorded), return that error
-        if let Some(err_msg) = migration_error {
-            return Err(MigrationError::Database(anyhow!(
-                "Migration '{}' failed: {}",
-                migration_name,
-                err_msg
-            )));
+        // If the migration itself failed (but was recorded), return that error.
+        // A context layer, not an interpolated string, so the chain survives.
+        if let Some(err) = migration_error {
+            return Err(MigrationError::Database(
+                err.context(format!("Migration '{}' failed", migration_name)),
+            ));
         }
 
         Ok("Migration applied successfully".to_string())

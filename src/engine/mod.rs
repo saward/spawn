@@ -109,8 +109,10 @@ pub enum MigrationError {
         info: ExistingMigrationInfo,
     },
 
-    /// Database or connection error
-    #[error("database error: {0}")]
+    /// Database or connection error.
+    ///
+    /// Transparent: a prefix would duplicate the line `source()` already gives.
+    #[error(transparent)]
     Database(#[from] anyhow::Error),
 
     // Could not get advisory lock

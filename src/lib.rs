@@ -2,6 +2,7 @@ pub mod cli;
 pub mod commands;
 pub mod completions;
 pub mod config;
+pub mod docs;
 pub mod engine;
 pub mod escape;
 pub mod hash;

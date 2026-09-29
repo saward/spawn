@@ -221,9 +221,13 @@ mod tests {
         // Resolve it, as a real render would while streaming to psql.
         secrets.resolve("application_password").await.unwrap();
 
+        // Value at the deepest level. Only reached because redact_secrets
+        // formats with `{:?}`, which walks `source()`; `{}` would leak it.
         let simulated_psql_error = anyhow!(
             "psql exited with code 1: ERROR: duplicate key value\nDETAIL: Key (password)=(hunter2) already exists."
-        );
+        )
+        .context("could not render include: error in \"roles/app_role.sql\"")
+        .context("Migration '20260101000000-bootstrap' failed");
 
         let redacted = redact_secrets(simulated_psql_error, &secrets, SqlDialect::Postgres);
 

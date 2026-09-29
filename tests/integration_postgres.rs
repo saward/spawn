@@ -1346,13 +1346,25 @@ async fn test_migration_writer_failure_still_records_history() -> Result<()> {
         IntegrationTestHelper::new("test_migration_writer_failure_still_records_history", None)
             .await?;
 
+    // Inside an {% include %}: minijinja hides an include's real cause behind
+    // "could not render include".
+    let config = helper.migration_helper.load_config().await?;
+    helper
+        .migration_helper
+        .fs
+        .write(
+            &format!("{}/roles/app_role.sql", config.pather().components_folder()),
+            r#"CREATE ROLE app_user WITH LOGIN PASSWORD {{ secret("does_not_exist") }};"#,
+        )
+        .await?;
+
     // CREATE TABLE autocommits before the engine reaches the failing
     // secret() call, proving streamed SQL persists past a writer failure.
     let bad_migration = r#"CREATE TABLE writer_failure_check (id integer);
 
 BEGIN;
 
-SELECT {{ secret("does_not_exist") }};
+{% include "roles/app_role.sql" %}
 
 COMMIT;"#;
 
@@ -1362,9 +1374,29 @@ COMMIT;"#;
         .await?;
 
     let result = helper.apply_migration(&migration_name).await;
+    let apply_err = result
+        .err()
+        .expect("Expected migration with an undefined secret() call to fail");
+
+    // apply must report *why* rendering stopped, not just that it did.
+    let chain = format!("{:?}", apply_err);
     assert!(
-        result.is_err(),
-        "Expected migration with an undefined secret() call to fail"
+        chain.contains("secret 'does_not_exist' is not defined in spawn.toml"),
+        "apply must surface the underlying cause, got: {}",
+        chain
+    );
+    assert!(
+        chain.contains("roles/app_role.sql:1"),
+        "apply must name the component and line the failure came from, got: {}",
+        chain
+    );
+    assert!(
+        chain.contains(&format!(
+            "{}:5",
+            config.pather().migration_script_file_path(&migration_name)
+        )),
+        "apply must name the migration's real path and the include's line, got: {}",
+        chain
     );
 
     assert!(

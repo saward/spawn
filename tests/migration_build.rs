@@ -948,6 +948,62 @@ async fn test_pin_verify_detects_missing_root() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+/// The cause, and the component and migration lines it came from, must all
+/// survive minijinja's "could not render include" wrapper.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_migration_build_undefined_secret_in_component_names_cause_and_location(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let config = helper.load_config().await?;
+
+    helper
+        .fs
+        .write(
+            &format!("{}/roles/app_role.sql", config.pather().components_folder()),
+            r#"CREATE ROLE app_user WITH LOGIN PASSWORD {{ secret("application_password") }};"#,
+        )
+        .await?;
+
+    let migration_name = helper
+        .create_migration_manual(
+            "create-app-role",
+            "BEGIN;\n\n{% include \"roles/app_role.sql\" %}\n\nCOMMIT;\n".to_string(),
+        )
+        .await?;
+
+    let err = helper
+        .build_migration(&migration_name, false)
+        .await
+        .expect_err("a migration referencing an undefined secret must fail to build");
+    let chain = format!("{:?}", err);
+
+    assert!(
+        chain.contains("secret 'application_password' is not defined in spawn.toml"),
+        "the real cause must survive minijinja's include wrapper, got: {chain}"
+    );
+    assert!(
+        chain.contains("none are defined"),
+        "with no secrets configured at all, the message should say so, got: {chain}"
+    );
+    assert!(
+        chain.contains("roles/app_role.sql:1"),
+        "the cause must name the component and the line within it, got: {chain}"
+    );
+    assert!(
+        chain.contains(&format!(
+            "{}:3",
+            config.pather().migration_script_file_path(&migration_name)
+        )),
+        "the outer frame must name the migration's real path and line, got: {chain}"
+    );
+    assert!(
+        !chain.contains("(in migration.sql"),
+        "the hardcoded placeholder template name must be gone, got: {chain}"
+    );
+
+    Ok(())
+}
+
 /// Exercises the full stack for secrets: a [secrets.*] table round-tripped
 /// through real TOML (via ConfigLoaderSaver::save/Config::load), an
 /// environment-specific override, and both masked and revealed builds.

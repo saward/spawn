@@ -178,11 +178,31 @@ impl SecretsRepository {
         )
     }
 
+    /// The error for a `secret()` call naming something that isn't configured.
+    ///
+    /// Lists the defined names so a typo is obvious; names are safe to print,
+    /// their values are not. Single line, because minijinja appends
+    /// `(in <file>:<line>)` after it.
+    fn undefined_secret(&self, name: &str) -> anyhow::Error {
+        let mut known: Vec<&str> = self.secrets.keys().map(String::as_str).collect();
+        known.sort_unstable();
+        let defined = if known.is_empty() {
+            "none are defined".to_string()
+        } else {
+            format!("defined: {}", known.join(", "))
+        };
+
+        anyhow!(
+            "secret '{name}' is not defined in spawn.toml ({defined}); see {url}",
+            url = crate::docs::SECRETS
+        )
+    }
+
     pub async fn resolve(&self, name: &str) -> Result<String> {
         let secret = self
             .secrets
             .get(name)
-            .ok_or_else(|| anyhow!("no secret named '{}' is defined in spawn.toml", name))?;
+            .ok_or_else(|| self.undefined_secret(name))?;
 
         // Always resolve for real, even when masking the result: this is
         // what lets `build`/`test build` verify a secret is reachable
@@ -383,10 +403,59 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_secret_definition_errors() {
+    async fn missing_secret_with_none_configured_says_so_and_shows_the_fix() {
         let repository = repo(HashMap::new(), "prod", SecretsRenderMode::Revealed);
         let err = repository.resolve("nope").await.unwrap_err();
-        assert!(err.to_string().contains("no secret named 'nope'"));
+        let message = err.to_string();
+        assert!(message.contains("secret 'nope' is not defined in spawn.toml"));
+        assert!(
+            message.contains("none are defined"),
+            "should say nothing is configured, got: {message}"
+        );
+        assert!(
+            message.contains("https://docs.spawn.dev/guides/secrets/"),
+            "should point at the secrets guide, got: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_secret_lists_the_defined_names_but_never_their_values() {
+        let definitions = defs(vec![
+            (
+                "zeta_password",
+                SecretDefinition {
+                    default: SecretSource::Literal {
+                        value: "s3cret-zeta-value".to_string(),
+                        insecure: true,
+                    },
+                    environments: HashMap::new(),
+                },
+            ),
+            (
+                "alpha_password",
+                SecretDefinition {
+                    default: SecretSource::Literal {
+                        value: "s3cret-alpha-value".to_string(),
+                        insecure: true,
+                    },
+                    environments: HashMap::new(),
+                },
+            ),
+        ]);
+        let repository = repo(definitions, "prod", SecretsRenderMode::Revealed);
+        let err = repository.resolve("aplha_password").await.unwrap_err();
+        let message = format!("{:?}", err);
+
+        assert!(message.contains("secret 'aplha_password' is not defined in spawn.toml"));
+        assert!(
+            message.contains("defined: alpha_password, zeta_password"),
+            "should list defined names in sorted order, got: {message}"
+        );
+        // Names are safe to print; their values are not.
+        assert!(
+            !message.contains("s3cret-alpha-value") && !message.contains("s3cret-zeta-value"),
+            "a configured secret's value must never appear, got: {message}"
+        );
     }
 
     #[tokio::test]
