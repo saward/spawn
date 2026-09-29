@@ -356,6 +356,10 @@ pub struct Generation {
 pub struct StreamingGeneration {
     store: Store,
     template_contents: String,
+    /// The template's real path, used as its minijinja template name so render
+    /// errors name the file on disk rather than a label shared by every
+    /// migration. Components already get their real names from the loader.
+    template_label: String,
     /// Name of the migration or test being rendered, exposed to templates
     /// as `builtin.script_name` (see `BuiltinContext`).
     script_name: String,
@@ -404,8 +408,8 @@ impl StreamingGeneration {
             self.engine.clone(),
         );
         let mut env = template_env(self.store, &self.engine, self.secrets, builtin)?;
-        env.add_template("migration.sql", &self.template_contents)?;
-        let tmpl = env.get_template("migration.sql")?;
+        env.add_template(&self.template_label, &self.template_contents)?;
+        let tmpl = env.get_template(&self.template_label)?;
         tmpl.render_to_write(
             context!(env => self.environment, variables => self.variables),
             writer,
@@ -507,6 +511,7 @@ pub async fn generate_streaming_with_store(
     Ok(StreamingGeneration {
         store,
         template_contents: contents,
+        template_label: path.to_string(),
         script_name: script_name.to_string(),
         script_type,
         environment: environment.to_string(),
@@ -964,6 +969,7 @@ mod tests {
         StreamingGeneration {
             store,
             template_contents: template_contents.to_string(),
+            template_label: "migrations/test/up.sql".to_string(),
             script_name: "test".to_string(),
             script_type: ScriptType::Migration,
             environment: "prod".to_string(),
@@ -1051,6 +1057,86 @@ mod tests {
             gen_a.raw_checksum(),
             gen_b.raw_checksum(),
             "different up.sql content must produce different checksums"
+        );
+    }
+
+    /// minijinja wraps any `{% include %}` failure in a `BadInclude` error whose
+    /// Display hides the real cause behind "could not render include", leaving it
+    /// reachable only via `.source()`. Guards that the chain leaves the render
+    /// intact, before any engine can flatten it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn include_failure_keeps_the_real_cause_reachable() {
+        use crate::config::FolderPather;
+        use opendal::services::Memory;
+        use opendal::Operator;
+
+        let op = Operator::new(Memory::default()).unwrap();
+        op.write(
+            "components/roles/app_role.sql",
+            r#"CREATE ROLE app_user WITH LOGIN PASSWORD {{ secret("application_password") }};"#,
+        )
+        .await
+        .unwrap();
+
+        let pather = FolderPather {
+            spawn_folder: "".to_string(),
+        };
+        let store = Store::new(Box::new(Latest::new("").unwrap()), op.clone(), pather).unwrap();
+
+        let gen = StreamingGeneration {
+            store,
+            template_contents: "BEGIN;\n\n{% include \"roles/app_role.sql\" %}\n\nCOMMIT;\n"
+                .to_string(),
+            template_label: "migrations/20260101000000-bootstrap/up.sql".to_string(),
+            script_name: "20260101000000-bootstrap".to_string(),
+            script_type: ScriptType::Migration,
+            environment: "staging".to_string(),
+            variables: crate::variables::Variables::default(),
+            engine: EngineType::PostgresPSQL,
+            secrets: Arc::new(SecretsRepository::empty(op)),
+            pin_hash: None,
+        };
+
+        let mut buffer = Vec::new();
+        let err = gen.render_to_writer(&mut buffer).unwrap_err();
+        let chain = format!("{:?}", err);
+
+        assert!(
+            chain.contains("is not defined in spawn.toml"),
+            "the underlying cause must survive the BadInclude wrapper, got: {chain}"
+        );
+        assert!(
+            chain.contains("roles/app_role.sql:1"),
+            "the cause must name the component and the line within it, got: {chain}"
+        );
+        assert!(
+            chain.contains("migrations/20260101000000-bootstrap/up.sql:3"),
+            "the outer frame must name the migration's real path and line, got: {chain}"
+        );
+    }
+
+    /// The outermost frame must name the path the generation was built from,
+    /// not a label shared by every migration.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn render_errors_are_labelled_with_the_templates_real_path() {
+        let gen = streaming_generation(
+            r#"SELECT {{ secret("nope") }};"#,
+            SecretsRepository::empty(
+                opendal::Operator::new(opendal::services::Memory::default()).unwrap(),
+            ),
+        );
+
+        let mut buffer = Vec::new();
+        let err = gen.render_to_writer(&mut buffer).unwrap_err();
+        let chain = format!("{:?}", err);
+
+        assert!(
+            chain.contains("migrations/test/up.sql"),
+            "expected the real template path in the error, got: {chain}"
+        );
+        assert!(
+            !chain.contains("migration.sql"),
+            "the hardcoded placeholder name must be gone, got: {chain}"
         );
     }
 }
