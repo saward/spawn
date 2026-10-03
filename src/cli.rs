@@ -1,7 +1,7 @@
 use crate::commands::{
     AdoptMigration, ApplyMigration, BuildMigration, BuildTest, Check, Command, CompareTests,
-    ExpectTest, Init, MigrationStatus, NewMigration, NewTest, Outcome, PinCleanup, PinMigration,
-    PinVerify, RunTest, TelemetryDescribe, TelemetryInfo,
+    DownMigration, ExpectTest, Init, MigrationStatus, NewMigration, NewTest, Outcome, PinCleanup,
+    PinMigration, PinVerify, RunTest, TelemetryDescribe, TelemetryInfo,
 };
 use crate::completions::{complete_migrations, complete_tests};
 use crate::config::{Config, DEFAULT_CONFIG_FILE};
@@ -178,6 +178,26 @@ pub enum MigrationCommands {
         #[arg(long)]
         description: Option<String>,
     },
+    /// Run the down script for a previously applied migration, reversing it.
+    Down {
+        /// Migration to take down
+        #[arg(add = ArgValueCompleter::new(complete_migrations))]
+        migration: String,
+
+        /// Path to a variables file (JSON, TOML, or YAML) to use for templating.
+        /// Overrides the variables_file setting in spawn.toml.
+        #[arg(long)]
+        variables: Option<String>,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
+
+        /// Reuse the same database connection across all migrations.
+        /// Can significantly speed up taking down many migrations.
+        #[arg(long)]
+        reuse_connection: bool,
+    },
     /// Show the status of all migrations
     Status,
 }
@@ -212,6 +232,15 @@ impl TelemetryDescribe for MigrationCommands {
                 ("opt_reuse_connection", reuse_connection.to_string()),
             ]),
             MigrationCommands::Adopt { .. } => TelemetryInfo::new("adopt"),
+            MigrationCommands::Down {
+                migration,
+                variables,
+                reuse_connection,
+                ..
+            } => TelemetryInfo::new("down").with_properties(vec![
+                ("has_variables", variables.is_some().to_string()),
+                ("opt_reuse_connection", reuse_connection.to_string()),
+            ]),
             MigrationCommands::Status => TelemetryInfo::new("status"),
         }
     }
@@ -447,6 +476,25 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                     .execute(config)
                     .await
                 }
+                Some(MigrationCommands::Down {
+                    migration,
+                    variables,
+                    yes,
+                    reuse_connection,
+                }) => {
+                    let vars = match variables {
+                        Some(vars_path) => Some(config.load_variables_from_path(&vars_path).await?),
+                        None => None,
+                    };
+                    DownMigration {
+                        migration,
+                        variables: vars,
+                        yes,
+                        reuse_connection,
+                    }
+                    .execute(config)
+                    .await
+                }
                 Some(MigrationCommands::Status) => MigrationStatus.execute(config).await,
                 None => {
                     eprintln!("No migration subcommand specified");
@@ -475,9 +523,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                     .await
                 }
                 Some(TestCommands::Run { name }) => RunTest { name }.execute(config).await,
-                Some(TestCommands::Compare { name }) => {
-                    CompareTests { name }.execute(config).await
-                }
+                Some(TestCommands::Compare { name }) => CompareTests { name }.execute(config).await,
                 Some(TestCommands::Expect { name }) => ExpectTest { name }.execute(config).await,
                 None => {
                     eprintln!("No test subcommand specified");

@@ -47,7 +47,7 @@ impl fmt::Display for MigrationStatus {
 pub enum MigrationActivity {
     Apply,
     Adopt,
-    Revert,
+    Down,
 }
 
 impl MigrationActivity {
@@ -56,7 +56,7 @@ impl MigrationActivity {
         match self {
             MigrationActivity::Apply => "APPLY",
             MigrationActivity::Adopt => "ADOPT",
-            MigrationActivity::Revert => "REVERT",
+            MigrationActivity::Down => "DOWN",
         }
     }
 }
