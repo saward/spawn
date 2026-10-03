@@ -5,8 +5,8 @@
 use crate::config::FolderPather;
 use crate::engine::{
     resolve_command_spec, Engine, EngineError, ExistingMigrationInfo, MigrationActivity,
-    MigrationError, MigrationHistoryStatus, MigrationResult, MigrationStatus, StdoutWriter,
-    TargetConfig, WriterFn,
+    MigrationError, MigrationHistoryStatus, MigrationResult, MigrationStatus, OutputSink,
+    ScriptSource, TargetConfig,
 };
 use crate::escape::{EscapedIdentifier, EscapedLiteral, EscapedQuery, InsecureRawSql};
 use crate::secrets::SecretsRenderMode;
@@ -177,8 +177,8 @@ impl PSQL {
 impl Engine for PSQL {
     async fn execute_with_writer(
         &self,
-        write_fn: WriterFn,
-        stdout_writer: StdoutWriter,
+        script: ScriptSource,
+        output: Option<OutputSink>,
         merge_stderr: bool,
     ) -> Result<(), EngineError> {
         // 1. Create the pipe for stdin
@@ -189,7 +189,7 @@ impl Engine for PSQL {
         // When merge_stderr is true, we create our own pipe and give the
         // write end to both stdout and stderr so the OS interleaves them.
         // Otherwise, stdout is piped (or null) and stderr is piped separately.
-        let merge = merge_stderr && stdout_writer.is_some();
+        let merge = merge_stderr && output.is_some();
 
         let (mut child, combined_read) = if merge {
             let (out_read, out_write) = std::io::pipe()?;
@@ -203,7 +203,7 @@ impl Engine for PSQL {
                 .map_err(EngineError::Io)?;
             (child, Some(out_read))
         } else {
-            let stdout_config = if stdout_writer.is_some() {
+            let stdout_config = if output.is_some() {
                 Stdio::piped()
             } else {
                 Stdio::null()
@@ -218,8 +218,8 @@ impl Engine for PSQL {
             (child, None)
         };
 
-        // 3. Copy output to stdout_writer if provided
-        let stdout_handle = if let Some(mut stdout_dest) = stdout_writer {
+        // 3. Copy output to the sink if provided
+        let stdout_handle = if let Some(mut output_dest) = output {
             if let Some(mut combined_read) = combined_read {
                 // Merged mode: read from our combined pipe in a blocking
                 // thread (it's a std::io::PipeReader, not a tokio type),
@@ -234,7 +234,7 @@ impl Engine for PSQL {
                     .await
                     .unwrap_or_default();
                     use tokio::io::AsyncWriteExt;
-                    let _ = stdout_dest.write_all(&buf).await;
+                    let _ = output_dest.write_all(&buf).await;
                 }))
             } else {
                 let mut stdout = child.stdout.take().expect("stdout should be piped");
@@ -242,7 +242,7 @@ impl Engine for PSQL {
                     use tokio::io::AsyncWriteExt;
                     let mut buf = Vec::new();
                     let _ = stdout.read_to_end(&mut buf).await;
-                    let _ = stdout_dest.write_all(&buf).await;
+                    let _ = output_dest.write_all(&buf).await;
                 }))
             }
         } else {
@@ -261,15 +261,15 @@ impl Engine for PSQL {
             None
         };
 
-        // 5. Run the writer function in a blocking thread
+        // 5. Run the script source in a blocking thread
         let writer_handle = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
             // PSQL-specific setup - QUIET must be first to suppress output from other settings
             writer.write_all(b"\\set QUIET on\n")?;
             writer.write_all(b"\\pset pager off\n")?;
             writer.write_all(b"\\set ON_ERROR_STOP on\n")?;
 
-            // User's write function (template rendering, etc.)
-            write_fn(&mut writer)?;
+            // User's script source (template rendering, etc.)
+            script(&mut writer)?;
 
             // Writer dropped here -> EOF to psql
             Ok(())
@@ -312,7 +312,7 @@ impl Engine for PSQL {
     async fn migration_apply(
         &self,
         migration_name: &str,
-        write_fn: WriterFn,
+        script: ScriptSource,
         checksum: String,
         pin_hash: Option<String>,
         namespace: &str,
@@ -320,7 +320,7 @@ impl Engine for PSQL {
     ) -> MigrationResult<String> {
         self.apply_and_record_migration_v1(
             migration_name,
-            write_fn,
+            script,
             checksum,
             pin_hash,
             EscapedLiteral::new(namespace),
@@ -578,14 +578,14 @@ impl PSQL {
             // Prefix with \c to spawn_database if configured, so the internal
             // schema is created in the correct database.
             let db_connect = self.spawn_db_connect_command();
-            let write_fn: WriterFn = Box::new(move |writer: &mut dyn Write| {
+            let script: ScriptSource = Box::new(move |writer: &mut dyn Write| {
                 writer.write_all(db_connect.as_str().as_bytes())?;
                 writer.write_all(content.as_bytes())
             });
             match self
                 .apply_and_record_migration_v1(
                     migration_name,
-                    write_fn,
+                    script,
                     checksum,
                     None, // pin_hash not used for engine migrations
                     self.safe_spawn_namespace(),
@@ -822,7 +822,7 @@ impl PSQL {
     async fn apply_and_record_migration_v1(
         &self,
         migration_name: &str,
-        write_fn: WriterFn,
+        script: ScriptSource,
         checksum: String,
         pin_hash: Option<String>,
         namespace: EscapedLiteral,
@@ -890,7 +890,7 @@ impl PSQL {
                     // raw template source (see StreamingGeneration::raw_checksum),
                     // computed by the caller before this closure ever runs, so it
                     // can never contain a resolved secret value.
-                    write_fn(writer)?;
+                    script(writer)?;
 
                     Ok(())
                 }),

@@ -329,26 +329,26 @@ async fn resolve_provider(provider: &[String]) -> Result<Vec<String>> {
     shlex::split(&trimmed).ok_or_else(|| anyhow!("Failed to parse shell command: {}", trimmed))
 }
 
-/// Type alias for the writer closure used in execute_with_writer
-pub type WriterFn = Box<dyn FnOnce(&mut dyn std::io::Write) -> std::io::Result<()> + Send>;
+/// Writes the script to execute into the sink the engine supplies.
+pub type ScriptSource = Box<dyn FnOnce(&mut dyn std::io::Write) -> std::io::Result<()> + Send>;
 
-/// Type alias for an optional stdout writer to capture output
-pub type StdoutWriter = Option<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>;
+/// A destination the engine pushes captured output into.
+pub type OutputSink = Box<dyn tokio::io::AsyncWrite + Send + Unpin>;
 
 #[async_trait]
 pub trait Engine: Send + Sync {
-    /// Execute SQL by running the provided writer function.
-    /// - `write_fn`: Closure that writes SQL to the provided Write handle
-    /// - `stdout_writer`: Optional writer to capture stdout. If None, stdout is discarded.
-    /// - `merge_stderr`: If true and stdout_writer is Some, stderr is merged into stdout
+    /// Execute a script by running the provided source closure.
+    /// - `script`: Closure that writes the script to the provided Write handle
+    /// - `output`: Optional sink to capture stdout. If None, stdout is discarded.
+    /// - `merge_stderr`: If true and `output` is Some, stderr is merged into stdout
     ///                   at the OS level for true interleaving. Useful for tests.
     ///                   Note: when merged, stderr is not separately available in errors.
     /// Engine-specific setup (like psql flags) is handled internally.
     /// Returns stderr content on failure.
     async fn execute_with_writer(
         &self,
-        write_fn: WriterFn,
-        stdout_writer: StdoutWriter,
+        script: ScriptSource,
+        output: Option<OutputSink>,
         merge_stderr: bool,
     ) -> Result<(), EngineError>;
 
@@ -361,12 +361,22 @@ pub trait Engine: Send + Sync {
     async fn migration_apply(
         &self,
         migration_name: &str,
-        write_fn: WriterFn,
+        script: ScriptSource,
         checksum: String,
         pin_hash: Option<String>,
         namespace: &str,
         retry: bool,
     ) -> MigrationResult<String>;
+
+    // async fn migration_down(
+    //     &self,
+    //     migration_name: &str,
+    //     script: ScriptSource,
+    //     checksum: String,
+    //     pin_hash: Option<String>,
+    //     namespace: &str,
+    //     retry: bool,
+    // ) -> MigrationResult<String>;
 
     /// Adopt a migration without applying it.
     /// Creates a dummy table entry marking the migration as having been applied manually.
