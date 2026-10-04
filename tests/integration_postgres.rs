@@ -1800,6 +1800,75 @@ async fn test_cli_test_compare() -> Result<()> {
     Ok(())
 }
 
+/// Companion to `test_cli_test_compare` covering diagnostics specifically. The
+/// `20250113000001-notice-test` fixture emits a `NOTICE` from `DROP TABLE IF
+/// EXISTS` on a table that does not exist, so its `expected` file carries a
+/// diagnostics section below the separator. Renaming the table changes only the
+/// NOTICE text, leaving every byte of the results identical — which isolates a
+/// diagnostics-only regression and proves those are compared, not dropped.
+#[tokio::test]
+#[ignore]
+async fn test_cli_test_compare_detects_diagnostics_only_change() -> Result<()> {
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new(
+        "test_cli_test_compare_detects_diagnostics_only_change",
+        Some("./static/tests/test_cli_test"),
+    )
+    .await?;
+
+    let test_name = "20250113000001-notice-test".to_string();
+
+    // Passes against the checked-in fixture, whose expected file has a
+    // diagnostics section.
+    helper.run_test_compare(Some(test_name.clone())).await?;
+
+    // Only the table name changes, so the results are byte-identical and the
+    // NOTICE text is the sole difference.
+    let new_test = r#"\set QUIET off
+{% set dbname = "testclitestnotice" %}
+create database {{dbname|escape_identifier}} with template spawn;
+\c {{dbname|escape_identifier}}
+drop table if exists a_different_missing_table;
+select 1 as ok;
+\c postgres
+drop database {{dbname|escape_identifier}};
+"#;
+
+    helper
+        .migration_helper
+        .fs
+        .write("/db/tests/20250113000001-notice-test/test.sql", new_test)
+        .await?;
+
+    let result = helper.run_test_compare(Some(test_name.clone())).await;
+    match result {
+        Ok(_) => {
+            return Err(anyhow!(
+                "a diagnostics-only change should have failed the comparison"
+            ));
+        }
+        Err(e) => {
+            let err_str = e.to_string();
+            if !err_str.contains("error calling test compare") {
+                return Err(anyhow!("Unexpected comparison output: {}", err_str));
+            }
+        }
+    }
+
+    // Re-recording the expectation should capture the new NOTICE and pass.
+    helper
+        .run_test_expect(test_name.clone())
+        .await
+        .context("failed to update expectation")?;
+    helper
+        .run_test_compare(Some(test_name.clone()))
+        .await
+        .context("failed to compare after updating expectation")?;
+
+    Ok(())
+}
+
 /// Tests that migrations fail when another session holds the advisory lock.
 /// This verifies the concurrent migration protection works correctly.
 #[tokio::test]

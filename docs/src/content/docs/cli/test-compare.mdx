@@ -25,11 +25,33 @@ Runs tests and compares their output against saved expected results, reporting a
 
 For each test:
 
-1. Runs the test and captures output
-2. Compares output to the `expected` file in the test directory
+1. Runs the test and captures its transcript
+2. Compares the transcript to the `expected` file in the test directory
 3. Reports differences (if any)
 
 Use [`spawn test expect`](/cli/test-expect/) to update the expected output.
+
+## Diagnostics
+
+Engines capture results and diagnostics (`NOTICE`, `WARNING` and error messages) separately, then flatten them into a single transcript: the results first, then any diagnostics beneath a separator line.
+
+```
+ ok 
+----
+  1
+(1 row)
+
+--- diagnostics ---
+NOTICE:  table "nonexistent_table_xyz" does not exist, skipping
+```
+
+The separator and everything under it are omitted entirely when a test produces no diagnostics, so transcripts of clean runs contain results only.
+
+Diagnostics are appended rather than interleaved because psql buffers its two output streams independently — results are block-buffered, diagnostics are not — so their relative order changes with the size of the output and cannot be reproduced. Appending is what makes the transcript stable enough to compare. The cost is that a diagnostic no longer sits next to the statement that produced it; a test that needs that context can mark the position itself with `\echo`.
+
+Engines that produce a single ordered stream do not split at all, and their transcripts never carry a separator.
+
+A test therefore fails on a change to its diagnostics even when every byte of its results is unchanged.
 
 ## Secrets
 

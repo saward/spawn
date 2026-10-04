@@ -5,8 +5,8 @@
 use crate::config::FolderPather;
 use crate::engine::{
     resolve_command_spec, Engine, EngineError, ExistingMigrationInfo, MigrationActivity,
-    MigrationError, MigrationHistoryStatus, MigrationResult, MigrationStatus, ScriptSource,
-    TargetConfig,
+    MigrationError, MigrationHistoryStatus, MigrationResult, MigrationStatus, ScriptOutput,
+    ScriptSource, TargetConfig,
 };
 use crate::escape::{EscapedIdentifier, EscapedLiteral, EscapedQuery, InsecureRawSql};
 use crate::secrets::SecretsRenderMode;
@@ -21,9 +21,7 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use twox_hash::XxHash64;
 
@@ -40,9 +38,6 @@ pub struct PSQL {
     // Set once update_schema confirms the tracking tables exist.
     schema_ready: AtomicBool,
 }
-
-/// A destination this driver pushes psql's captured output into.
-type OutputSink = Box<dyn tokio::io::AsyncWrite + Send + Unpin>;
 
 static PROJECT_DIR: Dir<'_> = include_dir!("./static/engine-migrations/postgres-psql");
 static SPAWN_NAMESPACE: &str = "spawn";
@@ -181,28 +176,26 @@ impl Engine for PSQL {
     async fn run_script(
         &self,
         script: ScriptSource,
-        out: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+        out: ScriptOutput<'_>,
     ) -> Result<(), EngineError> {
-        // Merged at the OS level: that ordering is what puts a failing
-        // statement's message in the right place in the transcript.
-        let buf = Arc::new(Mutex::new(Vec::new()));
-        let result = self
-            .execute_with_writer(script, Some(Box::new(SharedBufWriter(buf.clone()))), true)
+        let ScriptOutput {
+            results,
+            diagnostics,
+        } = out;
+
+        let outcome = self
+            .execute_with_writer(script, Some(results), diagnostics)
             .await;
 
-        // Flush before deciding the outcome, so a cut-short run still hands
-        // back its partial transcript.
-        use tokio::io::AsyncWriteExt;
-        let bytes = std::mem::take(&mut *buf.lock().unwrap());
-        out.write_all(&bytes).await?;
-
-        match result {
+        match outcome {
             Ok(()) => Ok(()),
-            // Exit 3 is a statement failing under ON_ERROR_STOP; its
-            // diagnostics are already in the transcript.
-            Err(EngineError::ExecutionFailed { exit_code: 3, .. }) => Ok(()),
-            // Exit 1 is psql itself failing, 2 a bad or lost connection.
-            Err(EngineError::ExecutionFailed { exit_code, .. }) => Err(EngineError::Unavailable {
+            // Exit 3 is a statement failing under ON_ERROR_STOP, which is on by
+            // default but a script may turn off. Either way its diagnostics are
+            // already written, so this is a normal outcome.
+            Err(EngineError::ExecutionFailed { exit_code: 3 }) => Ok(()),
+            // Exit 1 is psql itself failing, 2 a bad or lost connection. The
+            // reason is in `diagnostics`, which the caller still holds.
+            Err(EngineError::ExecutionFailed { exit_code }) => Err(EngineError::Unavailable {
                 message: format!("psql exited with code {}", exit_code),
             }),
             Err(e) => Err(e),
@@ -368,168 +361,87 @@ impl Engine for PSQL {
     }
 }
 
-/// A simple AsyncWrite implementation that appends to a shared Vec<u8>
-struct SharedBufWriter(Arc<Mutex<Vec<u8>>>);
-
-impl tokio::io::AsyncWrite for SharedBufWriter {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        std::task::Poll::Ready(Ok(buf.len()))
-    }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::task::Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::task::Poll::Ready(Ok(()))
-    }
-}
-
 impl PSQL {
+    /// Runs `script` through psql, streaming stdout to `results` (when given)
+    /// and stderr to `diagnostics`.
+    ///
+    /// Both pipes are drained concurrently with the write to stdin: psql blocks
+    /// once either fills, so draining them only afterwards would deadlock.
     async fn execute_with_writer(
         &self,
         script: ScriptSource,
-        output: Option<OutputSink>,
-        merge_stderr: bool,
+        results: Option<&mut (dyn tokio::io::AsyncWrite + Send + Unpin)>,
+        diagnostics: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
     ) -> Result<(), EngineError> {
-        // 1. Create the pipe for stdin
         let (reader, mut writer) = std::io::pipe()?;
 
-        // 2. Configure stdout/stderr and spawn psql
-        //
-        // When merge_stderr is true, we create our own pipe and give the
-        // write end to both stdout and stderr so the OS interleaves them.
-        // Otherwise, stdout is piped (or null) and stderr is piped separately.
-        let merge = merge_stderr && output.is_some();
-
-        let (mut child, combined_read) = if merge {
-            let (out_read, out_write) = std::io::pipe()?;
-            let out_write_dup = out_write.try_clone()?;
-            let child = Command::new(&self.psql_command[0])
-                .args(&self.psql_command[1..])
-                .stdin(Stdio::from(reader))
-                .stdout(Stdio::from(out_write))
-                .stderr(Stdio::from(out_write_dup))
-                .spawn()
-                .map_err(EngineError::Io)?;
-            (child, Some(out_read))
+        let stdout_config = if results.is_some() {
+            Stdio::piped()
         } else {
-            let stdout_config = if output.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            };
-            let child = Command::new(&self.psql_command[0])
-                .args(&self.psql_command[1..])
-                .stdin(Stdio::from(reader))
-                .stdout(stdout_config)
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(EngineError::Io)?;
-            (child, None)
+            Stdio::null()
         };
+        let mut child = Command::new(&self.psql_command[0])
+            .args(&self.psql_command[1..])
+            .stdin(Stdio::from(reader))
+            .stdout(stdout_config)
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(EngineError::Io)?;
 
-        // 3. Copy output to the sink if provided
-        let stdout_handle = if let Some(mut output_dest) = output {
-            if let Some(mut combined_read) = combined_read {
-                // Merged mode: read from our combined pipe in a blocking
-                // thread (it's a std::io::PipeReader, not a tokio type),
-                // then write to the async destination.
-                Some(tokio::task::spawn(async move {
-                    let buf = tokio::task::spawn_blocking(move || {
-                        use std::io::Read;
-                        let mut buf = Vec::new();
-                        let _ = combined_read.read_to_end(&mut buf);
-                        buf
-                    })
-                    .await
-                    .unwrap_or_default();
-                    use tokio::io::AsyncWriteExt;
-                    let _ = output_dest.write_all(&buf).await;
-                }))
-            } else {
-                let mut stdout = child.stdout.take().expect("stdout should be piped");
-                Some(tokio::task::spawn(async move {
-                    use tokio::io::AsyncWriteExt;
-                    let mut buf = Vec::new();
-                    let _ = stdout.read_to_end(&mut buf).await;
-                    let _ = output_dest.write_all(&buf).await;
-                }))
-            }
-        } else {
-            None
-        };
+        let mut child_stdout = child.stdout.take();
+        let mut child_stderr = child.stderr.take().expect("stderr should be piped");
 
-        // 4. Drain stderr in background (prevents deadlock).
-        //    When merged, child.stderr is None (it shares the stdout pipe).
-        let stderr_handle = if let Some(mut stderr) = child.stderr.take() {
-            Some(tokio::spawn(async move {
-                let mut buf = Vec::new();
-                let _ = stderr.read_to_end(&mut buf).await;
-                buf
-            }))
-        } else {
-            None
-        };
-
-        // 5. Run the script source in a blocking thread
+        // Blocking thread: the render blocks, resolving secrets and loading
+        // components via `block_in_place`.
         let writer_handle = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-            // PSQL-specific setup - QUIET must be first to suppress output from other settings
+            // QUIET must come first to suppress output from the other settings.
+            // All three are defaults a script is free to override.
             writer.write_all(b"\\set QUIET on\n")?;
             writer.write_all(b"\\pset pager off\n")?;
             writer.write_all(b"\\set ON_ERROR_STOP on\n")?;
 
-            // User's script source (template rendering, etc.)
             script(&mut writer)?;
 
             // Writer dropped here -> EOF to psql
             Ok(())
         });
 
-        // 6. Wait for writing to complete. Captured rather than propagated
-        // immediately — psql may still be running and must be reaped (step 8)
-        // before we return, even on a writer failure.
-        let writer_result = writer_handle
-            .await
-            .map_err(|e| EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))
-            .and_then(|r| r.map_err(EngineError::Io));
-
-        // 7. Wait for stdout copy if applicable (must complete before we read the buffer)
-        if let Some(handle) = stdout_handle {
-            let _ = handle.await;
-        }
-
-        // 8. Wait for psql and check result
-        let status = child.wait().await?;
-        let stderr_bytes = match stderr_handle {
-            Some(handle) => handle.await.unwrap_or_default(),
-            None => Vec::new(),
+        let copy_results = async {
+            match (child_stdout.as_mut(), results) {
+                (Some(src), Some(dst)) => tokio::io::copy(src, dst).await.map(|_| ()),
+                _ => Ok(()),
+            }
+        };
+        let copy_diagnostics = async {
+            tokio::io::copy(&mut child_stderr, diagnostics)
+                .await
+                .map(|_| ())
         };
 
-        // Takes precedence over psql's own status: an aborted render can
-        // leave psql exiting 0 (e.g. a quiet rollback on early EOF).
-        writer_result?;
+        // join!, not spawn: the sinks are borrowed, so they cannot be moved into
+        // a 'static task.
+        let (writer_result, results_result, diagnostics_result) =
+            tokio::join!(writer_handle, copy_results, copy_diagnostics);
+
+        let status = child.wait().await?;
+
+        // Takes precedence over psql's own status: an aborted render can leave
+        // psql exiting 0 (e.g. a quiet rollback on early EOF).
+        writer_result
+            .map_err(|e| EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))
+            .and_then(|r| r.map_err(EngineError::Io))?;
+        results_result?;
+        diagnostics_result?;
 
         if !status.success() {
             return Err(EngineError::ExecutionFailed {
                 exit_code: status.code().unwrap_or(-1),
-                stderr: String::from_utf8_lossy(&stderr_bytes).to_string(),
             });
         }
 
         Ok(())
     }
+
     pub async fn update_schema(&self) -> Result<()> {
         // Create a memory operator from the included directory containing
         // the engine's own migration scripts
@@ -652,30 +564,36 @@ impl PSQL {
         let format_owned = format.map(|s| s.to_string());
         let db_connect = Self::db_connect_command(database);
 
-        // Create a shared buffer to capture stdout
-        let stdout_buf = Arc::new(Mutex::new(Vec::new()));
-        let stdout_buf_clone = stdout_buf.clone();
+        let mut stdout_buf: Vec<u8> = Vec::new();
+        let mut stderr_buf: Vec<u8> = Vec::new();
 
-        self.execute_with_writer(
-            Box::new(move |writer| {
-                // Switch database if requested
-                writer.write_all(db_connect.as_str().as_bytes())?;
-                // Format settings if requested (QUIET is already set globally)
-                if let Some(fmt) = format_owned {
-                    writer.write_all(b"\\pset tuples_only on\n")?;
-                    writer.write_all(format!("\\pset format {}\n", fmt).as_bytes())?;
-                }
-                writer.write_all(query_str.as_bytes())?;
-                Ok(())
-            }),
-            Some(Box::new(SharedBufWriter(stdout_buf_clone))),
-            false, // Don't merge stderr for internal queries
-        )
-        .await
-        .map_err(|e| anyhow!("SQL execution failed: {}", e))?;
+        let outcome = self
+            .execute_with_writer(
+                Box::new(move |writer| {
+                    // Switch database if requested
+                    writer.write_all(db_connect.as_str().as_bytes())?;
+                    // Format settings if requested (QUIET is already set globally)
+                    if let Some(fmt) = format_owned {
+                        writer.write_all(b"\\pset tuples_only on\n")?;
+                        writer.write_all(format!("\\pset format {}\n", fmt).as_bytes())?;
+                    }
+                    writer.write_all(query_str.as_bytes())?;
+                    Ok(())
+                }),
+                Some(&mut stdout_buf as &mut (dyn tokio::io::AsyncWrite + Send + Unpin)),
+                &mut stderr_buf,
+            )
+            .await;
 
-        let buf = stdout_buf.lock().unwrap();
-        Ok(String::from_utf8_lossy(&buf).to_string())
+        if let Err(e) = outcome {
+            return Err(anyhow!(
+                "SQL execution failed: {}: {}",
+                e,
+                String::from_utf8_lossy(&stderr_buf).trim()
+            ));
+        }
+
+        Ok(String::from_utf8_lossy(&stdout_buf).to_string())
     }
 
     async fn migration_table_exists(&self) -> Result<bool> {
@@ -826,29 +744,25 @@ impl PSQL {
             description,
         );
 
-        self.execute_with_writer(
-            Box::new(move |writer| {
-                writer.write_all(record_query.as_str().as_bytes())?;
-                Ok(())
-            }),
-            None,
-            false, // Don't merge stderr for recording migrations
-        )
-        .await
-        .map_err(|e| match e {
-            EngineError::ExecutionFailed { exit_code, stderr } => {
-                MigrationError::Database(anyhow!(
-                    "Failed to record migration (exit {}): {}",
-                    exit_code,
-                    stderr
-                ))
-            }
-            EngineError::Io(e) => MigrationError::Database(e.into()),
-            // Only `run_script` produces this; `execute_with_writer` never does.
-            EngineError::Unavailable { message } => {
-                MigrationError::Database(anyhow!("Failed to record migration: {}", message))
-            }
-        })?;
+        let mut diagnostics: Vec<u8> = Vec::new();
+        let outcome = self
+            .execute_with_writer(
+                Box::new(move |writer| {
+                    writer.write_all(record_query.as_str().as_bytes())?;
+                    Ok(())
+                }),
+                None,
+                &mut diagnostics,
+            )
+            .await;
+
+        if let Err(e) = outcome {
+            return Err(MigrationError::Database(anyhow!(
+                "Failed to record migration ({}): {}",
+                e,
+                String::from_utf8_lossy(&diagnostics).trim()
+            )));
+        }
 
         Ok(())
     }
@@ -910,6 +824,7 @@ impl PSQL {
         let lock_checksum = migration_lock_key();
 
         // Session 1: Run the migration SQL only
+        let mut diagnostics: Vec<u8> = Vec::new();
         let migration_result = self
             .execute_with_writer(
                 Box::new(move |writer| {
@@ -932,7 +847,7 @@ impl PSQL {
                     Ok(())
                 }),
                 None,
-                false, // Don't merge stderr for migration apply
+                &mut diagnostics,
             )
             .await;
 
@@ -942,7 +857,8 @@ impl PSQL {
         let (status, migration_error): (MigrationStatus, Option<anyhow::Error>) =
             match migration_result {
                 Ok(()) => (MigrationStatus::Success, None),
-                Err(EngineError::ExecutionFailed { exit_code, stderr }) => {
+                Err(EngineError::ExecutionFailed { exit_code }) => {
+                    let stderr = String::from_utf8_lossy(&diagnostics).to_string();
                     if stderr.contains("Could not acquire advisory lock") {
                         return Err(MigrationError::AdvisoryLock(std::io::Error::other(stderr)));
                     }

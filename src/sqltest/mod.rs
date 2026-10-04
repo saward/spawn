@@ -102,7 +102,7 @@ impl Tester {
             .await
             .context("failed to run test script against the database")?;
 
-        Ok(transcript.to_string_lossy())
+        Ok(transcript.golden_output_lossy())
     }
 
     pub async fn run_compare(
