@@ -198,6 +198,11 @@ pub enum EngineError {
     #[error("execution failed (exit {exit_code}): {stderr}")]
     ExecutionFailed { exit_code: i32, stderr: String },
 
+    /// The script could not be run at all. A statement inside the script
+    /// failing is not this — `Engine::run_script` puts that in the transcript.
+    #[error("engine unavailable: {message}")]
+    Unavailable { message: String },
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -332,24 +337,38 @@ async fn resolve_provider(provider: &[String]) -> Result<Vec<String>> {
 /// Writes the script to execute into the sink the engine supplies.
 pub type ScriptSource = Box<dyn FnOnce(&mut dyn std::io::Write) -> std::io::Result<()> + Send>;
 
-/// A destination the engine pushes captured output into.
-pub type OutputSink = Box<dyn tokio::io::AsyncWrite + Send + Unpin>;
+/// A transcript of a script run: results and diagnostics in execution order,
+/// rendered however the engine that produced it renders them.
+pub struct Transcript(Vec<u8>);
+
+impl Transcript {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+
+    /// Lossy UTF-8 view, for comparing or displaying the transcript as text.
+    pub fn to_string_lossy(&self) -> String {
+        String::from_utf8_lossy(&self.0).into_owned()
+    }
+}
 
 #[async_trait]
 pub trait Engine: Send + Sync {
-    /// Execute a script by running the provided source closure.
-    /// - `script`: Closure that writes the script to the provided Write handle
-    /// - `output`: Optional sink to capture stdout. If None, stdout is discarded.
-    /// - `merge_stderr`: If true and `output` is Some, stderr is merged into stdout
-    ///                   at the OS level for true interleaving. Useful for tests.
-    ///                   Note: when merged, stderr is not separately available in errors.
-    /// Engine-specific setup (like psql flags) is handled internally.
-    /// Returns stderr content on failure.
-    async fn execute_with_writer(
+    /// Runs `script` against the target, writing a transcript of the session to
+    /// `out` as it goes.
+    ///
+    /// A failing statement is not an error: its diagnostics go in the
+    /// transcript, so failure cases stay comparable against a golden file.
+    /// `Err` means the script could not be run, or was cut short. Bytes already
+    /// written to `out` are retained either way.
+    async fn run_script(
         &self,
         script: ScriptSource,
-        output: Option<OutputSink>,
-        merge_stderr: bool,
+        out: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
     ) -> Result<(), EngineError>;
 
     /// Applies a migration and records the outcome.
@@ -395,6 +414,23 @@ pub trait Engine: Send + Sync {
         &self,
         namespace: Option<&str>,
     ) -> MigrationResult<Vec<MigrationDbInfo>>;
+}
+
+/// Convenience built on [`Engine`]. Blanket-implemented so it cannot be
+/// overridden, which keeps collected and streamed transcripts identical.
+#[async_trait]
+pub trait EngineExt {
+    /// Runs `script` and collects the whole transcript in memory.
+    async fn transcript(&self, script: ScriptSource) -> Result<Transcript, EngineError>;
+}
+
+#[async_trait]
+impl<T: Engine + ?Sized> EngineExt for T {
+    async fn transcript(&self, script: ScriptSource) -> Result<Transcript, EngineError> {
+        let mut buf: Vec<u8> = Vec::new();
+        self.run_script(script, &mut buf).await?;
+        Ok(Transcript(buf))
+    }
 }
 
 #[cfg(test)]
