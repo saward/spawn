@@ -47,7 +47,7 @@ impl fmt::Display for MigrationStatus {
 pub enum MigrationActivity {
     Apply,
     Adopt,
-    Revert,
+    Down,
 }
 
 impl MigrationActivity {
@@ -56,7 +56,7 @@ impl MigrationActivity {
         match self {
             MigrationActivity::Apply => "APPLY",
             MigrationActivity::Adopt => "ADOPT",
-            MigrationActivity::Revert => "REVERT",
+            MigrationActivity::Down => "DOWN",
         }
     }
 }
@@ -195,8 +195,13 @@ pub type MigrationResult<T> = Result<T, MigrationError>;
 /// Errors for streaming SQL execution
 #[derive(Debug, Error)]
 pub enum EngineError {
-    #[error("execution failed (exit {exit_code}): {stderr}")]
-    ExecutionFailed { exit_code: i32, stderr: String },
+    #[error("execution failed (exit {exit_code})")]
+    ExecutionFailed { exit_code: i32 },
+
+    /// The script could not be run at all. A statement inside the script
+    /// failing is not this — `Engine::run_script` puts that in the transcript.
+    #[error("engine unavailable: {message}")]
+    Unavailable { message: String },
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -329,27 +334,73 @@ async fn resolve_provider(provider: &[String]) -> Result<Vec<String>> {
     shlex::split(&trimmed).ok_or_else(|| anyhow!("Failed to parse shell command: {}", trimmed))
 }
 
-/// Type alias for the writer closure used in execute_with_writer
-pub type WriterFn = Box<dyn FnOnce(&mut dyn std::io::Write) -> std::io::Result<()> + Send>;
+/// Writes the script to execute into the sink the engine supplies.
+pub type ScriptSource = Box<dyn FnOnce(&mut dyn std::io::Write) -> std::io::Result<()> + Send>;
 
-/// Type alias for an optional stdout writer to capture output
-pub type StdoutWriter = Option<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>;
+/// Where an engine writes a script's output.
+///
+/// The split is about *ordering*, not kinds of output: everything an engine can
+/// place in sequence goes to `results`, and `diagnostics` takes only what it
+/// cannot order against that. psql must split, because its stdout and stderr
+/// are separately buffered and their relative order is unrecoverable.
+pub struct ScriptOutput<'a> {
+    pub results: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+    pub diagnostics: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+}
+
+/// A collected [`ScriptOutput`].
+pub struct Transcript {
+    results: Vec<u8>,
+    diagnostics: Vec<u8>,
+}
+
+/// Marks the start of diagnostics in [`Transcript::golden_output_lossy`].
+///
+/// Not engine-owned: no engine emits it, it exists only on flattening.
+pub const DIAGNOSTICS_SEPARATOR: &str = "--- diagnostics ---";
+
+impl Transcript {
+    pub fn results(&self) -> &[u8] {
+        &self.results
+    }
+
+    pub fn diagnostics(&self) -> &[u8] {
+        &self.diagnostics
+    }
+
+    /// Renders this transcript as a golden file: results, then any diagnostics
+    /// under [`DIAGNOSTICS_SEPARATOR`]. With no diagnostics, renders the
+    /// results verbatim.
+    pub fn golden_output_lossy(&self) -> String {
+        let results = String::from_utf8_lossy(&self.results);
+        let diagnostics = String::from_utf8_lossy(&self.diagnostics);
+        if diagnostics.is_empty() {
+            return results.into_owned();
+        }
+        let gap = if results.is_empty() || results.ends_with('\n') {
+            ""
+        } else {
+            "\n"
+        };
+        format!(
+            "{}{}{}\n{}",
+            results, gap, DIAGNOSTICS_SEPARATOR, diagnostics
+        )
+    }
+}
 
 #[async_trait]
 pub trait Engine: Send + Sync {
-    /// Execute SQL by running the provided writer function.
-    /// - `write_fn`: Closure that writes SQL to the provided Write handle
-    /// - `stdout_writer`: Optional writer to capture stdout. If None, stdout is discarded.
-    /// - `merge_stderr`: If true and stdout_writer is Some, stderr is merged into stdout
-    ///                   at the OS level for true interleaving. Useful for tests.
-    ///                   Note: when merged, stderr is not separately available in errors.
-    /// Engine-specific setup (like psql flags) is handled internally.
-    /// Returns stderr content on failure.
-    async fn execute_with_writer(
+    /// Runs `script` against the target, writing its output to `out` as it goes.
+    ///
+    /// A failing statement is not an error: its diagnostics belong in the
+    /// output, so failure cases stay comparable against a golden file. `Err`
+    /// means the script could not be run, or was cut short. Bytes already
+    /// written to `out` are retained either way.
+    async fn run_script(
         &self,
-        write_fn: WriterFn,
-        stdout_writer: StdoutWriter,
-        merge_stderr: bool,
+        script: ScriptSource,
+        out: ScriptOutput<'_>,
     ) -> Result<(), EngineError>;
 
     /// Applies a migration and records the outcome.
@@ -361,12 +412,22 @@ pub trait Engine: Send + Sync {
     async fn migration_apply(
         &self,
         migration_name: &str,
-        write_fn: WriterFn,
+        script: ScriptSource,
         checksum: String,
         pin_hash: Option<String>,
         namespace: &str,
         retry: bool,
     ) -> MigrationResult<String>;
+
+    // async fn migration_down(
+    //     &self,
+    //     migration_name: &str,
+    //     script: ScriptSource,
+    //     checksum: String,
+    //     pin_hash: Option<String>,
+    //     namespace: &str,
+    //     retry: bool,
+    // ) -> MigrationResult<String>;
 
     /// Adopt a migration without applying it.
     /// Creates a dummy table entry marking the migration as having been applied manually.
@@ -387,9 +448,70 @@ pub trait Engine: Send + Sync {
     ) -> MigrationResult<Vec<MigrationDbInfo>>;
 }
 
+/// Convenience built on [`Engine`]. Blanket-implemented so it cannot be
+/// overridden, which keeps collected and streamed transcripts identical.
+#[async_trait]
+pub trait EngineExt {
+    /// Runs `script` and collects the whole transcript in memory.
+    async fn transcript(&self, script: ScriptSource) -> Result<Transcript, EngineError>;
+}
+
+#[async_trait]
+impl<T: Engine + ?Sized> EngineExt for T {
+    async fn transcript(&self, script: ScriptSource) -> Result<Transcript, EngineError> {
+        let mut results: Vec<u8> = Vec::new();
+        let mut diagnostics: Vec<u8> = Vec::new();
+        self.run_script(
+            script,
+            ScriptOutput {
+                results: &mut results,
+                diagnostics: &mut diagnostics,
+            },
+        )
+        .await?;
+        Ok(Transcript {
+            results,
+            diagnostics,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn transcript(results: &str, diagnostics: &str) -> Transcript {
+        Transcript {
+            results: results.as_bytes().to_vec(),
+            diagnostics: diagnostics.as_bytes().to_vec(),
+        }
+    }
+
+    // Existing golden files were recorded from runs with no diagnostics, so a
+    // transcript without them has to render byte-identically to its results.
+    #[test]
+    fn golden_output_lossy_adds_nothing_when_there_are_no_diagnostics() {
+        let t = transcript("CREATE DATABASE\n(1 row)\n", "");
+        assert_eq!(t.golden_output_lossy(), "CREATE DATABASE\n(1 row)\n");
+    }
+
+    #[test]
+    fn golden_output_lossy_puts_diagnostics_under_a_separator() {
+        let t = transcript("SELECT 1\n", "ERROR:  boom\n");
+        assert_eq!(
+            t.golden_output_lossy(),
+            "SELECT 1\n--- diagnostics ---\nERROR:  boom\n"
+        );
+    }
+
+    #[test]
+    fn golden_output_lossy_keeps_the_separator_on_its_own_line() {
+        let t = transcript("no trailing newline", "ERROR:  boom\n");
+        assert_eq!(
+            t.golden_output_lossy(),
+            "no trailing newline\n--- diagnostics ---\nERROR:  boom\n"
+        );
+    }
 
     // Both scenarios live in one test (rather than two) since they share a
     // process-global env var: running them as separate tests would race

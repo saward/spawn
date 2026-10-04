@@ -128,11 +128,11 @@ impl Command for ApplyMigration {
                             new_engine.as_ref().unwrap().as_ref()
                         }
                     };
-                    let (write_fn, secrets) = streaming.into_writer_fn();
+                    let (script, secrets) = streaming.into_script_source();
                     match engine
                         .migration_apply(
                             &migration,
-                            write_fn,
+                            script,
                             checksum,
                             Some(pin_hash),
                             super::DEFAULT_NAMESPACE,

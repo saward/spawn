@@ -352,7 +352,7 @@ pub struct Generation {
 }
 
 /// Holds all the data needed to render a template to a writer.
-/// This struct is Send and can be moved into a WriterFn closure.
+/// This struct is Send and can be moved into a ScriptSource closure.
 pub struct StreamingGeneration {
     store: Store,
     template_contents: String,
@@ -416,19 +416,19 @@ impl StreamingGeneration {
         Ok(())
     }
 
-    /// Convert this streaming generation into a WriterFn that can be passed
+    /// Convert this streaming generation into a ScriptSource that can be passed
     /// to migration_apply, along with a handle to the same secrets
     /// repository the render will use. That handle stays readable after the
     /// closure runs (e.g. once psql has exited), so a caller whose apply
     /// failed can find out which secret values were actually resolved and
     /// redact them from captured output before it's displayed or logged.
-    pub fn into_writer_fn(self) -> (crate::engine::WriterFn, Arc<SecretsRepository>) {
+    pub fn into_script_source(self) -> (crate::engine::ScriptSource, Arc<SecretsRepository>) {
         let secrets = Arc::clone(&self.secrets);
-        let write_fn = Box::new(move |writer: &mut dyn std::io::Write| {
+        let script = Box::new(move |writer: &mut dyn std::io::Write| {
             self.render_to_writer(writer)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
         });
-        (write_fn, secrets)
+        (script, secrets)
     }
 }
 

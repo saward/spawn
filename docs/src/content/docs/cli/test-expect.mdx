@@ -24,8 +24,10 @@ Runs a test and saves its output as the new expected result for future compariso
 ## Behavior
 
 1. Runs the specified test
-2. Captures the output
+2. Captures its output
 3. Writes it to `tests/<name>/expected`
+
+Everything the test produced goes in that one file: query output first, then any `NOTICE`, `WARNING` or error messages. See [`spawn test compare`](/cli/test-compare/#notices-and-errors) for the format.
 
 Use this command when test behavior changes intentionally and you want to update the baseline for [`spawn test compare`](/cli/test-compare/).
 

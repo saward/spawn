@@ -5,8 +5,8 @@
 use crate::config::FolderPather;
 use crate::engine::{
     resolve_command_spec, Engine, EngineError, ExistingMigrationInfo, MigrationActivity,
-    MigrationError, MigrationHistoryStatus, MigrationResult, MigrationStatus, StdoutWriter,
-    TargetConfig, WriterFn,
+    MigrationError, MigrationHistoryStatus, MigrationResult, MigrationStatus, ScriptOutput,
+    ScriptSource, TargetConfig,
 };
 use crate::escape::{EscapedIdentifier, EscapedLiteral, EscapedQuery, InsecureRawSql};
 use crate::secrets::SecretsRenderMode;
@@ -21,9 +21,7 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use twox_hash::XxHash64;
 
@@ -31,6 +29,92 @@ use twox_hash::XxHash64;
 /// This is computed as XxHash64 of "SPAWN_MIGRATION_LOCK" with seed 1234, cast to i64.
 pub fn migration_lock_key() -> i64 {
     XxHash64::oneshot(1234, "SPAWN_MIGRATION_LOCK".as_bytes()) as i64
+}
+
+/// Bytes of diagnostics kept for error reporting. The only bound: a line count
+/// as well would be the tighter of the two, and could cut the `ERROR:` headline
+/// off the top of a deep PL/pgSQL block while leaving only its stack frames.
+const TAIL_CAP: usize = 8 * 1024;
+
+/// Forwards to the caller's sink while keeping a bounded tail, so the engine can
+/// still say why a run failed after streaming the bytes away.
+struct TailCapture<'a> {
+    inner: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+    tail: Vec<u8>,
+    dropped: bool,
+}
+
+impl<'a> TailCapture<'a> {
+    fn new(inner: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin)) -> Self {
+        Self {
+            inner,
+            tail: Vec::new(),
+            dropped: false,
+        }
+    }
+}
+
+impl tokio::io::AsyncWrite for TailCapture<'_> {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let this = self.get_mut();
+        match std::pin::Pin::new(&mut *this.inner).poll_write(cx, buf) {
+            std::task::Poll::Ready(Ok(n)) => {
+                this.tail.extend_from_slice(&buf[..n]);
+                if this.tail.len() > TAIL_CAP {
+                    let excess = this.tail.len() - TAIL_CAP;
+                    this.tail.drain(..excess);
+                    this.dropped = true;
+                }
+                std::task::Poll::Ready(Ok(n))
+            }
+            other => other,
+        }
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut *self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut *self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
+/// The last whole lines of a captured tail, for quoting in an error.
+///
+/// Crops only at line boundaries: a byte cap can land inside a line, so the
+/// leading partial one is discarded rather than shown.
+fn tail_summary(tail: &[u8], dropped: bool) -> Option<String> {
+    let text = String::from_utf8_lossy(tail);
+
+    let mut body: &str = &text;
+    if dropped {
+        body = match body.find('\n') {
+            Some(i) => &body[i + 1..],
+            None => "",
+        };
+    }
+
+    let body = body.trim_end();
+    if body.is_empty() {
+        return None;
+    }
+
+    Some(if dropped {
+        format!("…\n{}", body)
+    } else {
+        body.to_string()
+    })
 }
 
 #[derive(Debug)]
@@ -175,144 +259,45 @@ impl PSQL {
 
 #[async_trait]
 impl Engine for PSQL {
-    async fn execute_with_writer(
+    async fn run_script(
         &self,
-        write_fn: WriterFn,
-        stdout_writer: StdoutWriter,
-        merge_stderr: bool,
+        script: ScriptSource,
+        out: ScriptOutput<'_>,
     ) -> Result<(), EngineError> {
-        // 1. Create the pipe for stdin
-        let (reader, mut writer) = std::io::pipe()?;
+        let ScriptOutput {
+            results,
+            diagnostics,
+        } = out;
+        let mut diagnostics = TailCapture::new(diagnostics);
 
-        // 2. Configure stdout/stderr and spawn psql
-        //
-        // When merge_stderr is true, we create our own pipe and give the
-        // write end to both stdout and stderr so the OS interleaves them.
-        // Otherwise, stdout is piped (or null) and stderr is piped separately.
-        let merge = merge_stderr && stdout_writer.is_some();
+        let outcome = self
+            .execute_with_writer(script, Some(results), &mut diagnostics)
+            .await;
 
-        let (mut child, combined_read) = if merge {
-            let (out_read, out_write) = std::io::pipe()?;
-            let out_write_dup = out_write.try_clone()?;
-            let child = Command::new(&self.psql_command[0])
-                .args(&self.psql_command[1..])
-                .stdin(Stdio::from(reader))
-                .stdout(Stdio::from(out_write))
-                .stderr(Stdio::from(out_write_dup))
-                .spawn()
-                .map_err(EngineError::Io)?;
-            (child, Some(out_read))
-        } else {
-            let stdout_config = if stdout_writer.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            };
-            let child = Command::new(&self.psql_command[0])
-                .args(&self.psql_command[1..])
-                .stdin(Stdio::from(reader))
-                .stdout(stdout_config)
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(EngineError::Io)?;
-            (child, None)
-        };
-
-        // 3. Copy output to stdout_writer if provided
-        let stdout_handle = if let Some(mut stdout_dest) = stdout_writer {
-            if let Some(mut combined_read) = combined_read {
-                // Merged mode: read from our combined pipe in a blocking
-                // thread (it's a std::io::PipeReader, not a tokio type),
-                // then write to the async destination.
-                Some(tokio::task::spawn(async move {
-                    let buf = tokio::task::spawn_blocking(move || {
-                        use std::io::Read;
-                        let mut buf = Vec::new();
-                        let _ = combined_read.read_to_end(&mut buf);
-                        buf
-                    })
-                    .await
-                    .unwrap_or_default();
-                    use tokio::io::AsyncWriteExt;
-                    let _ = stdout_dest.write_all(&buf).await;
-                }))
-            } else {
-                let mut stdout = child.stdout.take().expect("stdout should be piped");
-                Some(tokio::task::spawn(async move {
-                    use tokio::io::AsyncWriteExt;
-                    let mut buf = Vec::new();
-                    let _ = stdout.read_to_end(&mut buf).await;
-                    let _ = stdout_dest.write_all(&buf).await;
-                }))
+        match outcome {
+            Ok(()) => Ok(()),
+            // Exit 3 is a statement failing under ON_ERROR_STOP, which is on by
+            // default but a script may turn off. Either way its diagnostics are
+            // already written, so this is a normal outcome.
+            Err(EngineError::ExecutionFailed { exit_code: 3 }) => Ok(()),
+            // Exit 1 is psql itself failing, 2 a bad or lost connection. The
+            // reason went to the caller's sink, so quote the tail of it here:
+            // a caller streaming to disk cannot cheaply go back and look.
+            Err(EngineError::ExecutionFailed { exit_code }) => {
+                let message = match tail_summary(&diagnostics.tail, diagnostics.dropped) {
+                    Some(detail) => format!("psql exited with code {}: {}", exit_code, detail),
+                    None => format!("psql exited with code {}", exit_code),
+                };
+                Err(EngineError::Unavailable { message })
             }
-        } else {
-            None
-        };
-
-        // 4. Drain stderr in background (prevents deadlock).
-        //    When merged, child.stderr is None (it shares the stdout pipe).
-        let stderr_handle = if let Some(mut stderr) = child.stderr.take() {
-            Some(tokio::spawn(async move {
-                let mut buf = Vec::new();
-                let _ = stderr.read_to_end(&mut buf).await;
-                buf
-            }))
-        } else {
-            None
-        };
-
-        // 5. Run the writer function in a blocking thread
-        let writer_handle = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-            // PSQL-specific setup - QUIET must be first to suppress output from other settings
-            writer.write_all(b"\\set QUIET on\n")?;
-            writer.write_all(b"\\pset pager off\n")?;
-            writer.write_all(b"\\set ON_ERROR_STOP on\n")?;
-
-            // User's write function (template rendering, etc.)
-            write_fn(&mut writer)?;
-
-            // Writer dropped here -> EOF to psql
-            Ok(())
-        });
-
-        // 6. Wait for writing to complete. Captured rather than propagated
-        // immediately — psql may still be running and must be reaped (step 8)
-        // before we return, even on a writer failure.
-        let writer_result = writer_handle
-            .await
-            .map_err(|e| EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))
-            .and_then(|r| r.map_err(EngineError::Io));
-
-        // 7. Wait for stdout copy if applicable (must complete before we read the buffer)
-        if let Some(handle) = stdout_handle {
-            let _ = handle.await;
+            Err(e) => Err(e),
         }
-
-        // 8. Wait for psql and check result
-        let status = child.wait().await?;
-        let stderr_bytes = match stderr_handle {
-            Some(handle) => handle.await.unwrap_or_default(),
-            None => Vec::new(),
-        };
-
-        // Takes precedence over psql's own status: an aborted render can
-        // leave psql exiting 0 (e.g. a quiet rollback on early EOF).
-        writer_result?;
-
-        if !status.success() {
-            return Err(EngineError::ExecutionFailed {
-                exit_code: status.code().unwrap_or(-1),
-                stderr: String::from_utf8_lossy(&stderr_bytes).to_string(),
-            });
-        }
-
-        Ok(())
     }
 
     async fn migration_apply(
         &self,
         migration_name: &str,
-        write_fn: WriterFn,
+        script: ScriptSource,
         checksum: String,
         pin_hash: Option<String>,
         namespace: &str,
@@ -320,7 +305,7 @@ impl Engine for PSQL {
     ) -> MigrationResult<String> {
         self.apply_and_record_migration_v1(
             migration_name,
-            write_fn,
+            script,
             checksum,
             pin_hash,
             EscapedLiteral::new(namespace),
@@ -468,35 +453,100 @@ impl Engine for PSQL {
     }
 }
 
-/// A simple AsyncWrite implementation that appends to a shared Vec<u8>
-struct SharedBufWriter(Arc<Mutex<Vec<u8>>>);
-
-impl tokio::io::AsyncWrite for SharedBufWriter {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        std::task::Poll::Ready(Ok(buf.len()))
-    }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::task::Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::task::Poll::Ready(Ok(()))
-    }
-}
-
 impl PSQL {
+    /// Runs `script` through psql, streaming stdout to `results` (when given)
+    /// and stderr to `diagnostics`.
+    ///
+    /// Both pipes are drained concurrently with the write to stdin: psql blocks
+    /// once either fills, so draining them only afterwards would deadlock.
+    async fn execute_with_writer(
+        &self,
+        script: ScriptSource,
+        results: Option<&mut (dyn tokio::io::AsyncWrite + Send + Unpin)>,
+        diagnostics: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+    ) -> Result<(), EngineError> {
+        let (reader, mut writer) = std::io::pipe()?;
+
+        let stdout_config = if results.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        };
+        let mut child = Command::new(&self.psql_command[0])
+            .args(&self.psql_command[1..])
+            .stdin(Stdio::from(reader))
+            .stdout(stdout_config)
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(EngineError::Io)?;
+
+        let mut child_stdout = child.stdout.take();
+        let mut child_stderr = child.stderr.take().expect("stderr should be piped");
+
+        // Blocking thread: the render blocks, resolving secrets and loading
+        // components via `block_in_place`.
+        let writer_handle = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+            // QUIET must come first to suppress output from the other settings.
+            // All three are defaults a script is free to override.
+            writer.write_all(b"\\set QUIET on\n")?;
+            writer.write_all(b"\\pset pager off\n")?;
+            writer.write_all(b"\\set ON_ERROR_STOP on\n")?;
+
+            script(&mut writer)?;
+
+            // Writer dropped here -> EOF to psql
+            Ok(())
+        });
+
+        // A sink that fails must not stop us reading its pipe: psql blocks once
+        // the pipe fills, which stalls the other two futures and hangs the
+        // join. Drain to discard instead, and report the original error.
+        let copy_results = async {
+            match (child_stdout.as_mut(), results) {
+                (Some(src), Some(dst)) => {
+                    let result = tokio::io::copy(src, dst).await;
+                    if result.is_err() {
+                        let mut discard = tokio::io::sink();
+                        let _ = tokio::io::copy(src, &mut discard).await;
+                    }
+                    result.map(|_| ())
+                }
+                _ => Ok(()),
+            }
+        };
+        let copy_diagnostics = async {
+            let result = tokio::io::copy(&mut child_stderr, diagnostics).await;
+            if result.is_err() {
+                let mut discard = tokio::io::sink();
+                let _ = tokio::io::copy(&mut child_stderr, &mut discard).await;
+            }
+            result.map(|_| ())
+        };
+
+        // join!, not spawn: the sinks are borrowed, so they cannot be moved into
+        // a 'static task.
+        let (writer_result, results_result, diagnostics_result) =
+            tokio::join!(writer_handle, copy_results, copy_diagnostics);
+
+        let status = child.wait().await?;
+
+        // Takes precedence over psql's own status: an aborted render can leave
+        // psql exiting 0 (e.g. a quiet rollback on early EOF).
+        writer_result
+            .map_err(|e| EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))
+            .and_then(|r| r.map_err(EngineError::Io))?;
+        results_result?;
+        diagnostics_result?;
+
+        if !status.success() {
+            return Err(EngineError::ExecutionFailed {
+                exit_code: status.code().unwrap_or(-1),
+            });
+        }
+
+        Ok(())
+    }
+
     pub async fn update_schema(&self) -> Result<()> {
         // Create a memory operator from the included directory containing
         // the engine's own migration scripts
@@ -578,14 +628,14 @@ impl PSQL {
             // Prefix with \c to spawn_database if configured, so the internal
             // schema is created in the correct database.
             let db_connect = self.spawn_db_connect_command();
-            let write_fn: WriterFn = Box::new(move |writer: &mut dyn Write| {
+            let script: ScriptSource = Box::new(move |writer: &mut dyn Write| {
                 writer.write_all(db_connect.as_str().as_bytes())?;
                 writer.write_all(content.as_bytes())
             });
             match self
                 .apply_and_record_migration_v1(
                     migration_name,
-                    write_fn,
+                    script,
                     checksum,
                     None, // pin_hash not used for engine migrations
                     self.safe_spawn_namespace(),
@@ -619,30 +669,36 @@ impl PSQL {
         let format_owned = format.map(|s| s.to_string());
         let db_connect = Self::db_connect_command(database);
 
-        // Create a shared buffer to capture stdout
-        let stdout_buf = Arc::new(Mutex::new(Vec::new()));
-        let stdout_buf_clone = stdout_buf.clone();
+        let mut stdout_buf: Vec<u8> = Vec::new();
+        let mut stderr_buf: Vec<u8> = Vec::new();
 
-        self.execute_with_writer(
-            Box::new(move |writer| {
-                // Switch database if requested
-                writer.write_all(db_connect.as_str().as_bytes())?;
-                // Format settings if requested (QUIET is already set globally)
-                if let Some(fmt) = format_owned {
-                    writer.write_all(b"\\pset tuples_only on\n")?;
-                    writer.write_all(format!("\\pset format {}\n", fmt).as_bytes())?;
-                }
-                writer.write_all(query_str.as_bytes())?;
-                Ok(())
-            }),
-            Some(Box::new(SharedBufWriter(stdout_buf_clone))),
-            false, // Don't merge stderr for internal queries
-        )
-        .await
-        .map_err(|e| anyhow!("SQL execution failed: {}", e))?;
+        let outcome = self
+            .execute_with_writer(
+                Box::new(move |writer| {
+                    // Switch database if requested
+                    writer.write_all(db_connect.as_str().as_bytes())?;
+                    // Format settings if requested (QUIET is already set globally)
+                    if let Some(fmt) = format_owned {
+                        writer.write_all(b"\\pset tuples_only on\n")?;
+                        writer.write_all(format!("\\pset format {}\n", fmt).as_bytes())?;
+                    }
+                    writer.write_all(query_str.as_bytes())?;
+                    Ok(())
+                }),
+                Some(&mut stdout_buf as &mut (dyn tokio::io::AsyncWrite + Send + Unpin)),
+                &mut stderr_buf,
+            )
+            .await;
 
-        let buf = stdout_buf.lock().unwrap();
-        Ok(String::from_utf8_lossy(&buf).to_string())
+        if let Err(e) = outcome {
+            return Err(anyhow!(
+                "SQL execution failed: {}: {}",
+                e,
+                String::from_utf8_lossy(&stderr_buf).trim()
+            ));
+        }
+
+        Ok(String::from_utf8_lossy(&stdout_buf).to_string())
     }
 
     async fn migration_table_exists(&self) -> Result<bool> {
@@ -793,25 +849,25 @@ impl PSQL {
             description,
         );
 
-        self.execute_with_writer(
-            Box::new(move |writer| {
-                writer.write_all(record_query.as_str().as_bytes())?;
-                Ok(())
-            }),
-            None,
-            false, // Don't merge stderr for recording migrations
-        )
-        .await
-        .map_err(|e| match e {
-            EngineError::ExecutionFailed { exit_code, stderr } => {
-                MigrationError::Database(anyhow!(
-                    "Failed to record migration (exit {}): {}",
-                    exit_code,
-                    stderr
-                ))
-            }
-            EngineError::Io(e) => MigrationError::Database(e.into()),
-        })?;
+        let mut diagnostics: Vec<u8> = Vec::new();
+        let outcome = self
+            .execute_with_writer(
+                Box::new(move |writer| {
+                    writer.write_all(record_query.as_str().as_bytes())?;
+                    Ok(())
+                }),
+                None,
+                &mut diagnostics,
+            )
+            .await;
+
+        if let Err(e) = outcome {
+            return Err(MigrationError::Database(anyhow!(
+                "Failed to record migration ({}): {}",
+                e,
+                String::from_utf8_lossy(&diagnostics).trim()
+            )));
+        }
 
         Ok(())
     }
@@ -822,7 +878,7 @@ impl PSQL {
     async fn apply_and_record_migration_v1(
         &self,
         migration_name: &str,
-        write_fn: WriterFn,
+        script: ScriptSource,
         checksum: String,
         pin_hash: Option<String>,
         namespace: EscapedLiteral,
@@ -872,7 +928,14 @@ impl PSQL {
         let start_time = Instant::now();
         let lock_checksum = migration_lock_key();
 
-        // Session 1: Run the migration SQL only
+        // Session 1: Run the migration SQL only.
+        //
+        // Bounded: ordinary DDL emits a NOTICE per statement ("will create
+        // implicit index", "does not exist, skipping"), so a large migration
+        // produces megabytes of them on a perfectly successful run. Only the
+        // tail is kept, which is where a failure lands.
+        let mut discard = tokio::io::sink();
+        let mut diagnostics = TailCapture::new(&mut discard);
         let migration_result = self
             .execute_with_writer(
                 Box::new(move |writer| {
@@ -890,12 +953,12 @@ impl PSQL {
                     // raw template source (see StreamingGeneration::raw_checksum),
                     // computed by the caller before this closure ever runs, so it
                     // can never contain a resolved secret value.
-                    write_fn(writer)?;
+                    script(writer)?;
 
                     Ok(())
                 }),
                 None,
-                false, // Don't merge stderr for migration apply
+                &mut diagnostics,
             )
             .await;
 
@@ -905,7 +968,12 @@ impl PSQL {
         let (status, migration_error): (MigrationStatus, Option<anyhow::Error>) =
             match migration_result {
                 Ok(()) => (MigrationStatus::Success, None),
-                Err(EngineError::ExecutionFailed { exit_code, stderr }) => {
+                Err(EngineError::ExecutionFailed { exit_code }) => {
+                    // Safe against the tail evicting it: spawn sets
+                    // ON_ERROR_STOP before the lock statement, so a failed lock
+                    // exits psql immediately and nothing follows it.
+                    let stderr =
+                        tail_summary(&diagnostics.tail, diagnostics.dropped).unwrap_or_default();
                     if stderr.contains("Could not acquire advisory lock") {
                         return Err(MigrationError::AdvisoryLock(std::io::Error::other(stderr)));
                     }
@@ -923,6 +991,10 @@ impl PSQL {
                             anyhow::Error::from(e).context("failed while streaming migration SQL"),
                         ),
                     )
+                }
+                // Only `run_script` produces this; `execute_with_writer` never does.
+                Err(EngineError::Unavailable { message }) => {
+                    (MigrationStatus::Failure, Some(anyhow!("{}", message)))
                 }
             };
 
@@ -972,5 +1044,113 @@ impl PSQL {
         }
 
         Ok("Migration applied successfully".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The byte cap bounds memory, which no error message can reveal: whatever
+    // was buffered, `tail_summary` only ever quotes its last few lines. So the
+    // cap has to be checked on the buffer itself.
+    #[tokio::test]
+    async fn tail_capture_bounds_what_it_keeps_and_keeps_the_end() {
+        use tokio::io::AsyncWriteExt;
+
+        let mut discard = tokio::io::sink();
+        let mut capture = TailCapture::new(&mut discard);
+
+        for i in 0..2000 {
+            capture
+                .write_all(format!("NOTICE:  line {}\n", i).as_bytes())
+                .await
+                .unwrap();
+        }
+
+        assert!(
+            capture.tail.len() <= TAIL_CAP,
+            "kept {} bytes, cap is {}",
+            capture.tail.len(),
+            TAIL_CAP
+        );
+        assert!(
+            capture.dropped,
+            "should have recorded that it discarded data"
+        );
+
+        let kept = String::from_utf8_lossy(&capture.tail);
+        assert!(kept.ends_with("NOTICE:  line 1999\n"), "got: {:?}", kept);
+        assert!(!kept.contains("line 0\n"), "the start should be gone");
+    }
+
+    #[test]
+    fn tail_summary_returns_a_short_block_whole() {
+        let stderr = "psql: error: connection to server failed: Connection refused\n\
+                      \tIs the server running on that host?\n";
+        assert_eq!(
+            tail_summary(stderr.as_bytes(), false).unwrap(),
+            "psql: error: connection to server failed: Connection refused\n\
+             \tIs the server running on that host?"
+        );
+    }
+
+    #[test]
+    fn tail_summary_is_none_when_nothing_was_written() {
+        assert_eq!(tail_summary(b"", false), None);
+        assert_eq!(tail_summary(b"  \n\n", false), None);
+    }
+
+    // A deep PL/pgSQL error puts its stack frames *after* the headline, so a
+    // line cap applied to the tail would keep the frames and drop the cause.
+    // Verified against a real server: 12 levels of nesting produces 14 lines.
+    #[test]
+    fn tail_summary_keeps_the_headline_of_a_long_error_block() {
+        let mut stderr = String::from("ERROR:  division by zero\n");
+        stderr.push_str("CONTEXT:  SQL expression \"1/0\"\n");
+        for i in (1..=12).rev() {
+            stderr.push_str(&format!("PL/pgSQL function d{}() line 1 at RETURN\n", i));
+        }
+        assert!(stderr.lines().count() > 10, "needs to exceed the old cap");
+
+        let summary = tail_summary(stderr.as_bytes(), false).unwrap();
+        assert!(
+            summary.starts_with("ERROR:  division by zero"),
+            "the cause must survive its own stack trace, got: {}",
+            summary
+        );
+        assert!(summary.ends_with("PL/pgSQL function d1() line 1 at RETURN"));
+    }
+
+    #[test]
+    fn tail_summary_keeps_the_end_when_the_cap_bites() {
+        let mut stderr = String::new();
+        for i in 0..1000 {
+            stderr.push_str(&format!("NOTICE:  noise {}\n", i));
+        }
+        stderr.push_str("psql: error: connection to server was lost\n");
+        assert!(stderr.len() > TAIL_CAP, "needs to exceed the byte cap");
+
+        // Trimmed the way TailCapture trims, so this covers the same shape.
+        let kept = &stderr.as_bytes()[stderr.len() - TAIL_CAP..];
+        let summary = tail_summary(kept, true).unwrap();
+
+        assert!(summary.ends_with("psql: error: connection to server was lost"));
+        assert!(summary.starts_with("…\n"));
+        assert!(!summary.contains("noise 0\n"));
+    }
+
+    // A byte cap cannot know where lines are, so the first line of a capped
+    // tail is usually a fragment. It must be dropped, not shown.
+    #[test]
+    fn tail_summary_drops_the_partial_line_left_by_a_byte_cap() {
+        let summary = tail_summary(b"ection refused\nFATAL:  the real error\n", true).unwrap();
+        assert_eq!(summary, "…\nFATAL:  the real error");
+        assert!(!summary.contains("ection refused"));
+    }
+
+    #[test]
+    fn tail_summary_is_none_when_the_cap_left_only_a_fragment() {
+        assert_eq!(tail_summary(b"a dangling fragment", true), None);
     }
 }

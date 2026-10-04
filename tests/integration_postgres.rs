@@ -1800,6 +1800,75 @@ async fn test_cli_test_compare() -> Result<()> {
     Ok(())
 }
 
+/// Companion to `test_cli_test_compare` covering diagnostics specifically. The
+/// `20250113000001-notice-test` fixture emits a `NOTICE` from `DROP TABLE IF
+/// EXISTS` on a table that does not exist, so its `expected` file carries a
+/// diagnostics section below the separator. Renaming the table changes only the
+/// NOTICE text, leaving every byte of the results identical — which isolates a
+/// diagnostics-only regression and proves those are compared, not dropped.
+#[tokio::test]
+#[ignore]
+async fn test_cli_test_compare_detects_diagnostics_only_change() -> Result<()> {
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new(
+        "test_cli_test_compare_detects_diagnostics_only_change",
+        Some("./static/tests/test_cli_test"),
+    )
+    .await?;
+
+    let test_name = "20250113000001-notice-test".to_string();
+
+    // Passes against the checked-in fixture, whose expected file has a
+    // diagnostics section.
+    helper.run_test_compare(Some(test_name.clone())).await?;
+
+    // Only the table name changes, so the results are byte-identical and the
+    // NOTICE text is the sole difference.
+    let new_test = r#"\set QUIET off
+{% set dbname = "testclitestnotice" %}
+create database {{dbname|escape_identifier}} with template spawn;
+\c {{dbname|escape_identifier}}
+drop table if exists a_different_missing_table;
+select 1 as ok;
+\c postgres
+drop database {{dbname|escape_identifier}};
+"#;
+
+    helper
+        .migration_helper
+        .fs
+        .write("/db/tests/20250113000001-notice-test/test.sql", new_test)
+        .await?;
+
+    let result = helper.run_test_compare(Some(test_name.clone())).await;
+    match result {
+        Ok(_) => {
+            return Err(anyhow!(
+                "a diagnostics-only change should have failed the comparison"
+            ));
+        }
+        Err(e) => {
+            let err_str = e.to_string();
+            if !err_str.contains("error calling test compare") {
+                return Err(anyhow!("Unexpected comparison output: {}", err_str));
+            }
+        }
+    }
+
+    // Re-recording the expectation should capture the new NOTICE and pass.
+    helper
+        .run_test_expect(test_name.clone())
+        .await
+        .context("failed to update expectation")?;
+    helper
+        .run_test_compare(Some(test_name.clone()))
+        .await
+        .context("failed to compare after updating expectation")?;
+
+    Ok(())
+}
+
 /// Tests that migrations fail when another session holds the advisory lock.
 /// This verifies the concurrent migration protection works correctly.
 #[tokio::test]
@@ -2179,6 +2248,247 @@ COMMIT;"#
             );
         }
     }
+
+    Ok(())
+}
+
+/// A failing statement is part of what a golden file records, not an error:
+/// `run_script` reports psql's exit 3 as success and the message lands in the
+/// transcript's diagnostics section, below the separator.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_test_run_records_statement_errors_in_diagnostics() -> Result<()> {
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new(
+        "test_test_run_records_statement_errors_in_diagnostics",
+        None,
+    )
+    .await?;
+
+    let test_name = helper.migration_helper.create_test("error-test").await?;
+    let config = helper.migration_helper.load_config().await?;
+    helper
+        .migration_helper
+        .fs
+        .write(
+            &config.pather().test_file_path(&test_name),
+            "select 'before the error' as marker;\nselect 1 / 0;\n",
+        )
+        .await?;
+
+    let tester = spawn_db::sqltest::Tester::new(&config, &test_name);
+    let output = tester
+        .run(None)
+        .await
+        .context("a failing statement should still produce a transcript")?;
+
+    assert!(
+        output.contains("before the error"),
+        "results produced before the failure must be kept, got: {}",
+        output
+    );
+    assert!(
+        output.contains("--- diagnostics ---"),
+        "the error should appear under the diagnostics separator, got: {}",
+        output
+    );
+    let (results, diagnostics) = output
+        .split_once("--- diagnostics ---")
+        .expect("separator checked above");
+    assert!(
+        diagnostics.contains("division by zero"),
+        "psql's error belongs in the diagnostics section, got: {}",
+        diagnostics
+    );
+    assert!(
+        !results.contains("division by zero"),
+        "the error must not leak into the results section, got: {}",
+        results
+    );
+
+    Ok(())
+}
+
+/// Losing the connection mid-script is not a statement failure: it surfaces as
+/// an error, and the reason has to come with it because the caller may have
+/// streamed the diagnostics somewhere it cannot cheaply read back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_test_run_reports_why_a_lost_connection_failed() -> Result<()> {
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_test_run_reports_why_a_lost_connection_failed", None)
+            .await?;
+
+    let test_name = helper
+        .migration_helper
+        .create_test("lost-connection")
+        .await?;
+    let config = helper.migration_helper.load_config().await?;
+    helper
+        .migration_helper
+        .fs
+        .write(
+            &config.pather().test_file_path(&test_name),
+            "select pg_terminate_backend(pg_backend_pid());\n",
+        )
+        .await?;
+
+    let tester = spawn_db::sqltest::Tester::new(&config, &test_name);
+    let err = tester
+        .run(None)
+        .await
+        .expect_err("a lost connection should not be reported as a successful run");
+    let message = format!("{:#}", err);
+
+    assert!(
+        message.contains("psql exited with code 2"),
+        "a lost connection is exit 2, distinct from a statement failing, got: {}",
+        message
+    );
+    // The cause is the *first* line of psql's error block; the last is the
+    // symptom ("connection to server was lost"). Quoting one line would report
+    // the symptom and drop the reason, which is why the whole block is kept.
+    assert!(
+        message.contains("terminating connection due to administrator command"),
+        "the error must carry psql's reason, not just its exit code, got: {}",
+        message
+    );
+
+    Ok(())
+}
+
+/// Ordinary DDL emits a NOTICE per statement, so a large migration produces far
+/// more diagnostics than the failure itself. Only the tail is kept, so the error
+/// a user sees is the one that stopped the migration, not the noise before it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_migration_error_survives_a_flood_of_notices() -> Result<()> {
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_migration_error_survives_a_flood_of_notices", None)
+            .await?;
+
+    // Comfortably past the 8KB tail at roughly 55 bytes per notice.
+    let mut sql = String::from("BEGIN;\n");
+    for i in 0..400 {
+        sql.push_str(&format!(
+            "DROP TABLE IF EXISTS table_that_is_not_there_{};\n",
+            i
+        ));
+    }
+    sql.push_str("SELECT this_function_does_not_exist();\n");
+    sql.push_str("COMMIT;\n");
+
+    let migration_name = helper
+        .migration_helper
+        .create_migration_manual("notice-flood", sql)
+        .await?;
+
+    let err = helper
+        .apply_migration(&migration_name)
+        .await
+        .expect_err("the migration should fail on the bad function call");
+    let message = format!("{:#}", err);
+
+    assert!(
+        message.contains("this_function_does_not_exist"),
+        "the failure that stopped the migration must survive the notices, got: {}",
+        message
+    );
+    assert!(
+        !message.contains("table_that_is_not_there_0\""),
+        "the earliest notices should have been evicted, got: {}",
+        message
+    );
+    // 400 notices is roughly 22KB of stderr; the quoted tail is capped at 8KB,
+    // and the rest of the allowance is the error's own framing.
+    assert!(
+        message.len() < 12 * 1024,
+        "the error should be bounded well below the flood, got {} bytes",
+        message.len()
+    );
+
+    Ok(())
+}
+
+/// A sink that fails partway through: its pipe still has to be drained, or psql
+/// blocks once the pipe fills and stalls the writer and the other stream with
+/// it. The timeout is the point of the test — a regression hangs rather than
+/// failing, so without it CI would wedge instead of going red.
+struct FailingSink {
+    accepted: usize,
+}
+
+impl tokio::io::AsyncWrite for FailingSink {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        if self.accepted > 1024 {
+            return std::task::Poll::Ready(Err(std::io::Error::other("sink is full")));
+        }
+        self.accepted += buf.len();
+        std::task::Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn test_run_script_does_not_hang_when_a_sink_fails() -> Result<()> {
+    use spawn_db::engine::{Engine, ScriptOutput, ScriptSource};
+
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_run_script_does_not_hang_when_a_sink_fails", None).await?;
+    let config = helper.migration_helper.load_config().await?;
+    let engine = config.new_engine().await?;
+
+    let mut results = FailingSink { accepted: 0 };
+    let mut diagnostics: Vec<u8> = Vec::new();
+    // Far more output than a pipe buffer holds, so psql is certain to block if
+    // its stdout stops being read.
+    let script: ScriptSource =
+        Box::new(|writer| writer.write_all(b"select * from generate_series(1, 500000);\n"));
+
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        engine.run_script(
+            script,
+            ScriptOutput {
+                results: &mut results,
+                diagnostics: &mut diagnostics,
+            },
+        ),
+    )
+    .await
+    .map_err(|_| anyhow!("run_script hung: a failing sink left psql's pipe undrained"))?;
+
+    let err = outcome.expect_err("a failing sink should surface as an error");
+    assert!(
+        format!("{}", err).contains("sink is full"),
+        "the sink's own error should survive the drain, got: {}",
+        err
+    );
 
     Ok(())
 }

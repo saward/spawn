@@ -1,6 +1,7 @@
 mod adopt;
 mod apply;
 mod build;
+mod down;
 mod new;
 mod pin;
 mod status;
@@ -8,6 +9,7 @@ mod status;
 pub use adopt::AdoptMigration;
 pub use apply::ApplyMigration;
 pub use build::BuildMigration;
+pub use down::DownMigration;
 pub use new::NewMigration;
 pub use pin::{PinError, PinMigration};
 pub use status::MigrationStatus;

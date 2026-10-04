@@ -25,11 +25,31 @@ Runs tests and compares their output against saved expected results, reporting a
 
 For each test:
 
-1. Runs the test and captures output
-2. Compares output to the `expected` file in the test directory
+1. Runs the test and captures its output
+2. Compares that output to the `expected` file in the test directory
 3. Reports differences (if any)
 
 Use [`spawn test expect`](/cli/test-expect/) to update the expected output.
+
+## Notices and errors
+
+If a test produces `NOTICE`, `WARNING` or error messages, they are recorded at the end of the `expected` file, below a `--- diagnostics ---` line:
+
+```
+ ok 
+----
+  1
+(1 row)
+
+--- diagnostics ---
+NOTICE:  table "audit_log" does not exist, skipping
+```
+
+A test that produces no messages has no such line — its `expected` file is just query output.
+
+**An error does not automatically fail a test.** It is recorded like anything else and compared, so a test can deliberately expect one; it fails only if the message changes. By default PostgreSQL stops at the first error, so later statements do not run — put `\set ON_ERROR_STOP off` at the top of the test to keep going.
+
+Messages are grouped at the end rather than shown beside the statement that produced them, because PostgreSQL does not emit them in a reproducible order. If it matters where one occurred, print a marker with `\echo` and the marker will appear in the query output.
 
 ## Secrets
 

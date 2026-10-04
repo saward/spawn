@@ -11,8 +11,8 @@ pub mod test;
 pub use check::Check;
 pub use init::Init;
 pub use migration::{
-    AdoptMigration, ApplyMigration, BuildMigration, MigrationStatus, NewMigration, PinError,
-    PinMigration,
+    AdoptMigration, ApplyMigration, BuildMigration, DownMigration, MigrationStatus, NewMigration,
+    PinError, PinMigration,
 };
 pub use pin_cleanup::PinCleanup;
 pub use pin_verify::PinVerify;
