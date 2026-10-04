@@ -179,6 +179,10 @@ pub enum MigrationCommands {
         description: Option<String>,
     },
     /// Run the down script for a previously applied migration, reversing it.
+    ///
+    /// Hidden: the implementation is still a `todo!()`. Remove `hide` once
+    /// `DownMigration::execute` is written.
+    #[command(hide = true)]
     Down {
         /// Migration to take down
         #[arg(add = ArgValueCompleter::new(complete_migrations))]
