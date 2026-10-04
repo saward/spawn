@@ -2359,3 +2359,56 @@ async fn test_test_run_reports_why_a_lost_connection_failed() -> Result<()> {
 
     Ok(())
 }
+
+/// Ordinary DDL emits a NOTICE per statement, so a large migration produces far
+/// more diagnostics than the failure itself. Only the tail is kept, so the error
+/// a user sees is the one that stopped the migration, not the noise before it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_migration_error_survives_a_flood_of_notices() -> Result<()> {
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_migration_error_survives_a_flood_of_notices", None)
+            .await?;
+
+    // Comfortably past the 8KB tail at roughly 55 bytes per notice.
+    let mut sql = String::from("BEGIN;\n");
+    for i in 0..400 {
+        sql.push_str(&format!(
+            "DROP TABLE IF EXISTS table_that_is_not_there_{};\n",
+            i
+        ));
+    }
+    sql.push_str("SELECT this_function_does_not_exist();\n");
+    sql.push_str("COMMIT;\n");
+
+    let migration_name = helper
+        .migration_helper
+        .create_migration_manual("notice-flood", sql)
+        .await?;
+
+    let err = helper
+        .apply_migration(&migration_name)
+        .await
+        .expect_err("the migration should fail on the bad function call");
+    let message = format!("{:#}", err);
+
+    assert!(
+        message.contains("this_function_does_not_exist"),
+        "the failure that stopped the migration must survive the notices, got: {}",
+        message
+    );
+    assert!(
+        !message.contains("table_that_is_not_there_0\""),
+        "the earliest notices should have been evicted, got: {}",
+        message
+    );
+    assert!(
+        message.len() < 8192,
+        "the error should be bounded, got {} bytes",
+        message.len()
+    );
+
+    Ok(())
+}

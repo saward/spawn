@@ -922,8 +922,14 @@ impl PSQL {
         let start_time = Instant::now();
         let lock_checksum = migration_lock_key();
 
-        // Session 1: Run the migration SQL only
-        let mut diagnostics: Vec<u8> = Vec::new();
+        // Session 1: Run the migration SQL only.
+        //
+        // Bounded: ordinary DDL emits a NOTICE per statement ("will create
+        // implicit index", "does not exist, skipping"), so a large migration
+        // produces megabytes of them on a perfectly successful run. Only the
+        // tail is kept, which is where a failure lands.
+        let mut discard = tokio::io::sink();
+        let mut diagnostics = TailCapture::new(&mut discard);
         let migration_result = self
             .execute_with_writer(
                 Box::new(move |writer| {
@@ -957,7 +963,11 @@ impl PSQL {
             match migration_result {
                 Ok(()) => (MigrationStatus::Success, None),
                 Err(EngineError::ExecutionFailed { exit_code }) => {
-                    let stderr = String::from_utf8_lossy(&diagnostics).to_string();
+                    // Safe against the tail evicting it: spawn sets
+                    // ON_ERROR_STOP before the lock statement, so a failed lock
+                    // exits psql immediately and nothing follows it.
+                    let stderr =
+                        tail_summary(&diagnostics.tail, diagnostics.dropped).unwrap_or_default();
                     if stderr.contains("Could not acquire advisory lock") {
                         return Err(MigrationError::AdvisoryLock(std::io::Error::other(stderr)));
                     }
@@ -1034,6 +1044,39 @@ impl PSQL {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The byte cap bounds memory, which no error message can reveal: whatever
+    // was buffered, `tail_summary` only ever quotes its last few lines. So the
+    // cap has to be checked on the buffer itself.
+    #[tokio::test]
+    async fn tail_capture_bounds_what_it_keeps_and_keeps_the_end() {
+        use tokio::io::AsyncWriteExt;
+
+        let mut discard = tokio::io::sink();
+        let mut capture = TailCapture::new(&mut discard);
+
+        for i in 0..2000 {
+            capture
+                .write_all(format!("NOTICE:  line {}\n", i).as_bytes())
+                .await
+                .unwrap();
+        }
+
+        assert!(
+            capture.tail.len() <= TAIL_CAP,
+            "kept {} bytes, cap is {}",
+            capture.tail.len(),
+            TAIL_CAP
+        );
+        assert!(
+            capture.dropped,
+            "should have recorded that it discarded data"
+        );
+
+        let kept = String::from_utf8_lossy(&capture.tail);
+        assert!(kept.ends_with("NOTICE:  line 1999\n"), "got: {:?}", kept);
+        assert!(!kept.contains("line 0\n"), "the start should be gone");
+    }
 
     #[test]
     fn tail_summary_returns_a_short_block_whole() {
