@@ -31,13 +31,10 @@ pub fn migration_lock_key() -> i64 {
     XxHash64::oneshot(1234, "SPAWN_MIGRATION_LOCK".as_bytes()) as i64
 }
 
-/// Bytes of diagnostics kept for error reporting. Far more than any psql error
-/// block, and bounded so a script that floods stderr cannot grow this.
+/// Bytes of diagnostics kept for error reporting. The only bound: a line count
+/// as well would be the tighter of the two, and could cut the `ERROR:` headline
+/// off the top of a deep PL/pgSQL block while leaving only its stack frames.
 const TAIL_CAP: usize = 8 * 1024;
-
-/// Lines of that tail quoted in an error. psql error blocks are a headline plus
-/// indented hints, never close to this many.
-const TAIL_LINES: usize = 10;
 
 /// Forwards to the caller's sink while keeping a bounded tail, so the engine can
 /// still say why a run failed after streaming the bytes away.
@@ -113,14 +110,10 @@ fn tail_summary(tail: &[u8], dropped: bool) -> Option<String> {
         return None;
     }
 
-    let lines: Vec<&str> = body.lines().collect();
-    let start = lines.len().saturating_sub(TAIL_LINES);
-    let joined = lines[start..].join("\n");
-
-    Some(if dropped || start > 0 {
-        format!("…\n{}", joined)
+    Some(if dropped {
+        format!("…\n{}", body)
     } else {
-        joined
+        body.to_string()
     })
 }
 
@@ -1108,18 +1101,41 @@ mod tests {
         assert_eq!(tail_summary(b"  \n\n", false), None);
     }
 
+    // A deep PL/pgSQL error puts its stack frames *after* the headline, so a
+    // line cap applied to the tail would keep the frames and drop the cause.
+    // Verified against a real server: 12 levels of nesting produces 14 lines.
     #[test]
-    fn tail_summary_keeps_the_last_lines_not_the_first() {
-        // The failure is always last, so that is the end worth quoting.
+    fn tail_summary_keeps_the_headline_of_a_long_error_block() {
+        let mut stderr = String::from("ERROR:  division by zero\n");
+        stderr.push_str("CONTEXT:  SQL expression \"1/0\"\n");
+        for i in (1..=12).rev() {
+            stderr.push_str(&format!("PL/pgSQL function d{}() line 1 at RETURN\n", i));
+        }
+        assert!(stderr.lines().count() > 10, "needs to exceed the old cap");
+
+        let summary = tail_summary(stderr.as_bytes(), false).unwrap();
+        assert!(
+            summary.starts_with("ERROR:  division by zero"),
+            "the cause must survive its own stack trace, got: {}",
+            summary
+        );
+        assert!(summary.ends_with("PL/pgSQL function d1() line 1 at RETURN"));
+    }
+
+    #[test]
+    fn tail_summary_keeps_the_end_when_the_cap_bites() {
         let mut stderr = String::new();
-        for i in 0..100 {
+        for i in 0..1000 {
             stderr.push_str(&format!("NOTICE:  noise {}\n", i));
         }
         stderr.push_str("psql: error: connection to server was lost\n");
+        assert!(stderr.len() > TAIL_CAP, "needs to exceed the byte cap");
 
-        let summary = tail_summary(stderr.as_bytes(), false).unwrap();
+        // Trimmed the way TailCapture trims, so this covers the same shape.
+        let kept = &stderr.as_bytes()[stderr.len() - TAIL_CAP..];
+        let summary = tail_summary(kept, true).unwrap();
+
         assert!(summary.ends_with("psql: error: connection to server was lost"));
-        assert_eq!(summary.lines().count(), TAIL_LINES + 1); // + the "…" marker
         assert!(summary.starts_with("…\n"));
         assert!(!summary.contains("noise 0\n"));
     }

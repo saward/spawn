@@ -2404,9 +2404,11 @@ async fn test_migration_error_survives_a_flood_of_notices() -> Result<()> {
         "the earliest notices should have been evicted, got: {}",
         message
     );
+    // 400 notices is roughly 22KB of stderr; the quoted tail is capped at 8KB,
+    // and the rest of the allowance is the error's own framing.
     assert!(
-        message.len() < 8192,
-        "the error should be bounded, got {} bytes",
+        message.len() < 12 * 1024,
+        "the error should be bounded well below the flood, got {} bytes",
         message.len()
     );
 
