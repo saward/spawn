@@ -2251,3 +2251,111 @@ COMMIT;"#
 
     Ok(())
 }
+
+/// A failing statement is part of what a golden file records, not an error:
+/// `run_script` reports psql's exit 3 as success and the message lands in the
+/// transcript's diagnostics section, below the separator.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_test_run_records_statement_errors_in_diagnostics() -> Result<()> {
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new(
+        "test_test_run_records_statement_errors_in_diagnostics",
+        None,
+    )
+    .await?;
+
+    let test_name = helper.migration_helper.create_test("error-test").await?;
+    let config = helper.migration_helper.load_config().await?;
+    helper
+        .migration_helper
+        .fs
+        .write(
+            &config.pather().test_file_path(&test_name),
+            "select 'before the error' as marker;\nselect 1 / 0;\n",
+        )
+        .await?;
+
+    let tester = spawn_db::sqltest::Tester::new(&config, &test_name);
+    let output = tester
+        .run(None)
+        .await
+        .context("a failing statement should still produce a transcript")?;
+
+    assert!(
+        output.contains("before the error"),
+        "results produced before the failure must be kept, got: {}",
+        output
+    );
+    assert!(
+        output.contains("--- diagnostics ---"),
+        "the error should appear under the diagnostics separator, got: {}",
+        output
+    );
+    let (results, diagnostics) = output
+        .split_once("--- diagnostics ---")
+        .expect("separator checked above");
+    assert!(
+        diagnostics.contains("division by zero"),
+        "psql's error belongs in the diagnostics section, got: {}",
+        diagnostics
+    );
+    assert!(
+        !results.contains("division by zero"),
+        "the error must not leak into the results section, got: {}",
+        results
+    );
+
+    Ok(())
+}
+
+/// Losing the connection mid-script is not a statement failure: it surfaces as
+/// an error, and the reason has to come with it because the caller may have
+/// streamed the diagnostics somewhere it cannot cheaply read back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_test_run_reports_why_a_lost_connection_failed() -> Result<()> {
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_test_run_reports_why_a_lost_connection_failed", None)
+            .await?;
+
+    let test_name = helper
+        .migration_helper
+        .create_test("lost-connection")
+        .await?;
+    let config = helper.migration_helper.load_config().await?;
+    helper
+        .migration_helper
+        .fs
+        .write(
+            &config.pather().test_file_path(&test_name),
+            "select pg_terminate_backend(pg_backend_pid());\n",
+        )
+        .await?;
+
+    let tester = spawn_db::sqltest::Tester::new(&config, &test_name);
+    let err = tester
+        .run(None)
+        .await
+        .expect_err("a lost connection should not be reported as a successful run");
+    let message = format!("{:#}", err);
+
+    assert!(
+        message.contains("psql exited with code 2"),
+        "a lost connection is exit 2, distinct from a statement failing, got: {}",
+        message
+    );
+    // The cause is the *first* line of psql's error block; the last is the
+    // symptom ("connection to server was lost"). Quoting one line would report
+    // the symptom and drop the reason, which is why the whole block is kept.
+    assert!(
+        message.contains("terminating connection due to administrator command"),
+        "the error must carry psql's reason, not just its exit code, got: {}",
+        message
+    );
+
+    Ok(())
+}

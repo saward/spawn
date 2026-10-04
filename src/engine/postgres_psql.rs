@@ -31,6 +31,99 @@ pub fn migration_lock_key() -> i64 {
     XxHash64::oneshot(1234, "SPAWN_MIGRATION_LOCK".as_bytes()) as i64
 }
 
+/// Bytes of diagnostics kept for error reporting. Far more than any psql error
+/// block, and bounded so a script that floods stderr cannot grow this.
+const TAIL_CAP: usize = 8 * 1024;
+
+/// Lines of that tail quoted in an error. psql error blocks are a headline plus
+/// indented hints, never close to this many.
+const TAIL_LINES: usize = 10;
+
+/// Forwards to the caller's sink while keeping a bounded tail, so the engine can
+/// still say why a run failed after streaming the bytes away.
+struct TailCapture<'a> {
+    inner: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+    tail: Vec<u8>,
+    dropped: bool,
+}
+
+impl<'a> TailCapture<'a> {
+    fn new(inner: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin)) -> Self {
+        Self {
+            inner,
+            tail: Vec::new(),
+            dropped: false,
+        }
+    }
+}
+
+impl tokio::io::AsyncWrite for TailCapture<'_> {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let this = self.get_mut();
+        match std::pin::Pin::new(&mut *this.inner).poll_write(cx, buf) {
+            std::task::Poll::Ready(Ok(n)) => {
+                this.tail.extend_from_slice(&buf[..n]);
+                if this.tail.len() > TAIL_CAP {
+                    let excess = this.tail.len() - TAIL_CAP;
+                    this.tail.drain(..excess);
+                    this.dropped = true;
+                }
+                std::task::Poll::Ready(Ok(n))
+            }
+            other => other,
+        }
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut *self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut *self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
+/// The last whole lines of a captured tail, for quoting in an error.
+///
+/// Crops only at line boundaries: a byte cap can land inside a line, so the
+/// leading partial one is discarded rather than shown.
+fn tail_summary(tail: &[u8], dropped: bool) -> Option<String> {
+    let text = String::from_utf8_lossy(tail);
+
+    let mut body: &str = &text;
+    if dropped {
+        body = match body.find('\n') {
+            Some(i) => &body[i + 1..],
+            None => "",
+        };
+    }
+
+    let body = body.trim_end();
+    if body.is_empty() {
+        return None;
+    }
+
+    let lines: Vec<&str> = body.lines().collect();
+    let start = lines.len().saturating_sub(TAIL_LINES);
+    let joined = lines[start..].join("\n");
+
+    Some(if dropped || start > 0 {
+        format!("…\n{}", joined)
+    } else {
+        joined
+    })
+}
+
 #[derive(Debug)]
 pub struct PSQL {
     psql_command: Vec<String>,
@@ -182,9 +275,10 @@ impl Engine for PSQL {
             results,
             diagnostics,
         } = out;
+        let mut diagnostics = TailCapture::new(diagnostics);
 
         let outcome = self
-            .execute_with_writer(script, Some(results), diagnostics)
+            .execute_with_writer(script, Some(results), &mut diagnostics)
             .await;
 
         match outcome {
@@ -194,10 +288,15 @@ impl Engine for PSQL {
             // already written, so this is a normal outcome.
             Err(EngineError::ExecutionFailed { exit_code: 3 }) => Ok(()),
             // Exit 1 is psql itself failing, 2 a bad or lost connection. The
-            // reason is in `diagnostics`, which the caller still holds.
-            Err(EngineError::ExecutionFailed { exit_code }) => Err(EngineError::Unavailable {
-                message: format!("psql exited with code {}", exit_code),
-            }),
+            // reason went to the caller's sink, so quote the tail of it here:
+            // a caller streaming to disk cannot cheaply go back and look.
+            Err(EngineError::ExecutionFailed { exit_code }) => {
+                let message = match tail_summary(&diagnostics.tail, diagnostics.dropped) {
+                    Some(detail) => format!("psql exited with code {}: {}", exit_code, detail),
+                    None => format!("psql exited with code {}", exit_code),
+                };
+                Err(EngineError::Unavailable { message })
+            }
             Err(e) => Err(e),
         }
     }
@@ -929,5 +1028,57 @@ impl PSQL {
         }
 
         Ok("Migration applied successfully".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tail_summary_returns_a_short_block_whole() {
+        let stderr = "psql: error: connection to server failed: Connection refused\n\
+                      \tIs the server running on that host?\n";
+        assert_eq!(
+            tail_summary(stderr.as_bytes(), false).unwrap(),
+            "psql: error: connection to server failed: Connection refused\n\
+             \tIs the server running on that host?"
+        );
+    }
+
+    #[test]
+    fn tail_summary_is_none_when_nothing_was_written() {
+        assert_eq!(tail_summary(b"", false), None);
+        assert_eq!(tail_summary(b"  \n\n", false), None);
+    }
+
+    #[test]
+    fn tail_summary_keeps_the_last_lines_not_the_first() {
+        // The failure is always last, so that is the end worth quoting.
+        let mut stderr = String::new();
+        for i in 0..100 {
+            stderr.push_str(&format!("NOTICE:  noise {}\n", i));
+        }
+        stderr.push_str("psql: error: connection to server was lost\n");
+
+        let summary = tail_summary(stderr.as_bytes(), false).unwrap();
+        assert!(summary.ends_with("psql: error: connection to server was lost"));
+        assert_eq!(summary.lines().count(), TAIL_LINES + 1); // + the "…" marker
+        assert!(summary.starts_with("…\n"));
+        assert!(!summary.contains("noise 0\n"));
+    }
+
+    // A byte cap cannot know where lines are, so the first line of a capped
+    // tail is usually a fragment. It must be dropped, not shown.
+    #[test]
+    fn tail_summary_drops_the_partial_line_left_by_a_byte_cap() {
+        let summary = tail_summary(b"ection refused\nFATAL:  the real error\n", true).unwrap();
+        assert_eq!(summary, "…\nFATAL:  the real error");
+        assert!(!summary.contains("ection refused"));
+    }
+
+    #[test]
+    fn tail_summary_is_none_when_the_cap_left_only_a_fragment() {
+        assert_eq!(tail_summary(b"a dangling fragment", true), None);
     }
 }

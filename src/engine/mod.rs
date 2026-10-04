@@ -468,22 +468,7 @@ impl<T: Engine + ?Sized> EngineExt for T {
                 diagnostics: &mut diagnostics,
             },
         )
-        .await
-        // This is the last place that holds the diagnostics before they are
-        // dropped, so fold them into the error rather than lose the reason.
-        .map_err(|e| match e {
-            EngineError::Unavailable { message } if !diagnostics.is_empty() => {
-                let detail: String = String::from_utf8_lossy(&diagnostics)
-                    .trim()
-                    .chars()
-                    .take(1000)
-                    .collect();
-                EngineError::Unavailable {
-                    message: format!("{}: {}", message, detail),
-                }
-            }
-            other => other,
-        })?;
+        .await?;
         Ok(Transcript {
             results,
             diagnostics,
