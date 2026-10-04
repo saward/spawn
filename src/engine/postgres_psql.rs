@@ -505,16 +505,29 @@ impl PSQL {
             Ok(())
         });
 
+        // A sink that fails must not stop us reading its pipe: psql blocks once
+        // the pipe fills, which stalls the other two futures and hangs the
+        // join. Drain to discard instead, and report the original error.
         let copy_results = async {
             match (child_stdout.as_mut(), results) {
-                (Some(src), Some(dst)) => tokio::io::copy(src, dst).await.map(|_| ()),
+                (Some(src), Some(dst)) => {
+                    let result = tokio::io::copy(src, dst).await;
+                    if result.is_err() {
+                        let mut discard = tokio::io::sink();
+                        let _ = tokio::io::copy(src, &mut discard).await;
+                    }
+                    result.map(|_| ())
+                }
                 _ => Ok(()),
             }
         };
         let copy_diagnostics = async {
-            tokio::io::copy(&mut child_stderr, diagnostics)
-                .await
-                .map(|_| ())
+            let result = tokio::io::copy(&mut child_stderr, diagnostics).await;
+            if result.is_err() {
+                let mut discard = tokio::io::sink();
+                let _ = tokio::io::copy(&mut child_stderr, &mut discard).await;
+            }
+            result.map(|_| ())
         };
 
         // join!, not spawn: the sinks are borrowed, so they cannot be moved into

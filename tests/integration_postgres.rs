@@ -2412,3 +2412,81 @@ async fn test_migration_error_survives_a_flood_of_notices() -> Result<()> {
 
     Ok(())
 }
+
+/// A sink that fails partway through: its pipe still has to be drained, or psql
+/// blocks once the pipe fills and stalls the writer and the other stream with
+/// it. The timeout is the point of the test — a regression hangs rather than
+/// failing, so without it CI would wedge instead of going red.
+struct FailingSink {
+    accepted: usize,
+}
+
+impl tokio::io::AsyncWrite for FailingSink {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        if self.accepted > 1024 {
+            return std::task::Poll::Ready(Err(std::io::Error::other("sink is full")));
+        }
+        self.accepted += buf.len();
+        std::task::Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn test_run_script_does_not_hang_when_a_sink_fails() -> Result<()> {
+    use spawn_db::engine::{Engine, ScriptOutput, ScriptSource};
+
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_run_script_does_not_hang_when_a_sink_fails", None).await?;
+    let config = helper.migration_helper.load_config().await?;
+    let engine = config.new_engine().await?;
+
+    let mut results = FailingSink { accepted: 0 };
+    let mut diagnostics: Vec<u8> = Vec::new();
+    // Far more output than a pipe buffer holds, so psql is certain to block if
+    // its stdout stops being read.
+    let script: ScriptSource =
+        Box::new(|writer| writer.write_all(b"select * from generate_series(1, 500000);\n"));
+
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        engine.run_script(
+            script,
+            ScriptOutput {
+                results: &mut results,
+                diagnostics: &mut diagnostics,
+            },
+        ),
+    )
+    .await
+    .map_err(|_| anyhow!("run_script hung: a failing sink left psql's pipe undrained"))?;
+
+    let err = outcome.expect_err("a failing sink should surface as an error");
+    assert!(
+        format!("{}", err).contains("sink is full"),
+        "the sink's own error should survive the drain, got: {}",
+        err
+    );
+
+    Ok(())
+}
