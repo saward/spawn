@@ -530,11 +530,23 @@ impl PSQL {
 
         let status = child.wait().await?;
 
+        let writer_err = match writer_result {
+            Err(join_err) => Some(std::io::Error::other(join_err)), // the task panicked
+            Ok(Err(e)) => Some(e),
+            Ok(Ok(())) => None,
+        };
+
         // Takes precedence over psql's own status: an aborted render can leave
-        // psql exiting 0 (e.g. a quiet rollback on early EOF).
-        writer_result
-            .map_err(|e| EngineError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))
-            .and_then(|r| r.map_err(EngineError::Io))?;
+        // psql exiting 0 (e.g. a quiet rollback on early EOF). Unless the pipe
+        // broke, which means psql had already exited: then its error is the
+        // cause and ours only the symptom.
+        if let Some(e) = writer_err {
+            let psql_died_first = e.kind() == std::io::ErrorKind::BrokenPipe && !status.success();
+            if !psql_died_first {
+                return Err(EngineError::Io(e));
+            }
+            // Dropped: the status check below reports psql's error instead.
+        }
         results_result?;
         diagnostics_result?;
 
@@ -984,13 +996,17 @@ impl PSQL {
                 }
                 Err(EngineError::Io(e)) => {
                     // Writer failed (e.g. an unresolved secret), not psql itself.
-                    // Still record a Failure row — SQL may already have run.
-                    (
-                        MigrationStatus::Failure,
-                        Some(
-                            anyhow::Error::from(e).context("failed while streaming migration SQL"),
-                        ),
-                    )
+                    // Still record a Failure row — SQL may already have run, and
+                    // psql may have reported on what it did receive.
+                    let base = anyhow::Error::from(e);
+                    let err = match tail_summary(&diagnostics.tail, diagnostics.dropped) {
+                        Some(stderr) => base.context(format!(
+                            "failed while streaming migration SQL; psql reported: {}",
+                            stderr
+                        )),
+                        None => base.context("failed while streaming migration SQL"),
+                    };
+                    (MigrationStatus::Failure, Some(err))
                 }
                 // Only `run_script` produces this; `execute_with_writer` never does.
                 Err(EngineError::Unavailable { message }) => {

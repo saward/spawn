@@ -425,8 +425,16 @@ impl StreamingGeneration {
     pub fn into_script_source(self) -> (crate::engine::ScriptSource, Arc<SecretsRepository>) {
         let secrets = Arc::clone(&self.secrets);
         let script = Box::new(move |writer: &mut dyn std::io::Write| {
-            self.render_to_writer(writer)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            self.render_to_writer(writer).map_err(|e| {
+                // minijinja buries the writer's io::Error under WriteFailure;
+                // carry its kind back out so callers can spot a broken pipe.
+                let kind = e
+                    .chain()
+                    .find_map(|c| c.downcast_ref::<std::io::Error>())
+                    .map(|io| io.kind())
+                    .unwrap_or(std::io::ErrorKind::Other);
+                std::io::Error::new(kind, e)
+            })
         });
         (script, secrets)
     }
