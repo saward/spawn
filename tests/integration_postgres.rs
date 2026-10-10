@@ -2492,3 +2492,62 @@ async fn test_run_script_does_not_hang_when_a_sink_fails() -> Result<()> {
 
     Ok(())
 }
+
+/// psql exits on a failed statement under ON_ERROR_STOP. If the script is still
+/// being written, the write fails with `BrokenPipe` — a symptom that must not
+/// displace psql's own report.
+///
+/// Writing until the pipe breaks is deliberate: a fixed payload is a race, and
+/// under `docker exec -i` even ~760KB won 2 runs in 3.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn test_broken_pipe_does_not_mask_the_psql_error() -> Result<()> {
+    use spawn_db::engine::ScriptSource;
+
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_broken_pipe_does_not_mask_the_psql_error", None).await?;
+    let config = helper.migration_helper.load_config().await?;
+    let engine = config.new_engine().await?;
+
+    let script: ScriptSource = Box::new(|writer| {
+        writer.write_all(b"SELECT this_does_not_exist();\n")?;
+        // A full line of dashes, so anything psql does read stays a comment.
+        let padding = [b'-'; 4096];
+        loop {
+            writer.write_all(&padding)?;
+            writer.write_all(b"\n")?;
+        }
+    });
+
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        engine.migration_apply(
+            "20260101000000-broken-pipe",
+            script,
+            "deadbeef".to_string(),
+            None,
+            "default",
+            false,
+        ),
+    )
+    .await
+    .map_err(|_| anyhow!("migration_apply hung: the writer was never unblocked"))?;
+
+    let err = outcome.expect_err("a failing statement should surface as an error");
+    let chain = format!("{:?}", anyhow::Error::new(err));
+
+    assert!(
+        chain.contains("this_does_not_exist") && chain.contains("psql exited with code"),
+        "apply must report psql's error, not just that the write failed, got: {}",
+        chain
+    );
+    assert!(
+        !chain.contains("failed while streaming migration SQL"),
+        "psql died first, so this is not a writer failure, got: {}",
+        chain
+    );
+
+    Ok(())
+}
