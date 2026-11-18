@@ -22,7 +22,7 @@ use std::sync::Arc;
 /// Whether a template is being rendered as part of a migration or a test.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ScriptType {
+pub enum RenderKind {
     Migration,
     Test,
 }
@@ -35,7 +35,7 @@ pub struct BuiltinContext {
     /// `Migrator::new`/`Tester::new`), not the object-store file path.
     pub script_name: String,
     /// Whether this render is a migration or a test.
-    pub script_type: ScriptType,
+    pub script_type: RenderKind,
     /// The target engine (e.g. `postgres-psql`).
     pub engine: EngineType,
 }
@@ -43,7 +43,7 @@ pub struct BuiltinContext {
 impl BuiltinContext {
     pub fn new(
         script_name: impl Into<String>,
-        script_type: ScriptType,
+        script_type: RenderKind,
         engine: EngineType,
     ) -> Self {
         BuiltinContext {
@@ -364,7 +364,7 @@ pub struct StreamingGeneration {
     script_name: String,
     /// Whether this render is a migration or a test, exposed to templates
     /// as `builtin.script_type`.
-    script_type: ScriptType,
+    script_type: RenderKind,
     environment: String,
     variables: Variables,
     engine: EngineType,
@@ -446,7 +446,7 @@ pub async fn generate_streaming(
     cfg: &config::Config,
     lock_file: Option<String>,
     script_name: &str,
-    script_type: ScriptType,
+    script_type: RenderKind,
     path: &str,
     variables: Option<Variables>,
     secrets_mode: SecretsRenderMode,
@@ -500,7 +500,7 @@ pub async fn generate_streaming(
 /// Generate a streaming migration with an existing store.
 pub async fn generate_streaming_with_store(
     script_name: &str,
-    script_type: ScriptType,
+    script_type: RenderKind,
     path: &str,
     variables: Option<Variables>,
     environment: &str,
@@ -719,7 +719,7 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", ScriptType::Migration, EngineType::PostgresPSQL)).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
@@ -750,7 +750,7 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", ScriptType::Migration, EngineType::PostgresPSQL)).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "binary.dat"|read_file|base64_encode|safe }}"#,
@@ -778,7 +778,7 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", ScriptType::Migration, EngineType::PostgresPSQL)).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "nonexistent.txt"|read_file|to_string_lossy }}"#,
@@ -825,7 +825,7 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", ScriptType::Migration, EngineType::PostgresPSQL)).unwrap();
+        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
@@ -847,7 +847,7 @@ mod tests {
             spawn_folder: "".to_string(),
         };
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
-        template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", ScriptType::Migration, EngineType::PostgresPSQL)).unwrap()
+        template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap()
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -978,7 +978,7 @@ mod tests {
             template_contents: template_contents.to_string(),
             template_label: "migrations/test/up.sql".to_string(),
             script_name: "test".to_string(),
-            script_type: ScriptType::Migration,
+            script_type: RenderKind::Migration,
             environment: "prod".to_string(),
             variables: crate::variables::Variables::default(),
             engine: EngineType::PostgresPSQL,
@@ -1094,7 +1094,7 @@ mod tests {
                 .to_string(),
             template_label: "migrations/20260101000000-bootstrap/up.sql".to_string(),
             script_name: "20260101000000-bootstrap".to_string(),
-            script_type: ScriptType::Migration,
+            script_type: RenderKind::Migration,
             environment: "staging".to_string(),
             variables: crate::variables::Variables::default(),
             engine: EngineType::PostgresPSQL,

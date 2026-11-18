@@ -63,7 +63,7 @@ impl Migrator {
             &self.config,
             lock_file,
             &self.name,
-            template::ScriptType::Migration,
+            template::RenderKind::Migration,
             script_path,
             variables,
             secrets_mode,

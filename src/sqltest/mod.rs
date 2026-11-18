@@ -62,7 +62,7 @@ impl Tester {
             &self.config,
             lock_file,
             &self.script_path,
-            template::ScriptType::Test,
+            template::RenderKind::Test,
             &self.test_file_path(),
             variables,
             secrets_mode,
