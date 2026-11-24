@@ -204,12 +204,26 @@ impl MigrationTestHelper {
         pinned: bool,
         variables_path: Option<String>,
     ) -> Result<String, anyhow::Error> {
+        self.build_migration_with_variable_overrides(migration_name, pinned, variables_path, &[])
+            .await
+    }
+
+    /// Builds a migration with an optional variables file and `--var`
+    /// overrides layered on top, exactly as the CLI resolves them.
+    pub async fn build_migration_with_variable_overrides(
+        &self,
+        migration_name: &str,
+        pinned: bool,
+        variables_path: Option<String>,
+        overrides: &[(String, serde_json::Value)],
+    ) -> Result<String, anyhow::Error> {
         let config = self.load_config().await?;
 
-        let variables = match variables_path {
+        let base = match variables_path {
             Some(path) => Some(config.load_variables_from_path(&path).await?),
             None => None,
         };
+        let variables = Variables::with_overrides(base, overrides)?;
 
         let cmd = BuildMigration {
             migration: migration_name.to_string(),
@@ -687,6 +701,47 @@ CREATE TABLE "users" (
 COMMIT;"#;
 
     assert_eq!(expected, built_with_vars);
+
+    Ok(())
+}
+
+/// `--var` layers over a `--variables` file for migrations, the same way it
+/// does for scripts: the override wins, and it stays an untyped string.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_migration_build_with_var_overrides() -> Result<(), Box<dyn std::error::Error>> {
+    let helper =
+        MigrationTestHelper::new_from_local_folder("./static/tests/build_with_variables").await?;
+
+    let built = helper
+        .build_migration_with_variable_overrides(
+            "20240907212659-initial",
+            false,
+            Some("/db/variables.json".to_string()),
+            &[
+                ("table_name".to_string(), serde_json::json!("customers")),
+                ("author".to_string(), serde_json::json!("Override Author")),
+            ],
+        )
+        .await?;
+
+    // The override replaces the file's value for the keys it names...
+    assert!(
+        built.contains(r#"CREATE TABLE "customers""#),
+        "got: {}",
+        built
+    );
+    assert!(
+        built.contains("-- Author: Override Author"),
+        "got: {}",
+        built
+    );
+    // ...and leaves the rest of the file alone, typed as the file had them.
+    assert!(
+        built.contains("-- Migration: create-users-table"),
+        "got: {}",
+        built
+    );
+    assert!(built.contains("VARCHAR(255)"), "got: {}", built);
 
     Ok(())
 }
@@ -1261,13 +1316,13 @@ async fn test_script_build_renders_includes_and_variables() -> Result<(), Box<dy
         )
         .await?;
 
-    let vars = Variables::with_overrides(None, &[("tenant".to_string(), "42".to_string())])?;
+    let vars = Variables::with_overrides(None, &[("tenant".to_string(), serde_json::json!("42"))])?;
     let content = helper
         .build_script("maintenance/reindex", PinMode::Auto, vars)
         .await?;
 
-    // --var values stay untyped strings, so the formatter quotes them;
-    // minijinja eats the newline after the include's block tag.
+    // A JSON string override is escaped as a SQL literal, so the formatter
+    // quotes it; minijinja eats the newline after the include's block tag.
     assert_eq!(content, "-- tenant '42'\nSELECT touch_tenant();");
 
     Ok(())

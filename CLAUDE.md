@@ -9,7 +9,7 @@ Spawn is a database migration tool written in Rust, focused on PostgreSQL initia
 - **Migrations**: Timestamped SQL scripts in `migrations/YYYYMMDDHHMMSS-name/up.sql`. These are minijinja templates that can include components.
 - **Components**: Reusable SQL snippets in `components/`. Included in migrations, tests and scripts via `{% include "component.sql" %}`. Never an entry point themselves.
 - **Pinning**: Snapshots components into a content-addressed store (`pinned/`) and writes a `lock.toml` in the migration folder (or `config.toml` in the script folder). This locks a migration to the exact component versions used at pin time, so re-running it later produces identical SQL. Uses xxhash3_128 for content hashing.
-- **Variables**: Template variables from JSON/TOML/YAML files, accessible as `{{ variables.key }}`. `spawn script` also takes repeatable `--var key=value` string overrides.
+- **Variables**: Template variables from JSON/TOML/YAML files, accessible as `{{ variables.key }}`. `migration build|apply` and `script run|build` also take repeatable `--var-json key=<json>` overrides. The value is parsed as JSON so it keeps its type, and is transcoded into the variables file's own model — a TOML file stays TOML and is never routed through JSON.
 - **Scripts**: Standalone SQL in `scripts/<name>/script.sql`, run by `spawn script run <name>` — operational SQL rather than schema change. A sibling of `migrations/` and `tests/`, deliberately *not* under `components/`: a script inside the component tree would change the root hash every migration's pin records. Pinning is opt-in and automatic once taken: `spawn script pin` writes `scripts/<name>/config.toml`, and from then on every run and build resolves against that tree without a flag (`--no-pin` opts back out, `--pinned` asserts a pin exists). A pin freezes the components a script includes but **not** `script.sql` itself, which is always read live. Each run appends a row to `_spawn.script_run`; nothing about a later run is gated on that history.
 
 ## Project Structure
@@ -69,7 +69,7 @@ spawn test new|build|run|compare|expect
 spawn script new|run|build|pin
 ```
 
-Key script run flags: `--pinned` (require a pin; error if unpinned), `--no-pin` (ignore an existing pin), `--var` (ad-hoc string variables), `--yes` (skip confirmation). `run` and `build` both pin automatically when the script has a `config.toml`, and report the tree they used on stderr.
+Key script run flags: `--pinned` (require a pin; error if unpinned), `--no-pin` (ignore an existing pin), `--var-json` (ad-hoc typed variables), `--yes` (skip confirmation). `run` and `build` both pin automatically when the script has a `config.toml`, and report the tree they used on stderr.
 
 Key apply flags: `--no-pin` (skip pin requirement), `--retry` (retry failed migration), `--yes` (skip confirmation), `--reuse-connection` (reuse database connection across migrations).
 

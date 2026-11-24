@@ -1,0 +1,36 @@
+{/_
+Shared explanation of --variables and --var-json, rendered under a
+`## Variables` heading by every CLI page that takes them. Keep that heading in
+the page itself rather than here: Starlight builds the right-hand table of
+contents from each page's own headings and does not see headings inside a
+partial.
+_/}
+
+`--variables` loads a JSON, TOML or YAML file into the `variables` context, which templates read as `{{ variables.key }}`. `--var-json key=<json>` sets a single key straight from the command line, overriding the same key from the file. It is repeatable, and keys may not contain `.`, which is reserved for nested overrides later.
+
+The value is a JSON value rather than bare text, so it arrives with its type intact and is escaped accordingly. The JSON quotes are what choose the type — `42` is a number, `"42"` is a string:
+
+```bash
+--var-json tenant_id=42            # number  → 42
+--var-json 'tenant_id="42"'        # string  → '42'
+--var-json archived=false          # boolean → FALSE
+--var-json 'archived="false"'      # string  → 'false'
+--var-json 'name="acme"'           # string  → 'acme'
+--var-json 'tags=["a","b"]'        # array   → ARRAY['a', 'b']
+--var-json 'limits={"max":10}'     # object  → reached as variables.limits.max
+```
+
+An object sets that one key to the whole object, for a template to reach into: `{{ variables.limits.max }}` renders `10`.
+
+It replaces the key rather than merging into it. If the variables file sets `limits = {max = 5, min = 1}`, then `--var-json 'limits={"max":10}'` leaves `limits.min` unset rather than `1`, because the whole table was swapped out. Overriding one leaf of a nested table is not possible from the command line today — that is what the reserved `.` in keys is held back for.
+
+A string therefore carries two layers of quoting: the JSON quotes that make it a string, and the shell quotes that keep them intact. Single quotes around the whole argument are the easiest way — `--var-json 'name="acme"'` — or escape the inner pair where the surrounding context forces double quotes, as in a Makefile or CI YAML: `--var-json "name=\"acme\""`. Omitting the JSON quotes is an error rather than a silent fallback to text, so a typo cannot quietly become a string literal.
+
+Because the type survives, a value lands correctly wherever SQL expects it: `VARCHAR({{ variables.name_length }})` renders `VARCHAR(255)` rather than a quoted literal.
+
+The distinction matters most for booleans, where it changes which branch runs rather than just how the value is escaped. `archived=false` is a real boolean and `{% if variables.archived %}` is false; `archived="false"` is the four-character string `false`, and since any non-empty string is true, the same test is **true**. If a template branches on a value, pass it unquoted.
+
+- TOML has no null, so `--var-json archived=null` against a TOML file is rejected. YAML and JSON accept it.
+- TOML integers are 64-bit signed, so a larger number is rejected against a TOML file.
+
+Both limits are the file format's own. With no `--variables` file at all, overrides become a JSON object, so neither applies.

@@ -9,14 +9,17 @@ import {
   targetOption,
   environmentOption,
   variablesOption,
+  varJsonOption,
   revealSecretsOption,
 } from "../../../components/cli-options";
+import Variables from "../../../partials/variables.mdx";
 
 <CLICommand
-  usage="spawn migration build <migration> [--pinned] [--variables <path>] [--reveal-secrets]"
+  usage="spawn migration build <migration> [--pinned] [--variables <path>] [--var-json KEY=JSON] [--reveal-secrets]"
   options={[
     { flag: "--pinned", description: "Use pinned component versions from lock.toml" },
     ...variablesOption,
+    ...varJsonOption,
     ...revealSecretsOption,
     ...environmentOption,
     ...targetOption,
@@ -34,10 +37,14 @@ Renders a migration's `up.sql` template into final SQL, resolving component incl
 
 1. Loads the migration's `up.sql` template
 2. Resolves component includes from `components/` (or `pinned/` if `--pinned`)
-3. Injects template variables from config or `--variables` file
+3. Injects template variables from the `--variables` file and any `--var-json` overrides (see [Variables](#variables))
 4. Renders final SQL to stdout
 
 Without `--pinned`, the migration uses the current working tree versions of components. With `--pinned`, it uses the locked versions from the migration's `lock.toml`.
+
+## Variables
+
+<Variables />
 
 ## Secrets
 
@@ -61,6 +68,12 @@ Build with custom variables:
 
 ```bash
 spawn migration build 20260131120000-add-users-table --variables ./prod-vars.json
+```
+
+Override a single variable without editing the file:
+
+```bash
+spawn migration build 20260131120000-add-users-table --variables ./prod-vars.json --var-json 'table_name="customers"'
 ```
 
 Build and show real secret values for debugging:

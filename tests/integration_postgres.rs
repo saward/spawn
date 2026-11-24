@@ -2814,8 +2814,10 @@ async fn test_pinned_script_run_uses_and_records_its_pin() -> Result<()> {
         )
         .await?;
 
-    let variables =
-        Variables::with_overrides(None, &[("tenant".to_string(), "acme-corp".to_string())])?;
+    let variables = Variables::with_overrides(
+        None,
+        &[("tenant".to_string(), serde_json::json!("acme-corp"))],
+    )?;
     helper
         .run_script("maintenance/seed", PinMode::Auto, variables)
         .await?;
@@ -2823,7 +2825,7 @@ async fn test_pinned_script_run_uses_and_records_its_pin() -> Result<()> {
     let rows = helper.execute_sql("SELECT name FROM public.tenant;")?;
     assert!(
         rows.contains("acme-corp"),
-        "the --var override should have reached the component: {}",
+        "the --var-json override should have reached the component: {}",
         rows
     );
     assert!(

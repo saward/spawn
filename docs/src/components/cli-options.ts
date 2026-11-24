@@ -51,12 +51,12 @@ export const scriptPinOptions: CLIOption[] = [
   },
 ];
 
-/** The repeatable --var flag for setting a single variable from the command line. */
-export const varOption: CLIOption[] = [
+/** The repeatable --var-json flag for setting a single variable from the command line. */
+export const varJsonOption: CLIOption[] = [
   {
-    flag: "--var <KEY=VALUE>",
+    flag: "--var-json <KEY=JSON>",
     description:
-      "Set a single variable as a string. May be repeated, and overrides the same key from --variables. Keys may not contain '.', which is reserved for future nested overrides.",
+      "Set a single variable from a JSON value, so it keeps its type. May be repeated, and overrides the same key from --variables. Keys may not contain '.', which is reserved for future nested overrides.",
   },
 ];
 

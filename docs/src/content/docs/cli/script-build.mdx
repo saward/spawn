@@ -10,16 +10,17 @@ import {
   environmentOption,
   scriptPinOptions,
   variablesOption,
-  varOption,
+  varJsonOption,
   revealSecretsOption,
 } from "../../../components/cli-options";
+import Variables from "../../../partials/variables.mdx";
 
 <CLICommand
   usage="spawn script build <script> [options]"
   options={[
     ...scriptPinOptions,
     ...variablesOption,
-    ...varOption,
+    ...varJsonOption,
     ...revealSecretsOption,
     ...environmentOption,
     ...targetOption,
@@ -32,6 +33,10 @@ Renders a script to SQL and prints it, without touching the database. The counte
 ## Arguments
 
 - `<script>` — Required. Path to the script, relative to the scripts folder.
+
+## Variables
+
+<Variables />
 
 ## Secrets
 
@@ -55,10 +60,11 @@ Inspect what a run would execute:
 spawn script build maintenance/reindex.sql
 ```
 
-Check how a variable will be escaped before running anything:
+Check how a variable will be escaped before running anything — the JSON quotes decide whether it reaches SQL as `42` or `'42'`:
 
 ```bash
-spawn script build maintenance/backfill.sql --var tenant_id=42
+spawn script build maintenance/backfill.sql --var-json tenant_id=42
+spawn script build maintenance/backfill.sql --var-json 'tenant_id="42"'
 ```
 
 See what re-pinning would change, by rendering a pinned script against the current components:

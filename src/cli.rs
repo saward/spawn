@@ -149,9 +149,10 @@ pub enum ScriptCommands {
         #[arg(long)]
         variables: Option<String>,
 
-        /// Set a variable as a string, e.g. --var tenant_id=42; repeatable, overrides --variables
-        #[arg(long = "var", value_name = "KEY=VALUE")]
-        var: Vec<String>,
+        /// Set a variable from a JSON value, e.g. --var-json tenant_id=42 or
+        /// --var-json 'name="acme"'; repeatable, overrides --variables
+        #[arg(long = "var-json", value_name = "KEY=JSON")]
+        var_json: Vec<String>,
 
         /// Skip confirmation prompt
         #[arg(long)]
@@ -175,9 +176,10 @@ pub enum ScriptCommands {
         #[arg(long)]
         variables: Option<String>,
 
-        /// Set a variable as a string, e.g. --var tenant_id=42; repeatable, overrides --variables
-        #[arg(long = "var", value_name = "KEY=VALUE")]
-        var: Vec<String>,
+        /// Set a variable from a JSON value, e.g. --var-json tenant_id=42 or
+        /// --var-json 'name="acme"'; repeatable, overrides --variables
+        #[arg(long = "var-json", value_name = "KEY=JSON")]
+        var_json: Vec<String>,
 
         /// Render real secret() values instead of masked placeholders.
         /// Intended for local debugging only; build output is not executed.
@@ -199,26 +201,26 @@ impl TelemetryDescribe for ScriptCommands {
                 pinned,
                 no_pin,
                 variables,
-                var,
+                var_json,
                 ..
             } => TelemetryInfo::new("run").with_properties(vec![
                 ("opt_pinned", pinned.to_string()),
                 ("opt_no_pin", no_pin.to_string()),
                 ("has_variables", variables.is_some().to_string()),
-                ("var_count", var.len().to_string()),
+                ("var_count", var_json.len().to_string()),
             ]),
             ScriptCommands::Build {
                 pinned,
                 no_pin,
                 variables,
-                var,
+                var_json,
                 reveal_secrets,
                 ..
             } => TelemetryInfo::new("build").with_properties(vec![
                 ("opt_pinned", pinned.to_string()),
                 ("opt_no_pin", no_pin.to_string()),
                 ("has_variables", variables.is_some().to_string()),
-                ("var_count", var.len().to_string()),
+                ("var_count", var_json.len().to_string()),
                 ("opt_reveal_secrets", reveal_secrets.to_string()),
             ]),
             ScriptCommands::New { .. } => TelemetryInfo::new("new"),
@@ -254,6 +256,11 @@ pub enum MigrationCommands {
         #[arg(long)]
         variables: Option<String>,
 
+        /// Set a variable from a JSON value, e.g. --var-json tenant_id=42 or
+        /// --var-json 'name="acme"'; repeatable, overrides --variables
+        #[arg(long = "var-json", value_name = "KEY=JSON")]
+        var_json: Vec<String>,
+
         /// Render real secret() values instead of masked placeholders.
         /// Intended for local debugging only; build output is not executed.
         #[arg(long)]
@@ -273,6 +280,11 @@ pub enum MigrationCommands {
         /// Overrides the variables_file setting in spawn.toml.
         #[arg(long)]
         variables: Option<String>,
+
+        /// Set a variable from a JSON value, e.g. --var-json tenant_id=42 or
+        /// --var-json 'name="acme"'; repeatable, overrides --variables
+        #[arg(long = "var-json", value_name = "KEY=JSON")]
+        var_json: Vec<String>,
 
         /// Skip confirmation prompt
         #[arg(long)]
@@ -317,6 +329,11 @@ pub enum MigrationCommands {
         #[arg(long)]
         variables: Option<String>,
 
+        /// Set a variable from a JSON value, e.g. --var-json tenant_id=42 or
+        /// --var-json 'name="acme"'; repeatable, overrides --variables
+        #[arg(long = "var-json", value_name = "KEY=JSON")]
+        var_json: Vec<String>,
+
         /// Skip confirmation prompt
         #[arg(long)]
         yes: bool,
@@ -338,16 +355,19 @@ impl TelemetryDescribe for MigrationCommands {
             MigrationCommands::Build {
                 pinned,
                 variables,
+                var_json,
                 reveal_secrets,
                 ..
             } => TelemetryInfo::new("build").with_properties(vec![
                 ("opt_pinned", pinned.to_string()),
                 ("has_variables", variables.is_some().to_string()),
+                ("var_count", var_json.len().to_string()),
                 ("opt_reveal_secrets", reveal_secrets.to_string()),
             ]),
             MigrationCommands::Apply {
                 no_pin,
                 variables,
+                var_json,
                 migration,
                 retry,
                 reuse_connection,
@@ -356,6 +376,7 @@ impl TelemetryDescribe for MigrationCommands {
                 ("opt_no_pin", no_pin.to_string()),
                 ("opt_retry", retry.to_string()),
                 ("has_variables", variables.is_some().to_string()),
+                ("var_count", var_json.len().to_string()),
                 ("apply_all", migration.is_none().to_string()),
                 ("opt_reuse_connection", reuse_connection.to_string()),
             ]),
@@ -363,10 +384,12 @@ impl TelemetryDescribe for MigrationCommands {
             MigrationCommands::Down {
                 migration,
                 variables,
+                var_json,
                 reuse_connection,
                 ..
             } => TelemetryInfo::new("down").with_properties(vec![
                 ("has_variables", variables.is_some().to_string()),
+                ("var_count", var_json.len().to_string()),
                 ("opt_reuse_connection", reuse_connection.to_string()),
             ]),
             MigrationCommands::Status => TelemetryInfo::new("status"),
@@ -553,12 +576,10 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                     migration,
                     pinned,
                     variables,
+                    var_json,
                     reveal_secrets,
                 }) => {
-                    let vars = match variables {
-                        Some(vars_path) => Some(config.load_variables_from_path(&vars_path).await?),
-                        None => None,
-                    };
+                    let vars = resolve_variables(config, variables, &var_json).await?;
                     BuildMigration {
                         migration,
                         pinned,
@@ -572,14 +593,12 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                     migration,
                     no_pin,
                     variables,
+                    var_json,
                     yes,
                     retry,
                     reuse_connection,
                 }) => {
-                    let vars = match variables {
-                        Some(vars_path) => Some(config.load_variables_from_path(&vars_path).await?),
-                        None => None,
-                    };
+                    let vars = resolve_variables(config, variables, &var_json).await?;
                     ApplyMigration {
                         migration,
                         pinned: !no_pin,
@@ -607,13 +626,11 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                 Some(MigrationCommands::Down {
                     migration,
                     variables,
+                    var_json,
                     yes,
                     reuse_connection,
                 }) => {
-                    let vars = match variables {
-                        Some(vars_path) => Some(config.load_variables_from_path(&vars_path).await?),
-                        None => None,
-                    };
+                    let vars = resolve_variables(config, variables, &var_json).await?;
                     DownMigration {
                         migration,
                         variables: vars,
@@ -673,10 +690,10 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                     pinned,
                     no_pin,
                     variables,
-                    var,
+                    var_json,
                     yes,
                 }) => {
-                    let vars = resolve_variables(config, variables, &var).await?;
+                    let vars = resolve_variables(config, variables, &var_json).await?;
                     RunScript {
                         script,
                         pin_mode: pin_mode(pinned, no_pin),
@@ -691,10 +708,10 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                     pinned,
                     no_pin,
                     variables,
-                    var,
+                    var_json,
                     reveal_secrets,
                 }) => {
-                    let vars = resolve_variables(config, variables, &var).await?;
+                    let vars = resolve_variables(config, variables, &var_json).await?;
                     BuildScript {
                         script,
                         pin_mode: pin_mode(pinned, no_pin),
@@ -724,17 +741,18 @@ fn pin_mode(pinned: bool, no_pin: bool) -> PinMode {
     }
 }
 
-/// Loads the `--variables` file, if given, and layers `--var` overrides on top.
+/// Loads the `--variables` file, if given, and layers `--var-json` overrides
+/// on top.
 async fn resolve_variables(
     config: &Config,
     variables: Option<String>,
-    var: &[String],
+    var_json: &[String],
 ) -> Result<Option<Variables>> {
     let base = match variables {
         Some(path) => Some(config.load_variables_from_path(&path).await?),
         None => None,
     };
-    Variables::with_overrides(base, &parse_var_overrides(var)?)
+    Variables::with_overrides(base, &parse_var_overrides(var_json)?)
 }
 
 #[cfg(test)]

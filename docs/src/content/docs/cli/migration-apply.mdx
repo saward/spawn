@@ -9,13 +9,16 @@ import {
   targetOption,
   environmentOption,
   variablesOption,
+  varJsonOption,
 } from "../../../components/cli-options";
+import Variables from "../../../partials/variables.mdx";
 
 <CLICommand
   usage="spawn migration apply [migration] [options]"
   options={[
     { flag: "--no-pin", description: "Allow unpinned migrations (use current components)" },
     ...variablesOption,
+    ...varJsonOption,
     { flag: "--yes", description: "Skip confirmation prompt" },
     { flag: "--retry", description: "Retry a previous migration" },
     { flag: "--reuse-connection", description: "Reuse the same database connection across all migrations" },
@@ -55,6 +58,12 @@ By default, `apply` requires migrations to have a `lock.toml`. This ensures the 
 
 With `--no-pin`, the `pin_hash` recorded to the audit trail is computed by walking the current component tree in a pass separate from the actual template render. If a component file on disk changes between (or during) those two passes, the recorded `pin_hash` can end up not matching what was actually rendered and executed. Only a pinned migration guarantees the components used are exactly the ones snapshotted in `lock.toml`, immune to concurrent edits — always apply pinned migrations in any shared or production environment.
 
+## Variables
+
+<Variables />
+
+Both apply to the whole invocation, not to one migration: running `apply` without a migration name renders every pending migration against the same variables.
+
 ## Secrets
 
 `apply` always reveals real `secret()` values, since it executes the rendered SQL against the database. See the [Secrets guide](/guides/secrets/) for how secrets are configured and how other commands mask them for inspection.
@@ -79,6 +88,12 @@ Apply a specific migration without confirmation:
 
 ```bash
 spawn migration apply 20260131120000-add-users-table --yes
+```
+
+Override a single variable for the apply:
+
+```bash
+spawn migration apply 20260131120000-add-users-table --var-json tenant_id=42 --yes
 ```
 
 Retry a previously successful or failed migration:

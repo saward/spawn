@@ -10,15 +10,16 @@ import {
   environmentOption,
   scriptPinOptions,
   variablesOption,
-  varOption,
+  varJsonOption,
 } from "../../../components/cli-options";
+import Variables from "../../../partials/variables.mdx";
 
 <CLICommand
   usage="spawn script run <script> [options]"
   options={[
     ...scriptPinOptions,
     ...variablesOption,
-    ...varOption,
+    ...varJsonOption,
     { flag: "--yes", description: "Skip confirmation prompt" },
     ...environmentOption,
     ...targetOption,
@@ -79,6 +80,10 @@ Note what a pin does and does not freeze. It fixes the components a script inclu
 
 Either way, the pin hash of the tree the run resolved against is recorded in the audit trail. For an unpinned run that hash is recomputed from the current tree at run time, which identifies the tree but does not retain it — only a pinned run keeps its components in the store.
 
+## Variables
+
+<Variables />
+
 ## Secrets
 
 `run` always reveals real `secret()` values, since it executes the rendered SQL. See the [Secrets guide](/guides/secrets/) for how secrets are configured, and [`spawn script build`](/cli/script-build/) for inspecting a script with them masked.
@@ -108,7 +113,7 @@ spawn script run maintenance/reindex --yes
 Pass a value straight from the command line:
 
 ```bash
-spawn script run maintenance/backfill --var tenant_id=42 --yes
+spawn script run maintenance/backfill --var-json tenant_id=42 --yes
 ```
 
 Insist the script is pinned, failing if it is not:
