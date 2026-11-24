@@ -5,8 +5,8 @@ use opendal::Operator;
 use pretty_assertions::assert_eq;
 use spawn_db::{
     commands::{
-        BuildMigration, BuildScript, Check, Command, NewMigration, NewTest, Outcome, PinCleanup,
-        PinError, PinMigration, PinScript, PinVerify,
+        BuildMigration, BuildScript, Check, Command, NewMigration, NewScript, NewTest, Outcome,
+        PinCleanup, PinError, PinMigration, PinScript, PinVerify,
     },
     config::{Config, ConfigLoaderSaver},
     engine::{CommandSpec, EngineType, TargetConfig},
@@ -26,6 +26,12 @@ COMMIT;
 
 /// Expected default new test content:
 const DEFAULT_TEST_CONTENT: &str = "-- Test file\nSELECT 1;\n";
+
+/// Expected default new script content:
+const DEFAULT_SCRIPT_CONTENT: &str = r#"BEGIN;
+
+COMMIT;
+"#;
 
 /// Reusable test helper structure for setting up migration tests
 pub struct MigrationTestHelper {
@@ -109,6 +115,7 @@ impl MigrationTestHelper {
             environment: Some("dev".to_string()),
             template_up: None,
             template_test: None,
+            template_script: None,
             targets: Some(targets),
             secrets: None,
             project_id: None,
@@ -145,6 +152,21 @@ impl MigrationTestHelper {
         match outcome {
             Outcome::NewTest(name) => Ok(name),
             _ => Err(anyhow::anyhow!("Test directory not found after creation")),
+        }
+    }
+
+    /// Creates a new script using the NewScript command
+    pub async fn create_script(&self, script: &str) -> Result<String, anyhow::Error> {
+        let config = self.load_config().await?;
+        let cmd = NewScript {
+            script: script.to_string(),
+        };
+
+        let outcome = cmd.execute(&config).await?;
+
+        match outcome {
+            Outcome::NewScript { script, .. } => Ok(script),
+            _ => Err(anyhow::anyhow!("Script directory not found after creation")),
         }
     }
 
@@ -420,6 +442,60 @@ async fn test_create_test_with_custom_template() -> Result<(), Box<dyn std::erro
 
     // Check the contents are what we expect:
     let script_path = cfg.pather().test_file_path(&test_name);
+    let file_data = helper.fs.read(&script_path).await?.to_bytes();
+    let file_contents = String::from_utf8(file_data.to_vec())?;
+    assert_eq!(CUSTOM_TEMPLATE_CONTENT, file_contents,);
+
+    Ok(())
+}
+
+// Run a create script test:
+#[tokio::test]
+async fn test_create_script() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    // Test that we can create a script
+    let script = helper
+        .create_script("maintenance/reindex")
+        .await
+        .expect("Failed to create script with helper");
+
+    let cfg = helper.load_config().await?;
+
+    // Check that <script folder>/script.sql exists and has the default content:
+    let script_path = cfg.pather().script_file_path(&script);
+    let file_data = helper.fs.read(&script_path).await?.to_bytes();
+    let file_contents = String::from_utf8(file_data.to_vec())?;
+    assert_eq!(DEFAULT_SCRIPT_CONTENT, file_contents,);
+
+    Ok(())
+}
+
+// Run a create script test using a custom template_script:
+#[tokio::test]
+async fn test_create_script_with_custom_template() -> Result<(), Box<dyn std::error::Error>> {
+    const CUSTOM_TEMPLATE_CONTENT: &str = "-- custom script template\nVACUUM;\n";
+
+    let mem_op = Operator::new(Memory::default())?;
+    let mut config_loader = MigrationTestHelper::default_config_loadersaver();
+    config_loader.template_script = Some("templates/custom.sql".to_string());
+    let helper = MigrationTestHelper::new_from_operator_with_config(mem_op, config_loader).await?;
+
+    let cfg = helper.load_config().await?;
+    let template_path = cfg.pather().any_path("templates/custom.sql");
+    helper
+        .fs
+        .write(&template_path, CUSTOM_TEMPLATE_CONTENT)
+        .await?;
+
+    // Test that we can create a script
+    let script = helper
+        .create_script("maintenance/reindex")
+        .await
+        .expect("Failed to create script with helper");
+
+    // Check the contents are what we expect:
+    let script_path = cfg.pather().script_file_path(&script);
     let file_data = helper.fs.read(&script_path).await?.to_bytes();
     let file_contents = String::from_utf8(file_data.to_vec())?;
     assert_eq!(CUSTOM_TEMPLATE_CONTENT, file_contents,);
@@ -1111,6 +1187,7 @@ async fn test_migration_build_with_secrets() -> Result<(), Box<dyn std::error::E
         environment: Some("dev".to_string()),
         template_up: None,
         template_test: None,
+        template_script: None,
         targets: Some(targets),
         secrets: Some(secrets),
         project_id: None,

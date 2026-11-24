@@ -38,6 +38,8 @@ scripts/maintenance/reindex/
 
 The starting `script.sql` wraps an empty body in `BEGIN;` / `COMMIT;`. Delete those two lines for statements that cannot run inside a transaction, such as `CREATE INDEX CONCURRENTLY`.
 
+To use your own starting content instead of the default template, set [`template_script`](/reference/config/#template_script) in `spawn.toml` to a path (relative to `spawn_folder`) of a file to copy into `script.sql`.
+
 A `config.toml` appears alongside it only if you later run [`spawn script pin`](/cli/script-pin/).
 
 ## Examples

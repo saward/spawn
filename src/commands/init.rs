@@ -76,6 +76,7 @@ impl Init {
 
         // Create default config
         let config = ConfigLoaderSaver {
+            template_script: None,
             template_test: None,
             template_up: None,
             spawn_folder: "spawn".to_string(),

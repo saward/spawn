@@ -31,6 +31,9 @@ pub struct ConfigLoaderSaver {
     pub targets: Option<HashMap<String, TargetConfig>>,
     /// Named secrets available to templates via the `secret()` function.
     pub secrets: Option<HashMap<String, SecretDefinition>>,
+    /// Allows you to override the default template for script new with a
+    /// custom one.
+    pub template_script: Option<String>,
     /// Allows you to override the default template for test new with a
     /// custom one.
     pub template_test: Option<String>,
@@ -56,6 +59,7 @@ impl ConfigLoaderSaver {
             target: self.target,
             targets: self.targets.unwrap_or_default(),
             secrets: self.secrets.unwrap_or_default(),
+            template_script: self.template_script,
             template_test: self.template_test,
             template_up: self.template_up,
             telemetry: self.telemetry.unwrap_or(true),
@@ -231,6 +235,9 @@ pub struct Config {
     pub targets: HashMap<String, TargetConfig>,
     /// Named secrets available to templates via the `secret()` function.
     pub secrets: HashMap<String, SecretDefinition>,
+    /// Allows you to override the default template for script new with a
+    /// custom one.
+    pub template_script: Option<String>,
     /// Allows you to override the default template for test new with a
     /// custom one.
     pub template_test: Option<String>,

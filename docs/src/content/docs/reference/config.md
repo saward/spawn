@@ -72,6 +72,28 @@ With this set, `spawn test new` copies the contents of `spawn_folder/templates/c
 SELECT 1;
 ```
 
+### `template_script`
+
+**Type:** String  
+**Required:** No  
+**Default:** None (uses the built-in default template)
+
+Path to a custom template file used by `spawn script new` instead of the built-in default. Resolved relative to `spawn_folder`.
+
+```toml
+template_script = "templates/custom-script.sql"
+```
+
+With this set, `spawn script new` copies the contents of `spawn_folder/templates/custom-script.sql` into the new script's `script.sql` instead of the built-in default:
+
+```sql
+BEGIN;
+
+COMMIT;
+```
+
+Only the starting content changes. A script's includes still resolve the same way, and the template is copied verbatim rather than rendered — `{% ... %}` in it is written through to `script.sql` untouched, to be rendered when the script is built or run.
+
 ### `target`
 
 **Type:** String  

@@ -767,6 +767,7 @@ mod tests {
             target: Some("dev_target".to_string()),
             targets: Some(targets),
             secrets: None,
+            template_script: None,
             template_test: None,
             template_up: None,
             telemetry: Some(false),
