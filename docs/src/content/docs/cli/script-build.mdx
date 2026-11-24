@@ -1,0 +1,70 @@
+---
+title: spawn script build
+description: Render a script to SQL without running it.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import {
+  globalOptions,
+  targetOption,
+  environmentOption,
+  scriptPinOptions,
+  variablesOption,
+  varOption,
+  revealSecretsOption,
+} from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn script build <script> [options]"
+  options={[
+    ...scriptPinOptions,
+    ...variablesOption,
+    ...varOption,
+    ...revealSecretsOption,
+    ...environmentOption,
+    ...targetOption,
+    ...globalOptions
+  ]}
+>
+
+Renders a script to SQL and prints it, without touching the database. The counterpart to [`spawn script run`](/cli/script-run/), for checking what a run would actually execute.
+
+## Arguments
+
+- `<script>` — Required. Path to the script, relative to the scripts folder.
+
+## Secrets
+
+`build` masks `secret()` values by default, since its output is meant for reading rather than executing. The secrets are still resolved, so a misconfigured or unreachable one still fails the build — only the value printed is a placeholder. Pass `--reveal-secrets` to print real values when debugging locally.
+
+## Pinned builds
+
+`build` picks its component tree exactly as [`spawn script run`](/cli/script-run/) does, so what it prints is what a run would execute. A pinned script renders against its recorded tree; an unpinned one renders against the current components. Either way the choice is reported on stderr, so it stays out of the SQL on stdout:
+
+```
+Using the pinned component tree for 'maintenance/reindex' (scripts/maintenance/reindex/config.toml).
+```
+
+`--pinned` requires the script to be pinned, failing if it is not, and `--no-pin` renders against the current components even when it is — useful for seeing what re-pinning would change.
+
+## Examples
+
+Inspect what a run would execute:
+
+```bash
+spawn script build maintenance/reindex.sql
+```
+
+Check how a variable will be escaped before running anything:
+
+```bash
+spawn script build maintenance/backfill.sql --var tenant_id=42
+```
+
+See what re-pinning would change, by rendering a pinned script against the current components:
+
+```bash
+spawn script build maintenance/backfill.sql --no-pin
+```
+
+</CLICommand>

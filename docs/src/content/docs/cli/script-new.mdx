@@ -1,0 +1,50 @@
+---
+title: spawn script new
+description: Create a new script.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import {
+  globalOptions,
+  targetOption,
+  environmentOption,
+} from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn script new <script>"
+  options={[
+    ...environmentOption,
+    ...targetOption,
+    ...globalOptions
+  ]}
+>
+
+Creates a new script folder with a starting `script.sql`.
+
+## Arguments
+
+- `<script>` — Required. Name of the script, as a path relative to the scripts folder. May nest, e.g. `maintenance/reindex`.
+
+Unlike [`spawn migration new`](/cli/migration-new/), the name is used as given — no timestamp prefix. Scripts are neither ordered nor applied once, so there is nothing for a timestamp to sequence.
+
+Creating a script that already exists is an error rather than an overwrite, since the existing one may already have been run.
+
+## What gets created
+
+```
+scripts/maintenance/reindex/
+  script.sql
+```
+
+The starting `script.sql` wraps an empty body in `BEGIN;` / `COMMIT;`. Delete those two lines for statements that cannot run inside a transaction, such as `CREATE INDEX CONCURRENTLY`.
+
+A `config.toml` appears alongside it only if you later run [`spawn script pin`](/cli/script-pin/).
+
+## Examples
+
+```bash
+spawn script new reset_demo_data
+spawn script new maintenance/reindex
+```
+
+</CLICommand>

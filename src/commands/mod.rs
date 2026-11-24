@@ -6,6 +6,7 @@ pub mod init;
 pub mod migration;
 pub mod pin_cleanup;
 pub mod pin_verify;
+pub mod script;
 pub mod test;
 
 pub use check::Check;
@@ -16,7 +17,25 @@ pub use migration::{
 };
 pub use pin_cleanup::PinCleanup;
 pub use pin_verify::PinVerify;
+pub use script::{BuildScript, NewScript, PinScript, PinScriptError, RunScript};
 pub use test::{BuildTest, CompareTests, ExpectTest, NewTest, RunTest};
+
+/// Prints the target and environment a command is about to act on, flagging production.
+pub fn print_target_banner(config: &Config) -> Result<()> {
+    let target_config = config.target_config()?;
+    let target = config.target.as_deref().unwrap_or("unknown");
+    let env = &target_config.environment;
+
+    println!();
+    println!("TARGET: {}", target);
+    if env.starts_with("prod") {
+        println!("ENVIRONMENT: {} \u{26a0}\u{fe0f}", env);
+    } else {
+        println!("ENVIRONMENT: {}", env);
+    }
+
+    Ok(())
+}
 
 /// Telemetry information for a command.
 #[derive(Debug, Clone, Default)]
@@ -64,6 +83,9 @@ pub enum Outcome {
         content: String,
         pinned_warn: bool,
     },
+    BuiltScript {
+        content: String,
+    },
     CheckFailed,
     PinCleanup {
         /// Hashes that were deleted (or would be deleted in dry-run mode).
@@ -76,12 +98,20 @@ pub enum Outcome {
     PinVerify {
         /// Number of pinned files whose contents no longer match their hash.
         corrupted_count: usize,
-        /// Number of migrations whose lock.toml root hash is missing from the store.
+        /// Number of migrations or scripts whose root hash is missing from the store.
         missing_root_count: usize,
     },
     NewMigration(String),
     NewTest(String),
     PinnedMigration {
+        hash: String,
+    },
+    NewScript {
+        script: String,
+        path: String,
+    },
+    PinnedScript {
+        script: String,
         hash: String,
     },
     Success,

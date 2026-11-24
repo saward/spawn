@@ -5,13 +5,15 @@ use opendal::Operator;
 use pretty_assertions::assert_eq;
 use spawn_db::{
     commands::{
-        BuildMigration, Check, Command, NewMigration, NewTest, Outcome, PinCleanup, PinError,
-        PinMigration, PinVerify,
+        BuildMigration, BuildScript, Check, Command, NewMigration, NewTest, Outcome, PinCleanup,
+        PinError, PinMigration, PinScript, PinVerify,
     },
     config::{Config, ConfigLoaderSaver},
     engine::{CommandSpec, EngineType, TargetConfig},
+    script::PinMode,
     secrets::{SecretDefinition, SecretSource},
     store,
+    variables::Variables,
 };
 use std::collections::HashMap;
 use tokio;
@@ -223,6 +225,68 @@ impl MigrationTestHelper {
         }
     }
 
+    /// Writes a migration's up.sql at `name` (relative to `migrations/`).
+    pub async fn write_migration(&self, name: &str, contents: &str) -> Result<()> {
+        let cfg = self.load_config().await?;
+        let path = cfg.pather().migration_script_file_path(name);
+        self.fs.write(&path, contents.to_string()).await?;
+        Ok(())
+    }
+
+    /// Writes a component at `name` (relative to the components folder).
+    pub async fn write_component(&self, name: &str, contents: &str) -> Result<()> {
+        let cfg = self.load_config().await?;
+        let path = format!("{}/{}", cfg.pather().components_folder(), name);
+        self.fs.write(&path, contents.to_string()).await?;
+        Ok(())
+    }
+
+    /// Writes a script's entry template at `name` (relative to `scripts/`).
+    pub async fn write_script(&self, name: &str, contents: &str) -> Result<()> {
+        let cfg = self.load_config().await?;
+        let path = cfg.pather().script_file_path(name);
+        self.fs.write(&path, contents.to_string()).await?;
+        Ok(())
+    }
+
+    /// Builds a script using the BuildScript command.
+    pub async fn build_script(
+        &self,
+        script: &str,
+        pin_mode: PinMode,
+        variables: Option<Variables>,
+    ) -> Result<String, anyhow::Error> {
+        let config = self.load_config().await?;
+        let cmd = BuildScript {
+            script: script.to_string(),
+            pin_mode,
+            variables,
+            reveal_secrets: false,
+        };
+
+        match cmd.execute(&config).await? {
+            Outcome::BuiltScript { content } => Ok(content),
+            _ => Err(anyhow::anyhow!("Unexpected outcome")),
+        }
+    }
+
+    /// Pins a script using the PinScript command.
+    pub async fn pin_script(&self, script: &str) -> Result<String, anyhow::Error> {
+        let config = self.load_config().await?;
+        let cmd = PinScript {
+            script: script.to_string(),
+        };
+
+        match cmd
+            .execute(&config)
+            .await
+            .context("error calling pin_script")?
+        {
+            Outcome::PinnedScript { hash, .. } => Ok(hash),
+            _ => Err(anyhow::anyhow!("Unexpected outcome")),
+        }
+    }
+
     pub async fn _list_fs_contents(&self, label: &str) -> Result<()> {
         let mut lister = self.fs.lister_with(".").recursive(true).await?;
 
@@ -398,9 +462,8 @@ async fn test_migration_build_with_component() -> Result<(), Box<dyn std::error:
     let migration_name = "20240907212659-initial";
     let expected = concat!(
         r#"BEGIN;
--- Created by"#,
-        " \n", // prevents trim space from removing the extra space here
-        r#"-- Environment: dev
+-- Created by unknown
+-- Environment: dev
 
 
 -- uuid var: 9cf58fa3-ed23-5cf3-986c-bb1b76f74b2e
@@ -447,9 +510,8 @@ $$ LANGUAGE plpgsql;"#
     // But using the unpinned version should use the new function:
     let expected_new = concat!(
         r#"BEGIN;
--- Created by"#,
-        " \n",
-        r#"-- Environment: dev
+-- Created by unknown
+-- Environment: dev
 
 
 -- uuid var: 9cf58fa3-ed23-5cf3-986c-bb1b76f74b2e
@@ -514,13 +576,17 @@ async fn test_migration_build_with_variables() -> Result<(), Box<dyn std::error:
 
     let migration_name = "20240907212659-initial";
 
-    // Build without variables - should have empty/default values
-    let built_without_vars = helper.build_migration(&migration_name, false).await?;
-
-    // The template uses variables.X which will be empty without a variables file
-    // This verifies the migration builds but variables are not substituted
-    assert!(built_without_vars.contains("BEGIN;"));
-    assert!(built_without_vars.contains("COMMIT;"));
+    // Must fail rather than silently render an empty identifier and VARCHAR length.
+    let err = helper
+        .build_migration(&migration_name, false)
+        .await
+        .expect_err("a template referencing unset variables should not build");
+    let err_msg = format!("{:?}", err);
+    assert!(
+        err_msg.contains("undefined value"),
+        "expected an undefined-value error, got: {}",
+        err_msg
+    );
 
     // Build with variables file
     let built_with_vars = helper
@@ -1097,6 +1163,280 @@ async fn test_migration_build_with_secrets() -> Result<(), Box<dyn std::error::E
     };
     assert!(revealed_content.contains("dev-secret"));
     assert!(!revealed_content.contains("prod-secret"));
+
+    Ok(())
+}
+
+/// A script renders like a migration: it includes components, and its
+/// variables are escaped the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_script_build_renders_includes_and_variables() -> Result<(), Box<dyn std::error::Error>>
+{
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    helper
+        .write_component("util/touch.sql", "SELECT touch_tenant();")
+        .await?;
+    helper
+        .write_script(
+            "maintenance/reindex",
+            "-- tenant {{ variables.tenant }}\n{% include \"util/touch.sql\" %}\n",
+        )
+        .await?;
+
+    let vars = Variables::with_overrides(None, &[("tenant".to_string(), "42".to_string())])?;
+    let content = helper
+        .build_script("maintenance/reindex", PinMode::Auto, vars)
+        .await?;
+
+    // --var values stay untyped strings, so the formatter quotes them;
+    // minijinja eats the newline after the include's block tag.
+    assert_eq!(content, "-- tenant '42'\nSELECT touch_tenant();");
+
+    Ok(())
+}
+
+/// Pinning a script freezes the components it includes, but not the script
+/// itself: it lives outside the pinned tree and is always read live.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pinned_script_build_freezes_includes_but_not_the_script(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    helper
+        .write_component("util/touch.sql", "SELECT original_include();")
+        .await?;
+    helper
+        .write_script(
+            "maintenance/reindex",
+            "-- original entry\n{% include \"util/touch.sql\" %}\n",
+        )
+        .await?;
+
+    let hash = helper.pin_script("maintenance/reindex").await?;
+    assert!(!hash.is_empty());
+
+    let config = helper.load_config().await?;
+    let config_path = config.pather().script_config_path("maintenance/reindex");
+    assert_eq!(config_path, "/db/scripts/maintenance/reindex/config.toml");
+    assert!(helper.fs.exists(&config_path).await?);
+
+    // The config lives outside the component tree it records, so re-pinning
+    // an unchanged tree is stable.
+    let second_hash = helper.pin_script("maintenance/reindex").await?;
+    assert_eq!(
+        hash, second_hash,
+        "pinning an unchanged tree must be stable"
+    );
+
+    helper
+        .write_component("util/touch.sql", "SELECT edited_include();")
+        .await?;
+    helper
+        .write_script(
+            "maintenance/reindex",
+            "-- edited entry\n{% include \"util/touch.sql\" %}\n",
+        )
+        .await?;
+
+    // A pinned script builds against its pin without being asked to.
+    let pinned_content = helper
+        .build_script("maintenance/reindex", PinMode::Auto, None)
+        .await?;
+    assert_eq!(
+        pinned_content, "-- edited entry\nSELECT original_include();",
+        "a pinned build freezes the included component but reads the script live"
+    );
+
+    let live_content = helper
+        .build_script("maintenance/reindex", PinMode::Disabled, None)
+        .await?;
+    assert_eq!(
+        live_content, "-- edited entry\nSELECT edited_include();",
+        "--no-pin must show the current components"
+    );
+
+    Ok(())
+}
+
+/// Scripts sit beside `components/` rather than inside it so that adding,
+/// editing or pinning one leaves every migration's pin hash untouched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_scripts_do_not_perturb_a_migrations_pin() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    helper
+        .write_component("util/touch.sql", "SELECT touch();")
+        .await?;
+    helper
+        .write_migration("20260101000000-demo", "{% include \"util/touch.sql\" %}\n")
+        .await?;
+
+    let before = helper.pin_migration("20260101000000-demo").await?;
+
+    helper
+        .write_script("maintenance/reindex", "REINDEX DATABASE postgres;\n")
+        .await?;
+    helper.pin_script("maintenance/reindex").await?;
+
+    let after = helper.pin_migration("20260101000000-demo").await?;
+    assert_eq!(
+        before, after,
+        "a script must not change the component root a migration pins"
+    );
+
+    // Contrast: a real component edit does change it, so the check above is
+    // not vacuous.
+    helper
+        .write_component("util/touch.sql", "SELECT touched_differently();")
+        .await?;
+    let edited = helper.pin_migration("20260101000000-demo").await?;
+    assert_ne!(
+        before, edited,
+        "editing a component must still change the pin"
+    );
+
+    Ok(())
+}
+
+/// A script's config.toml is a pin reference like a migration's lock file,
+/// so collection must not treat its root as orphaned.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pin_cleanup_keeps_a_script_only_pin() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    helper
+        .write_component("util/touch.sql", "SELECT touch_tenant();")
+        .await?;
+    helper
+        .write_script("maintenance/reindex", "{% include \"util/touch.sql\" %}\n")
+        .await?;
+    helper.pin_script("maintenance/reindex").await?;
+
+    let files_before = helper.collect_all_files().await?;
+    let config = helper.load_config().await?;
+
+    let outcome = PinCleanup { dry_run: false }.execute(&config).await?;
+    let Outcome::PinCleanup {
+        orphaned,
+        referenced_count,
+        ..
+    } = outcome
+    else {
+        panic!("Expected Outcome::PinCleanup");
+    };
+
+    assert!(
+        orphaned.is_empty(),
+        "a script-only pin must not be collected: {:?}",
+        orphaned
+    );
+    assert!(referenced_count > 0, "the script's root must be counted");
+    assert_eq!(
+        files_before,
+        helper.collect_all_files().await?,
+        "nothing should have been deleted"
+    );
+
+    let content = helper
+        .build_script("maintenance/reindex", PinMode::Required, None)
+        .await?;
+    assert_eq!(content, "SELECT touch_tenant();");
+
+    Ok(())
+}
+
+/// An unpinned script builds against the current components without being
+/// asked to, so `--no-pin` is never needed just to build one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_an_unpinned_script_builds_against_current_components(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    helper
+        .write_component("util/touch.sql", "SELECT live();")
+        .await?;
+    helper
+        .write_script("maintenance/reindex", "{% include \"util/touch.sql\" %}\n")
+        .await?;
+
+    let content = helper
+        .build_script("maintenance/reindex", PinMode::Auto, None)
+        .await?;
+    assert_eq!(content, "SELECT live();");
+
+    Ok(())
+}
+
+/// `--pinned` is an assertion: a script with no pin fails rather than
+/// quietly falling back to the current components.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_requiring_a_pin_fails_on_an_unpinned_script() -> Result<(), Box<dyn std::error::Error>>
+{
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    helper
+        .write_component("util/touch.sql", "SELECT live();")
+        .await?;
+    helper
+        .write_script("maintenance/reindex", "{% include \"util/touch.sql\" %}\n")
+        .await?;
+
+    let err = helper
+        .build_script("maintenance/reindex", PinMode::Required, None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("is not pinned"), "got: {}", err);
+
+    Ok(())
+}
+
+/// `pin verify` reports a script whose recorded root has gone missing.
+#[tokio::test]
+async fn test_pin_verify_reports_a_missing_script_root() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    helper
+        .write_component("util/touch.sql", "SELECT 1;\n")
+        .await?;
+    helper
+        .write_script("maintenance/reindex", "{% include \"util/touch.sql\" %}\n")
+        .await?;
+    let hash = helper.pin_script("maintenance/reindex").await?;
+
+    let config = helper.load_config().await?;
+    let root_path = format!(
+        "{}/{}/{}",
+        config.pather().pinned_folder(),
+        &hash[..2],
+        &hash[2..]
+    );
+    helper.fs.delete(&root_path).await?;
+
+    let outcome = PinVerify.execute(&config).await?;
+    let Outcome::PinVerify {
+        missing_root_count, ..
+    } = outcome
+    else {
+        panic!("Expected Outcome::PinVerify");
+    };
+    assert_eq!(missing_root_count, 1);
+
+    Ok(())
+}
+
+/// Naming a script that isn't there says so, rather than failing deeper in
+/// the render.
+#[tokio::test]
+async fn test_script_build_rejects_an_unknown_script() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    let err = helper
+        .build_script("maintenance/nope", PinMode::Auto, None)
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("not found"), "got: {}", err);
 
     Ok(())
 }

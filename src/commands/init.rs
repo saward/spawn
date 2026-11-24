@@ -95,7 +95,7 @@ impl Init {
 
         // Create the spawn folder structure
         let spawn_folder = &config.spawn_folder;
-        let subfolders = ["migrations", "components", "tests", "pinned"];
+        let subfolders = ["migrations", "components", "scripts", "tests", "pinned"];
         let mut created_folders = Vec::new();
 
         for subfolder in &subfolders {

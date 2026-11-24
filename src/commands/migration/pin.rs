@@ -1,6 +1,6 @@
 use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
-use crate::pinfile::LockData;
+use crate::source_config::SourceConfig;
 use crate::store::pinner::spawn::Spawn;
 use crate::store::pinner::Pinner;
 use anyhow::{Context, Result};
@@ -49,8 +49,8 @@ impl Command for PinMigration {
             .context("error calling pinner snapshot")?;
 
         let lock_file_path = config.pather().migration_lock_file_path(&self.migration);
-        let toml_str = toml::to_string_pretty(&LockData { pin: root.clone() })
-            .context("could not not convert pin data to toml")?;
+        let toml_str = toml::to_string_pretty(&SourceConfig { pin: root.clone() })
+            .context("could not convert source config to toml")?;
 
         config
             .operator()

@@ -1,0 +1,126 @@
+---
+title: spawn script run
+description: Run a standalone SQL script against the database.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import {
+  globalOptions,
+  targetOption,
+  environmentOption,
+  scriptPinOptions,
+  variablesOption,
+  varOption,
+} from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn script run <script> [options]"
+  options={[
+    ...scriptPinOptions,
+    ...variablesOption,
+    ...varOption,
+    { flag: "--yes", description: "Skip confirmation prompt" },
+    ...environmentOption,
+    ...targetOption,
+    ...globalOptions
+  ]}
+>
+
+Runs a script against the configured database.
+
+Scripts are for operational SQL that isn't a schema change: a backfill, a reindex, a one-off report, a `VACUUM`. A script is rendered exactly as a migration is — the same includes, variables, filters and `secret()` values — and its output is streamed back as it runs.
+
+## Arguments
+
+- `<script>` — Required. Path to the script, relative to the scripts folder. For example, `maintenance/reindex` runs `scripts/maintenance/reindex/script.sql`.
+
+Scripts may be nested however suits the project. Create one with [`spawn script new`](/cli/script-new/).
+
+## How it differs from a migration
+
+|                             | `migration apply`    | `script run`                               |
+| --------------------------- | -------------------- | ------------------------------------------ |
+| Runs more than once         | No, unless `--retry` | Yes, as often as you like                  |
+| Run pinned version          | By default           | Automatically, with pinned files if pinned |
+| Recorded in                 | `migration_history`  | `script_run`                               |
+| Later runs gated on history | Yes                  | No                                         |
+
+Nothing about a script run is gated on its history. The recorded rows are an audit trail — what was run, against what, when, and whether it worked — not a lock on running it again.
+
+## Transactions
+
+The script owns its own transaction, exactly as a migration's `up.sql` does. Wrap the body in `BEGIN;` / `COMMIT;` if you want one, and leave it out for statements that cannot run inside a transaction, such as `CREATE INDEX CONCURRENTLY`, `VACUUM`, or `ALTER TYPE ... ADD VALUE`.
+
+## Output
+
+Results are streamed to stdout as they arrive, and diagnostics (`NOTICE`, `ERROR`, and the rest) to stderr, so a long-running script reports progress as it goes and stdout stays pipeable.
+
+If any statement reports an error the command exits non-zero. Spawn sets `ON_ERROR_STOP` before every script, so the first failing statement stops the run; a script that turns that setting off is reporting its own success and will be recorded as having succeeded.
+
+## Pinning
+
+Pinning is automatic. If the script has been pinned with [`spawn script pin`](/cli/script-pin/), its `{% include %}`s resolve against the recorded tree; if it has not, they resolve against the current components. A pinned script is never run against other components by accident.
+
+Every run says which tree it used, on stderr:
+
+```
+Using the pinned component tree for 'maintenance/reindex' (scripts/maintenance/reindex/config.toml).
+Using the current component tree for 'maintenance/reindex' (not pinned).
+```
+
+Two flags override the choice:
+
+- `--pinned` asserts that the script must be pinned. If it has no `config.toml` the run fails instead of falling back to the current components — worth setting in CI, where a pin that silently disappeared should be an error rather than a different run.
+- `--no-pin` ignores the pin and uses the current components, for trying a component edit before re-pinning. The stderr line reports `(--no-pin)` so the choice is on the record.
+
+Passing both is rejected.
+
+Note what a pin does and does not freeze. It fixes the components a script includes. It does **not** fix the script's own source: `script.sql` lives under `scripts/`, outside the pinned tree, and is always read live. Editing a script changes what the next pinned run executes.
+
+Either way, the pin hash of the tree the run resolved against is recorded in the audit trail. For an unpinned run that hash is recomputed from the current tree at run time, which identifies the tree but does not retain it — only a pinned run keeps its components in the store.
+
+## Secrets
+
+`run` always reveals real `secret()` values, since it executes the rendered SQL. See the [Secrets guide](/guides/secrets/) for how secrets are configured, and [`spawn script build`](/cli/script-build/) for inspecting a script with them masked.
+
+Note that the diagnostics streamed to your terminal are the database's own and are not redacted: a failing statement can echo a literal back, and with secrets revealed that literal may be one.
+
+## Audit trail
+
+Each run appends a row to `script_run` in spawn's schema, recording the script's name, the status, the pin hash it resolved against, how long it took, and a checksum of the script's raw (unrendered) source.
+
+If the run itself succeeds but the row cannot be written, spawn warns and still reports success: unlike a migration, nothing about a later run depends on that row existing, so a failure here leaves a gap in the audit trail and nothing else.
+
+## Examples
+
+Run a script, with a confirmation prompt showing the target:
+
+```bash
+spawn script run maintenance/reindex
+```
+
+Run unattended, as in CI:
+
+```bash
+spawn script run maintenance/reindex --yes
+```
+
+Pass a value straight from the command line:
+
+```bash
+spawn script run maintenance/backfill --var tenant_id=42 --yes
+```
+
+Insist the script is pinned, failing if it is not:
+
+```bash
+spawn script run maintenance/backfill --pinned --yes
+```
+
+Try a component edit against a pinned script before re-pinning:
+
+```bash
+spawn script run maintenance/backfill --no-pin --yes
+```
+
+</CLICommand>

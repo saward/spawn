@@ -6,7 +6,7 @@ use crate::config::FolderPather;
 use crate::engine::{
     resolve_command_spec, Engine, EngineError, ExistingMigrationInfo, MigrationActivity,
     MigrationError, MigrationHistoryStatus, MigrationResult, MigrationStatus, ScriptOutput,
-    ScriptSource, TargetConfig,
+    ScriptSource, ScriptStatus, TargetConfig,
 };
 use crate::escape::{EscapedIdentifier, EscapedLiteral, EscapedQuery, InsecureRawSql};
 use crate::secrets::SecretsRenderMode;
@@ -255,6 +255,44 @@ impl PSQL {
         );
         qry
     }
+
+    /// A script run only ever appends: no parent row to upsert, no uniqueness to contend with.
+    fn build_record_script_run_sql(
+        &self,
+        script_name: &str,
+        namespace: &EscapedLiteral,
+        status: MigrationStatus,
+        checksum: &str,
+        execution_time: f32,
+        pin_hash: Option<&str>,
+    ) -> EscapedQuery {
+        let safe_script_name = EscapedLiteral::new(script_name);
+        let safe_status = EscapedLiteral::new(status.as_str());
+        let safe_pin_hash = pin_hash.map(|h| EscapedLiteral::new(h));
+        let duration_interval = EscapedLiteral::new(&format!("{} second", execution_time));
+
+        sql_query!(
+            r#"
+    {}
+    INSERT INTO {}.script_run (
+        name,
+        namespace,
+        status_id_status,
+        checksum,
+        execution_time,
+        pin_hash
+    ) VALUES ({}, {}, {}, decode({}, 'hex'), INTERVAL {}, {});
+    "#,
+            self.spawn_db_connect_command(),
+            self.spawn_schema_ident(),
+            safe_script_name,
+            namespace,
+            safe_status,
+            EscapedLiteral::new(checksum),
+            duration_interval,
+            safe_pin_hash,
+        )
+    }
 }
 
 #[async_trait]
@@ -263,7 +301,7 @@ impl Engine for PSQL {
         &self,
         script: ScriptSource,
         out: ScriptOutput<'_>,
-    ) -> Result<(), EngineError> {
+    ) -> Result<ScriptStatus, EngineError> {
         let ScriptOutput {
             results,
             diagnostics,
@@ -275,11 +313,11 @@ impl Engine for PSQL {
             .await;
 
         match outcome {
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(ScriptStatus::Ok),
             // Exit 3 is a statement failing under ON_ERROR_STOP, which is on by
             // default but a script may turn off. Either way its diagnostics are
             // already written, so this is a normal outcome.
-            Err(EngineError::ExecutionFailed { exit_code: 3 }) => Ok(()),
+            Err(EngineError::ExecutionFailed { exit_code: 3 }) => Ok(ScriptStatus::StatementFailed),
             // Exit 1 is psql itself failing, 2 a bad or lost connection. The
             // reason went to the caller's sink, so quote the tail of it here:
             // a caller streaming to disk cannot cheaply go back and look.
@@ -312,6 +350,47 @@ impl Engine for PSQL {
             retry,
         )
         .await
+    }
+
+    async fn record_script_run(
+        &self,
+        script_name: &str,
+        checksum: String,
+        pin_hash: Option<String>,
+        namespace: &str,
+        status: MigrationStatus,
+        execution_time: f32,
+    ) -> MigrationResult<()> {
+        let record_query = self.build_record_script_run_sql(
+            script_name,
+            &EscapedLiteral::new(namespace),
+            status,
+            &checksum,
+            execution_time,
+            pin_hash.as_deref(),
+        );
+
+        let mut diagnostics: Vec<u8> = Vec::new();
+        let outcome = self
+            .execute_with_writer(
+                Box::new(move |writer| {
+                    writer.write_all(record_query.as_str().as_bytes())?;
+                    Ok(())
+                }),
+                None,
+                &mut diagnostics,
+            )
+            .await;
+
+        if let Err(e) = outcome {
+            return Err(MigrationError::Database(anyhow!(
+                "Failed to record script run ({}): {}",
+                e,
+                String::from_utf8_lossy(&diagnostics).trim()
+            )));
+        }
+
+        Ok(())
     }
 
     async fn migration_adopt(

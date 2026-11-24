@@ -91,6 +91,15 @@ export default defineConfig({
               ],
             },
             {
+              label: "Script",
+              items: [
+                { label: "spawn script new", slug: "cli/script-new" },
+                { label: "spawn script run", slug: "cli/script-run" },
+                { label: "spawn script build", slug: "cli/script-build" },
+                { label: "spawn script pin", slug: "cli/script-pin" },
+              ],
+            },
+            {
               label: "Test",
               items: [
                 { label: "spawn test new", slug: "cli/test-new" },

@@ -1,10 +1,10 @@
 //! Shell completion support for spawn CLI.
 //!
-//! This module provides dynamic completers for migration and test names.
+//! This module provides dynamic completers for migration, test and script names.
 //! Completions work with any shell that supports clap_complete's CompleteEnv.
 
 use crate::config::{ConfigLoaderSaver, FolderPather, DEFAULT_CONFIG_FILE};
-use crate::store::{list_migration_fs_status, list_test_fs_status};
+use crate::store::{list_migration_fs_status, list_scripts, list_test_fs_status};
 use clap_complete::CompletionCandidate;
 use opendal::services::Fs;
 use opendal::Operator;
@@ -31,6 +31,16 @@ pub fn complete_tests(_current: &OsStr) -> Vec<CompletionCandidate> {
         .collect()
 }
 
+/// Complete script paths from the scripts directory.
+///
+/// Paths are relative to `scripts/`, which is how `spawn script run` names them.
+pub fn complete_scripts(_current: &OsStr) -> Vec<CompletionCandidate> {
+    list_scripts_rel()
+        .into_iter()
+        .map(CompletionCandidate::new)
+        .collect()
+}
+
 /// List migrations using the existing store function.
 ///
 /// Only returns directories that contain up.sql (valid migrations).
@@ -41,6 +51,10 @@ fn list_migrations() -> Vec<String> {
             .map(|statuses| statuses.into_keys().collect())
             .unwrap_or_default()
     })
+}
+
+fn list_scripts_rel() -> Vec<String> {
+    with_runtime(|op, pather| async move { list_scripts(&op, &pather).await.unwrap_or_default() })
 }
 
 /// List tests using the existing store function.
@@ -108,6 +122,33 @@ mod tests {
         assert_eq!(
             result[0].get_value().to_str().unwrap(),
             "20240907212659-initial"
+        );
+    }
+
+    #[test]
+    fn test_complete_scripts() {
+        let result = complete_scripts(&OsString::new());
+
+        let names: Vec<_> = result
+            .iter()
+            .map(|c| c.get_value().to_str().unwrap().to_string())
+            .collect();
+
+        // A script is named by its folder path relative to scripts/, not script.sql.
+        assert!(
+            names.contains(&"reset_demo_data".to_string()),
+            "got: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"maintenance/reindex_users".to_string()),
+            "got: {:?}",
+            names
+        );
+        assert!(
+            !names.iter().any(|n| n.ends_with("script.sql")),
+            "the entry file is an implementation detail, got: {:?}",
+            names
         );
     }
 

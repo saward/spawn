@@ -108,17 +108,7 @@ pub async fn get_pending_and_confirm(
         return Ok(None);
     }
 
-    let target_config = config.target_config()?;
-    let target = config.target.as_deref().unwrap_or("unknown");
-    let env = &target_config.environment;
-
-    println!();
-    println!("TARGET: {}", target);
-    if env.starts_with("prod") {
-        println!("ENVIRONMENT: {} \u{26a0}\u{fe0f}", env);
-    } else {
-        println!("ENVIRONMENT: {}", env);
-    }
+    crate::commands::print_target_banner(config)?;
     println!();
     println!(
         "The following {} migration{} will be {}:",

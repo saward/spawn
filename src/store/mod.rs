@@ -25,6 +25,13 @@ pub struct TestFileStatus {
     pub has_expected: bool,
 }
 
+/// Filesystem-level status of a single script.
+#[derive(Debug, Clone)]
+pub struct ScriptFileStatus {
+    pub has_script_sql: bool,
+    pub has_config_toml: bool,
+}
+
 /// Get the filesystem status of a single migration.
 /// Returns the status indicating whether up.sql and lock.toml files exist.
 pub async fn get_migration_fs_status(
@@ -163,6 +170,65 @@ pub async fn list_test_fs_status(
     Ok(result)
 }
 
+/// Filesystem status of every script, keyed by path relative to `scripts/` (names may nest).
+///
+/// An orphaned `config.toml` still gets an entry: the pin it records keeps store roots alive.
+pub async fn list_script_fs_status(
+    op: &Operator,
+    pather: &FolderPather,
+) -> Result<BTreeMap<String, ScriptFileStatus>> {
+    // opendal strips a leading "./" or "/" from returned paths; strip ours to match.
+    let folder = pather.scripts_folder();
+    let prefix = format!(
+        "{}/",
+        folder.trim_start_matches("./").trim_start_matches('/')
+    );
+
+    let mut lister = match op.lister_with(&prefix).recursive(true).await {
+        Ok(lister) => lister,
+        Err(e) if e.kind() == opendal::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(e) => return Err(anyhow::Error::from(e).context("listing scripts")),
+    };
+
+    let mut result: BTreeMap<String, ScriptFileStatus> = BTreeMap::new();
+    while let Some(entry) = lister.try_next().await? {
+        let path = entry.path().to_string();
+        let Some(relative) = path.strip_prefix(&prefix) else {
+            continue;
+        };
+        // Script names may contain `/`, so the name is everything up to the marker file.
+        let (name, is_script) = if let Some(name) = relative.strip_suffix("/script.sql") {
+            (name, true)
+        } else if let Some(name) = relative.strip_suffix("/config.toml") {
+            (name, false)
+        } else {
+            continue;
+        };
+
+        let status = result.entry(name.to_string()).or_insert(ScriptFileStatus {
+            has_script_sql: false,
+            has_config_toml: false,
+        });
+        if is_script {
+            status.has_script_sql = true;
+        } else {
+            status.has_config_toml = true;
+        }
+    }
+
+    Ok(result)
+}
+
+/// Runnable scripts, sorted, as paths relative to `scripts/` — the form `spawn script run` takes.
+pub async fn list_scripts(op: &Operator, pather: &FolderPather) -> Result<Vec<String>> {
+    Ok(list_script_fs_status(op, pather)
+        .await?
+        .into_iter()
+        .filter(|(_, status)| status.has_script_sql)
+        .map(|(name, _)| name)
+        .collect())
+}
+
 pub struct Store {
     pinner: Box<dyn Pinner>,
     fs: Operator,
@@ -196,8 +262,11 @@ impl Store {
             .ok_or_else(|| anyhow::anyhow!("file not found in components: {}", path))
     }
 
-    pub async fn load_migration(&self, name: &str) -> Result<String> {
-        let result = self.fs.read(&name).await?;
+    /// Reads a render's entry template by raw object-store path.
+    ///
+    /// Bypasses the pinner: entry files live outside `components/` and are always read live.
+    pub async fn load_entry(&self, path: &str) -> Result<String> {
+        let result = self.fs.read(&path).await?;
         let bytes = result.to_bytes();
         let contents = String::from_utf8(bytes.to_vec())?;
 
@@ -496,6 +565,82 @@ mod tests {
 
         assert!(status.has_up_sql, "Migration should have up.sql");
         assert!(!status.has_lock_toml, "Migration should not have lock.toml");
+    }
+
+    #[tokio::test]
+    async fn test_list_script_fs_status() {
+        for spawn_folder in [
+            "",
+            "./database/spawn",
+            "/database/spawn",
+            "./spawn",
+            "/spawn",
+        ] {
+            let mem_service = Memory::default();
+            let op = Operator::new(mem_service).unwrap();
+
+            let prefix = spawn_folder
+                .trim_start_matches("./")
+                .trim_start_matches('/');
+            let scripts = if prefix.is_empty() {
+                "scripts".to_string()
+            } else {
+                format!("{}/scripts", prefix)
+            };
+
+            // A pinned script (nested name), an unpinned one, and an orphaned config.toml.
+            op.write(
+                &format!("{}/maintenance/reindex/script.sql", scripts),
+                "SELECT 1;",
+            )
+            .await
+            .unwrap();
+            op.write(
+                &format!("{}/maintenance/reindex/config.toml", scripts),
+                "pin = \"abc\"",
+            )
+            .await
+            .unwrap();
+            op.write(&format!("{}/plain/script.sql", scripts), "SELECT 2;")
+                .await
+                .unwrap();
+            op.write(&format!("{}/ghost/config.toml", scripts), "pin = \"def\"")
+                .await
+                .unwrap();
+
+            let pather = FolderPather {
+                spawn_folder: spawn_folder.to_string(),
+            };
+
+            let statuses = list_script_fs_status(&op, &pather)
+                .await
+                .expect("Failed to list script statuses");
+            assert_eq!(statuses.len(), 3, "got: {:?}", statuses);
+
+            let pinned = statuses.get("maintenance/reindex").unwrap();
+            assert!(pinned.has_script_sql);
+            assert!(pinned.has_config_toml);
+
+            let plain = statuses.get("plain").unwrap();
+            assert!(plain.has_script_sql);
+            assert!(!plain.has_config_toml);
+
+            let ghost = statuses.get("ghost").unwrap();
+            assert!(!ghost.has_script_sql);
+            assert!(ghost.has_config_toml);
+
+            // Only runnable scripts, sorted.
+            let names = list_scripts(&op, &pather).await.unwrap();
+            assert_eq!(names, vec!["maintenance/reindex", "plain"]);
+        }
+
+        // No scripts folder: empty, not an error.
+        let op = Operator::new(Memory::default()).unwrap();
+        let pather = FolderPather {
+            spawn_folder: "./spawn".to_string(),
+        };
+        let statuses = list_script_fs_status(&op, &pather).await.unwrap();
+        assert!(statuses.is_empty());
     }
 
     #[tokio::test]

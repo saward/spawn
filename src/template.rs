@@ -3,12 +3,13 @@ use crate::engine::EngineType;
 use crate::escape::{EscapedIdentifier, EscapedLiteral};
 use crate::hash::content_hash;
 use crate::secrets::{SecretsRenderMode, SecretsRepository};
+use crate::source_config::SourceConfig;
 use crate::store::pinner::latest::Latest;
 use crate::store::pinner::spawn::Spawn;
 use crate::store::pinner::Pinner;
 use crate::store::Store;
 use crate::variables::Variables;
-use minijinja::{Environment, Value};
+use minijinja::{Environment, UndefinedBehavior, Value};
 
 use crate::sql_formatter::SqlDialect;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -19,22 +20,22 @@ use minijinja::context;
 use serde::Serialize;
 use std::sync::Arc;
 
-/// Whether a template is being rendered as part of a migration or a test.
-#[derive(Debug, Clone, Copy, Serialize)]
+/// What kind of thing is being rendered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RenderKind {
     Migration,
     Test,
+    Script,
 }
 
 /// Values describing the current render, exposed to templates as globals
 /// under the `builtin` namespace (e.g. `{{ builtin.script_name }}`).
 #[derive(Debug, Clone, Serialize)]
 pub struct BuiltinContext {
-    /// Name of the migration or test being rendered (e.g. as passed to
-    /// `Migrator::new`/`Tester::new`), not the object-store file path.
+    /// Name of the migration, test or script being rendered, not the object-store file path.
     pub script_name: String,
-    /// Whether this render is a migration or a test.
+    /// What kind of render this is.
     pub script_type: RenderKind,
     /// The target engine (e.g. `postgres-psql`).
     pub engine: EngineType,
@@ -76,6 +77,12 @@ pub fn template_env(
     builtin: BuiltinContext,
 ) -> Result<Environment<'static>> {
     let mut env = Environment::new();
+
+    // An unset variable is a mistake, not an empty string: rendering nothing
+    // can leave valid SQL that acts on the wrong thing. SemiStrict rather than
+    // Strict so `{% if variables.x %}` and `| default(..)` still cover
+    // genuinely optional variables.
+    env.set_undefined_behavior(UndefinedBehavior::SemiStrict);
 
     env.add_global("builtin", Value::from_serialize(&builtin));
 
@@ -359,20 +366,17 @@ pub struct StreamingGeneration {
     /// The template's real path, used as its minijinja template name so render
     /// errors name the file on disk.
     template_label: String,
-    /// Name of the migration or test being rendered, exposed to templates
-    /// as `builtin.script_name` (see `BuiltinContext`).
+    /// Name of the migration, test or script, exposed as `builtin.script_name`.
     script_name: String,
-    /// Whether this render is a migration or a test, exposed to templates
-    /// as `builtin.script_type`.
+    /// What kind of render this is, exposed as `builtin.script_type`.
     script_type: RenderKind,
     environment: String,
     variables: Variables,
     engine: EngineType,
     secrets: Arc<SecretsRepository>,
-    /// The pin loaded from lock.toml to build this render's component
-    /// store (`None` when generated with `--no-pin`), captured at the same
-    /// time that lock is read — a caller recording it to migration_history
-    /// should use this instead of re-reading lock.toml, which could race a
+    /// The pin used to build this render's component store (`None` with
+    /// `--no-pin`), captured when the source config was read — prefer it to
+    /// re-reading that config, which could race a
     /// concurrent re-pin and record a hash that doesn't match what was
     /// actually rendered.
     pin_hash: Option<String>,
@@ -393,7 +397,7 @@ impl StreamingGeneration {
 
     /// The pin actually used to build this render's component store — see
     /// the `pin_hash` field doc comment for why this should be preferred
-    /// over separately re-reading lock.toml.
+    /// over separately re-reading the source config.
     pub fn pin_hash(&self) -> Option<&str> {
         self.pin_hash.as_deref()
     }
@@ -444,32 +448,33 @@ impl StreamingGeneration {
 /// This avoids materializing the entire SQL in memory.
 pub async fn generate_streaming(
     cfg: &config::Config,
-    lock_file: Option<String>,
+    // A migration's lock.toml or a script's config.toml; None renders live.
+    source_config_path: Option<String>,
     script_name: &str,
     script_type: RenderKind,
     path: &str,
     variables: Option<Variables>,
     secrets_mode: SecretsRenderMode,
 ) -> Result<StreamingGeneration> {
-    let (pinner, pin_hash): (Box<dyn Pinner>, Option<String>) = if let Some(lock_file) = lock_file
-    {
-        let lock = cfg
-            .load_lock_file(&lock_file)
+    let (pinner, pin_hash): (Box<dyn Pinner>, Option<String>) =
+        if let Some(source_config_path) = source_config_path {
+            let source_config: SourceConfig = cfg
+                .load_source_config(&source_config_path)
+                .await
+                .context("could not load source config")?;
+            let pinner = Spawn::new_with_root_hash(
+                cfg.pather().pinned_folder(),
+                cfg.pather().components_folder(),
+                &source_config.pin,
+                &cfg.operator(),
+            )
             .await
-            .context("could not load pinned files lock file")?;
-        let pinner = Spawn::new_with_root_hash(
-            cfg.pather().pinned_folder(),
-            cfg.pather().components_folder(),
-            &lock.pin,
-            &cfg.operator(),
-        )
-        .await
-        .context("could not get new root with hash")?;
-        (Box::new(pinner), Some(lock.pin))
-    } else {
-        let pinner = Latest::new(cfg.pather().spawn_folder_path())?;
-        (Box::new(pinner), None)
-    };
+            .context("could not get new root with hash")?;
+            (Box::new(pinner), Some(source_config.pin))
+        } else {
+            let pinner = Latest::new(cfg.pather().spawn_folder_path())?;
+            (Box::new(pinner), None)
+        };
 
     let store = Store::new(pinner, cfg.operator().clone(), cfg.pather())
         .context("could not create new store for generate")?;
@@ -511,9 +516,9 @@ pub async fn generate_streaming_with_store(
 ) -> Result<StreamingGeneration> {
     // Read contents from our object store first:
     let contents = store
-        .load_migration(path)
+        .load_entry(path)
         .await
-        .context("generate_streaming_with_store could not read migration")?;
+        .with_context(|| format!("could not read script at '{}'", path))?;
 
     Ok(StreamingGeneration {
         store,
@@ -719,7 +724,13 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap();
+        let mut env = template_env(
+            store,
+            &EngineType::PostgresPSQL,
+            Arc::new(secrets),
+            BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL),
+        )
+        .unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
@@ -750,7 +761,13 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap();
+        let mut env = template_env(
+            store,
+            &EngineType::PostgresPSQL,
+            Arc::new(secrets),
+            BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL),
+        )
+        .unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "binary.dat"|read_file|base64_encode|safe }}"#,
@@ -778,7 +795,13 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap();
+        let mut env = template_env(
+            store,
+            &EngineType::PostgresPSQL,
+            Arc::new(secrets),
+            BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL),
+        )
+        .unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "nonexistent.txt"|read_file|to_string_lossy }}"#,
@@ -825,7 +848,13 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap();
+        let mut env = template_env(
+            store,
+            &EngineType::PostgresPSQL,
+            Arc::new(secrets),
+            BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL),
+        )
+        .unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
@@ -847,7 +876,65 @@ mod tests {
             spawn_folder: "".to_string(),
         };
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
-        template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap()
+        template_env(
+            store,
+            &EngineType::PostgresPSQL,
+            Arc::new(secrets),
+            BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL),
+        )
+        .unwrap()
+    }
+
+    /// Environment with no secrets, for tests about template-engine behaviour.
+    fn plain_env() -> Environment<'static> {
+        use opendal::services::Memory;
+        use opendal::Operator;
+        let op = Operator::new(Memory::default()).unwrap();
+        env_with_secrets(SecretsRepository::empty(op))
+    }
+
+    fn render(source: &str, vars: serde_json::Value) -> Result<String, minijinja::Error> {
+        let mut env = plain_env();
+        env.add_template("test.sql", source).unwrap();
+        let tmpl = env.get_template("test.sql").unwrap();
+        tmpl.render(context!(variables => Value::from_serialize(&vars)))
+    }
+
+    // The next four tests pin down the SemiStrict undefined behaviour set in
+    // `template_env`; Strict would also reject the truthiness test below.
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_printing_an_unset_variable_is_an_error() {
+        let err = render("-- {{ variables.missing }}", serde_json::json!({}))
+            .expect_err("printing an unset variable should fail, not render as empty");
+        assert_eq!(err.kind(), minijinja::ErrorKind::UndefinedError);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_a_variable_set_to_empty_is_not_undefined() {
+        // Quoted because the auto-escaping formatter makes a string a SQL literal.
+        let out = render("-- {{ variables.blank }}", serde_json::json!({"blank": ""})).unwrap();
+        assert_eq!(out, "-- ''");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_default_filter_still_rescues_an_unset_variable() {
+        let out = render(
+            r#"-- {{ variables.missing | default("fallback") }}"#,
+            serde_json::json!({}),
+        )
+        .unwrap();
+        assert_eq!(out, "-- 'fallback'");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_an_unset_variable_may_still_be_tested_for_truthiness() {
+        let out = render(
+            "{% if variables.flag %}on{% else %}off{% endif %}",
+            serde_json::json!({}),
+        )
+        .unwrap();
+        assert_eq!(out, "off");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -961,7 +1048,10 @@ mod tests {
         assert!(result.is_err());
     }
 
-    fn streaming_generation(template_contents: &str, secrets: SecretsRepository) -> StreamingGeneration {
+    fn streaming_generation(
+        template_contents: &str,
+        secrets: SecretsRepository,
+    ) -> StreamingGeneration {
         use crate::config::FolderPather;
         use opendal::services::Memory;
         use opendal::Operator;

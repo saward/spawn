@@ -1,0 +1,62 @@
+---
+title: spawn script pin
+description: Pin a script's components so that pinned runs are reproducible.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import {
+  globalOptions,
+  targetOption,
+  environmentOption,
+} from "../../../components/cli-options";
+
+<CLICommand
+  usage="spawn script pin <script>"
+  options={[
+    ...environmentOption,
+    ...targetOption,
+    ...globalOptions
+  ]}
+>
+
+Snapshots the current component tree into the content-addressed store and records its root hash in the script's `config.toml`, so that [`spawn script run`](/cli/script-run/) resolves includes against exactly what was pinned.
+
+Pinning a script is optional, and pinning it is the decision: an unpinned script resolves against the live component tree, and from the moment it has a `config.toml` every run uses the pinned tree instead, without a flag. That is usually the right default for operational SQL — a maintenance script normally wants today's logic, until you decide a particular script needs to be reproducible, because it was reviewed, because it will be repeated across environments, or because it is run from CI.
+
+To undo a pin, delete the script's `config.toml`; runs go back to the current components. ([`spawn pin cleanup`](/cli/pin-cleanup/) will then collect the tree, if nothing else refers to it.)
+
+## Arguments
+
+- `<script>` — Required. Path to the script, relative to the scripts folder.
+
+## Where the pin is written
+
+To `config.toml` inside the script's own folder. A script named `maintenance/reindex` gets `scripts/maintenance/reindex/config.toml`, alongside its `script.sql`.
+
+## Interaction with the pinned store
+
+A script's `config.toml` counts as a reference to its root hash, just as a migration's `lock.toml` does. [`spawn pin cleanup`](/cli/pin-cleanup/) will not collect a tree that only a pinned script refers to, and [`spawn pin verify`](/cli/pin-verify/) checks those roots too.
+
+Note that [`spawn check`](/cli/check/) does not report unpinned scripts. Pinning is expected for migrations and optional for scripts.
+
+## Examples
+
+Pin a script:
+
+```bash
+spawn script pin maintenance/reindex
+```
+
+Runs then use the pinned tree automatically:
+
+```bash
+spawn script run maintenance/reindex --yes
+```
+
+Re-pin after changing a component the script includes:
+
+```bash
+spawn script pin maintenance/reindex
+```
+
+</CLICommand>

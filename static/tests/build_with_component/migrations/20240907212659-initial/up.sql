@@ -1,5 +1,5 @@
 BEGIN;
--- Created by {{ variables.name | safe }}
+-- Created by {{ variables.name | default("unknown") | safe }}
 -- Environment: {{ env | safe }}
 
 {% set myid = gen_uuid_v5("some seed") %}

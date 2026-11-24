@@ -37,6 +37,29 @@ export const variablesOption: CLIOption[] = [
   },
 ];
 
+/** The pin flags shared by script run and script build, which pin automatically. */
+export const scriptPinOptions: CLIOption[] = [
+  {
+    flag: "--pinned",
+    description:
+      "Require the pinned component tree. Fails if the script has not been pinned.",
+  },
+  {
+    flag: "--no-pin",
+    description:
+      "Ignore the script's pin and resolve includes against the current components.",
+  },
+];
+
+/** The repeatable --var flag for setting a single variable from the command line. */
+export const varOption: CLIOption[] = [
+  {
+    flag: "--var <KEY=VALUE>",
+    description:
+      "Set a single variable as a string. May be repeated, and overrides the same key from --variables. Keys may not contain '.', which is reserved for future nested overrides.",
+  },
+];
+
 /** The --reveal-secrets flag used by build commands, which mask secret() values by default. */
 export const revealSecretsOption: CLIOption[] = [
   {
