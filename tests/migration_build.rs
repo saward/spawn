@@ -705,8 +705,63 @@ COMMIT;"#;
     Ok(())
 }
 
-/// `--var` layers over a `--variables` file for migrations, the same way it
-/// does for scripts: the override wins, and it stays an untyped string.
+/// Every type `--var-json` accepts, rendered. The number/string and
+/// boolean/string pairs are the distinction the flag exists to make, and the
+/// boolean pair is the one that changes which branch runs rather than only how
+/// the value is escaped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_var_json_overrides_reach_sql_with_their_json_type(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    let template = r#"num:        {{ variables.num }}
+num_str:    {{ variables.num_str }}
+flag:       {{ variables.flag }}
+flag_str:   {{ variables.flag_str }}
+branch:     {% if variables.flag %}TRUE-BRANCH{% else %}FALSE-BRANCH{% endif %}
+branch_str: {% if variables.flag_str %}TRUE-BRANCH{% else %}FALSE-BRANCH{% endif %}
+tags:       {{ variables.tags }}
+nested:     {{ variables.limits.max }}
+bare:       VARCHAR({{ variables.num }})"#;
+
+    let migration = helper
+        .create_migration_manual("var-json-types", template.to_string())
+        .await?;
+
+    let built = helper
+        .build_migration_with_variable_overrides(
+            &migration,
+            false,
+            None,
+            &[
+                ("num".to_string(), serde_json::json!(42)),
+                ("num_str".to_string(), serde_json::json!("42")),
+                ("flag".to_string(), serde_json::json!(false)),
+                ("flag_str".to_string(), serde_json::json!("false")),
+                ("tags".to_string(), serde_json::json!(["a", "b"])),
+                ("limits".to_string(), serde_json::json!({"max": 10})),
+            ],
+        )
+        .await?;
+
+    let expected = r#"num:        42
+num_str:    '42'
+flag:       FALSE
+flag_str:   'false'
+branch:     FALSE-BRANCH
+branch_str: TRUE-BRANCH
+tags:       ARRAY['a', 'b']
+nested:     10
+bare:       VARCHAR(42)"#;
+
+    assert_eq!(expected, built);
+
+    Ok(())
+}
+
+/// `--var-json` layers over a `--variables` file for migrations, the same way
+/// it does for scripts: the override wins, and the keys it does not name keep
+/// the types the file gave them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_migration_build_with_var_overrides() -> Result<(), Box<dyn std::error::Error>> {
     let helper =

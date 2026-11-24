@@ -307,4 +307,111 @@ mod tests {
         let err = parse_var_override("limits.tenant=42").unwrap_err();
         assert!(err.to_string().contains("reserved"), "got: {}", err);
     }
+
+    #[test]
+    fn a_value_that_is_not_json_is_rejected_with_the_quoting_hint() {
+        let err = parse_var_override("tenant=acme").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("invalid --var-json 'tenant=acme'"),
+            "got: {}",
+            msg
+        );
+        // The likeliest mistake is a bare string, so the error has to say so.
+        assert!(msg.contains(r#"tenant='"text"'"#), "got: {}", msg);
+    }
+
+    #[test]
+    fn an_object_override_replaces_the_key_rather_than_merging_into_it() {
+        let base = Variables::from_str("toml", "[limits]\nmax = 5\nmin = 1\n").unwrap();
+        let result =
+            Variables::with_overrides(Some(base), &overrides(&[("limits", r#"{"max":10}"#)]))
+                .unwrap()
+                .unwrap();
+        // `min` is gone: the whole table was swapped out, not merged into.
+        assert_eq!(
+            rendered(&result),
+            serde_json::json!({"limits": {"max": 10}})
+        );
+    }
+
+    /// The point of transcoding rather than round-tripping through JSON: a
+    /// value only TOML can hold keeps its type when a neighbour is overridden.
+    #[test]
+    fn a_toml_only_value_survives_a_merge_untouched() {
+        let base = Variables::from_str("toml", "created = 2026-11-25T00:00:00Z\nn = 1\n").unwrap();
+        let result = Variables::with_overrides(Some(base), &overrides(&[("n", "2")]))
+            .unwrap()
+            .unwrap();
+
+        // Asserted against the TOML model directly: serializing to JSON would
+        // show the toml crate's private datetime marker instead of the type.
+        match &result {
+            Variables::Toml(toml::Value::Table(table)) => {
+                assert!(
+                    matches!(table.get("created"), Some(toml::Value::Datetime(_))),
+                    "datetime did not survive: {:?}",
+                    table.get("created")
+                );
+                assert_eq!(table.get("n"), Some(&toml::Value::Integer(2)));
+            }
+            other => panic!("expected a TOML table, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn null_is_rejected_against_a_toml_file_that_cannot_hold_it() {
+        let base = Variables::from_str("toml", "archived = true").unwrap();
+        let err =
+            Variables::with_overrides(Some(base), &overrides(&[("archived", "null")])).unwrap_err();
+        assert!(
+            err.to_string().contains("TOML has no null value"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn an_integer_past_tomls_range_is_rejected_against_a_toml_file() {
+        let base = Variables::from_str("toml", "n = 1").unwrap();
+        let err =
+            Variables::with_overrides(Some(base), &overrides(&[("n", "18446744073709551615")]))
+                .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("'n'") && msg.contains("TOML"), "got: {}", msg);
+    }
+
+    /// Both limits above are TOML's own, not the flag's — the same overrides
+    /// merge cleanly into YAML.
+    #[test]
+    fn yaml_holds_what_toml_rejects() {
+        let base = Variables::from_str(
+            "yaml",
+            "archived: true
+n: 1
+",
+        )
+        .unwrap();
+        let result = Variables::with_overrides(
+            Some(base),
+            &overrides(&[("archived", "null"), ("n", "18446744073709551615")]),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(matches!(result, Variables::Yaml(_)));
+        assert_eq!(
+            rendered(&result),
+            serde_json::json!({"archived": null, "n": 18446744073709551615u64})
+        );
+    }
+
+    #[test]
+    fn overrides_with_no_file_need_no_conversion_at_all() {
+        let result = Variables::with_overrides(None, &overrides(&[("nothing", "null")]))
+            .unwrap()
+            .unwrap();
+        // JSON is the override's own model, so null is fine with no file.
+        assert!(matches!(result, Variables::Json(_)));
+        assert_eq!(rendered(&result), serde_json::json!({"nothing": null}));
+    }
 }
