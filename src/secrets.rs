@@ -53,8 +53,8 @@ impl SecretSource {
                 let bytes = tokio::fs::read(path)
                     .await
                     .with_context(|| format!("could not read secret host file '{}'", path))?;
-                let text = String::from_utf8(bytes)
-                    .context("secret host file is not valid UTF-8")?;
+                let text =
+                    String::from_utf8(bytes).context("secret host file is not valid UTF-8")?;
                 Ok(text.trim_end_matches(['\n', '\r']).to_string())
             }
             SecretSource::Command { command } => crate::engine::run_capture_stdout(command).await,
@@ -97,10 +97,10 @@ impl SecretDefinition {
 /// even though they mask the result. It's decided once per render, not per
 /// secret: Spawn renders a whole template in a single streaming pass to a
 /// single destination, so there's no case where part of one render should be
-    /// masked and another part not. Migration applies reveal secrets because
-    /// they execute the rendered SQL for real. Build commands mask by default,
-    /// while `test run`/`compare`/`expect` always mask secrets to prevent them
-    /// from being printed or persisted in expected output.
+/// masked and another part not. Migration applies reveal secrets because
+/// they execute the rendered SQL for real. Build commands mask by default,
+/// while `test run`/`compare`/`expect` always mask secrets to prevent them
+/// from being printed or persisted in expected output.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SecretsRenderMode {
     Masked,
@@ -228,6 +228,47 @@ impl SecretsRepository {
             .filter_map(|secret| secret.resolved.lock().unwrap().clone())
             .collect()
     }
+}
+
+/// Replaces every value this render actually resolved with a placeholder,
+/// across the error's full chain, and rebuilds a flat error from the
+/// result. Running real SQL means a failing statement (e.g. a constraint
+/// violation) can make the database echo a literal value — possibly a
+/// secret — back in its own error output, entirely independent of the
+/// checksum protection on what spawn persists. See the Secrets guide for
+/// the residual risk this doesn't close.
+///
+/// Redacts both the raw resolved value and its SQL-escaped form (via the
+/// engine's own dialect-specific escaper, so this stays correct as more
+/// engines are added). Some errors echo back a parsed value (matching the
+/// raw form), but others — e.g. a "LINE 1: ..." context on a syntax error —
+/// echo the submitted SQL text verbatim, which shows the escaped literal
+/// (quotes doubled, wrapped in quotes) rather than the raw string. A secret
+/// containing a quote or other special character would otherwise leak
+/// through that path untouched.
+pub fn redact_secrets(
+    err: anyhow::Error,
+    secrets: &SecretsRepository,
+    dialect: crate::sql_formatter::SqlDialect,
+) -> anyhow::Error {
+    let mut text = format!("{:?}", err);
+    let mut values = secrets.resolved_values();
+    let escaped: Vec<String> = values
+        .iter()
+        .map(|value| crate::sql_formatter::escape_string(dialect, value))
+        .collect();
+    values.extend(escaped);
+    // Longest first: if a shorter value (raw or escaped) is a substring of a
+    // longer one, redacting the shorter one first would consume part of the
+    // longer one and leave the rest of it exposed.
+    values.sort_by_key(|v| std::cmp::Reverse(v.len()));
+    for value in values {
+        if value.is_empty() {
+            continue;
+        }
+        text = text.replace(&value, "***REDACTED***");
+    }
+    anyhow!(text)
 }
 
 #[cfg(test)]
@@ -575,5 +616,148 @@ mod tests {
         // .to_string() only prints the outer context; the underlying "could
         // not read secret file" is deeper in the anyhow chain.
         assert!(format!("{:?}", err).contains("could not read secret file"));
+    }
+
+    #[tokio::test]
+    async fn redact_secrets_strips_resolved_values_from_the_full_error_chain() {
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            "application_password".to_string(),
+            SecretDefinition {
+                default: SecretSource::Literal {
+                    value: "hunter2".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let secrets = SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Revealed,
+            op,
+        );
+        // Resolve it, as a real render would while streaming to psql.
+        secrets.resolve("application_password").await.unwrap();
+
+        // Value at the deepest level. Only reached because redact_secrets
+        // formats with `{:?}`, which walks `source()`; `{}` would leak it.
+        let simulated_psql_error = anyhow!(
+            "psql exited with code 1: ERROR: duplicate key value\nDETAIL: Key (password)=(hunter2) already exists."
+        )
+        .context("could not render include: error in \"roles/app_role.sql\"")
+        .context("Migration '20260101000000-bootstrap' failed");
+
+        let redacted = redact_secrets(
+            simulated_psql_error,
+            &secrets,
+            crate::sql_formatter::SqlDialect::Postgres,
+        );
+
+        let full_text = format!("{:?}", redacted);
+        assert!(!full_text.contains("hunter2"));
+        assert!(full_text.contains("***REDACTED***"));
+    }
+
+    #[tokio::test]
+    async fn redact_secrets_fully_redacts_a_secret_that_contains_another_as_a_substring() {
+        // This test will only fail some of the time if the sort order is ever
+        // changed to be random, but that's better than nothing.
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            "short".to_string(),
+            SecretDefinition {
+                default: SecretSource::Literal {
+                    value: "hunter2".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        definitions.insert(
+            "long".to_string(),
+            SecretDefinition {
+                default: SecretSource::Literal {
+                    value: "hunter2suffix".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let secrets = SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Revealed,
+            op,
+        );
+        secrets.resolve("short").await.unwrap();
+        secrets.resolve("long").await.unwrap();
+
+        let simulated_psql_error = anyhow!(
+            "psql exited with code 1: ERROR: duplicate key value\nDETAIL: Key (password)=(hunter2suffix) already exists."
+        );
+
+        let redacted = redact_secrets(
+            simulated_psql_error,
+            &secrets,
+            crate::sql_formatter::SqlDialect::Postgres,
+        );
+
+        // Regardless of which order resolved_values() happens to hand back
+        // the two secrets, the longer one must be redacted whole — not just
+        // the "hunter2" prefix it shares with the shorter secret.
+        let full_text = format!("{:?}", redacted);
+        assert!(!full_text.contains("hunter2"), "got: {}", full_text);
+        assert!(!full_text.contains("suffix"), "got: {}", full_text);
+        assert!(full_text.contains("***REDACTED***"), "got: {}", full_text);
+    }
+
+    #[tokio::test]
+    async fn redact_secrets_also_strips_the_escaped_form_of_a_secret() {
+        // A secret containing a quote renders into the SQL sent to psql as
+        // an escaped literal (quotes doubled, wrapped in quotes). Some
+        // Postgres errors echo back the submitted SQL text verbatim (e.g. a
+        // "LINE 1: ..." context on a syntax error) rather than the parsed
+        // value, so that escaped form — not just the raw value — must be
+        // redacted too.
+        let mut definitions = HashMap::new();
+        definitions.insert(
+            "application_password".to_string(),
+            SecretDefinition {
+                default: SecretSource::Literal {
+                    value: "hunter'2".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        );
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let secrets = SecretsRepository::new(
+            definitions,
+            "prod".to_string(),
+            SecretsRenderMode::Revealed,
+            op,
+        );
+        secrets.resolve("application_password").await.unwrap();
+
+        // Simulates a "LINE 1: ..." context echoing the submitted SQL text,
+        // which shows the escaped literal 'hunter''2' rather than the raw
+        // value hunter'2.
+        let simulated_psql_error = anyhow!(
+            "psql exited with code 1: ERROR: syntax error at or near \"FRIM\"\n\
+             LINE 1: SELECT * FRIM foo WHERE password = 'hunter''2';"
+        );
+
+        let redacted = redact_secrets(
+            simulated_psql_error,
+            &secrets,
+            crate::sql_formatter::SqlDialect::Postgres,
+        );
+
+        let full_text = format!("{:?}", redacted);
+        assert!(!full_text.contains("hunter"), "got: {}", full_text);
+        assert!(full_text.contains("***REDACTED***"), "got: {}", full_text);
     }
 }
