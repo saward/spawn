@@ -40,7 +40,7 @@ The starting `script.sql` wraps an empty body in `BEGIN;` / `COMMIT;`. Delete th
 
 To use your own starting content instead of the default template, set [`template_script`](/reference/config/#template_script) in `spawn.toml` to a path (relative to `spawn_folder`) of a file to copy into `script.sql`.
 
-A `config.toml` appears alongside it only if you later run [`spawn script pin`](/cli/script-pin/).
+A `config.toml` appears alongside it once you run [`spawn script pin`](/cli/script-pin/), or once you write one yourself to [declare variables](/cli/script-run/#declared-variables). Either is optional, and one does not imply the other.
 
 ## Examples
 

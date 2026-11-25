@@ -7,7 +7,7 @@ use opendal::Operator;
 use std::collections::HashSet;
 
 use crate::config::FolderPather;
-use crate::source_config::{load_source_config, SourceConfig};
+use crate::source_config::{load_source_config, ScriptConfig, SourceConfig};
 use crate::store::{list_migration_fs_status, list_script_fs_status};
 
 use super::{hash_to_path, read_hash_file, EntryKind, Tree};
@@ -87,24 +87,24 @@ async fn collect_referenced_hashes(
     }
 
     for (script, status) in list_script_fs_status(fs, pather).await? {
-        // Only a pinned script has a config.toml; an unpinned one keeps no root alive.
         if !status.has_config_toml {
             continue;
         }
 
         let config_path = pather.script_config_path(&script);
-        let source_config: SourceConfig = load_source_config(fs, &config_path)
+        let script_config: ScriptConfig = load_source_config(fs, &config_path)
             .await
             .with_context(|| format!("failed to load config for script {}", script))?;
 
-        walk_tree_hashes(
-            fs,
-            &pather.pinned_folder(),
-            &source_config.pin,
-            &mut referenced,
-        )
-        .await
-        .with_context(|| format!("failed to walk tree for script {}", script))?;
+        // A config.toml may exist only to declare variables. Without a pin the
+        // script keeps no root alive, so there is nothing to walk.
+        let Some(pin) = script_config.pin else {
+            continue;
+        };
+
+        walk_tree_hashes(fs, &pather.pinned_folder(), &pin, &mut referenced)
+            .await
+            .with_context(|| format!("failed to walk tree for script {}", script))?;
     }
 
     Ok(referenced)

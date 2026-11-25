@@ -1,10 +1,10 @@
-{/_
+{/*
 Shared explanation of --variables and --var-json, rendered under a
 `## Variables` heading by every CLI page that takes them. Keep that heading in
 the page itself rather than here: Starlight builds the right-hand table of
 contents from each page's own headings and does not see headings inside a
 partial.
-_/}
+*/}
 
 `--variables` loads a JSON, TOML or YAML file into the `variables` context, which templates read as `{{ variables.key }}`. `--var-json key=<json>` sets a single key straight from the command line, overriding the same key from the file. It is repeatable, and keys may not contain `.`, which is reserved for nested overrides later.
 

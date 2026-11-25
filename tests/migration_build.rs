@@ -298,6 +298,7 @@ impl MigrationTestHelper {
             pin_mode,
             variables,
             reveal_secrets: false,
+            use_defaults: false,
         };
 
         match cmd.execute(&config).await? {

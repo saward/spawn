@@ -1,5 +1,8 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use dialoguer::{Confirm, Input};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::io::IsTerminal;
 
 #[derive(Clone, Debug)]
 pub enum Variables {
@@ -111,10 +114,105 @@ impl Variables {
 
         Ok(Some(base))
     }
+
+    /// Whether a variable with this name already has a value.
+    ///
+    /// False when the variables are not a table of names at all, because then
+    /// no name has a value. `with_defaults` is where such a file is rejected.
+    pub fn contains_key(&self, key: &str) -> bool {
+        match self {
+            Variables::Json(serde_json::Value::Object(map)) => map.contains_key(key),
+            Variables::Toml(toml::Value::Table(table)) => table.contains_key(key),
+            Variables::Yaml(serde_yaml::Value::Mapping(map)) => {
+                map.contains_key(serde_yaml::Value::String(key.to_string()))
+            }
+            _ => false,
+        }
+    }
+
+    /// Adds each default to `base`, skipping any name `base` already has.
+    ///
+    /// `base` is what the command line supplied: the `--variables` file with
+    /// any `--var-json` values already merged in, or `None` if neither was
+    /// given. Those names were asked for explicitly, so they must win, and
+    /// skipping them is how a declared default loses to them.
+    ///
+    /// `defaults` are the variables a script declares in its own
+    /// `config.toml`. `base` keeps its own format, and each default is
+    /// converted into that format on the way in.
+    pub fn with_defaults(
+        base: Option<Variables>,
+        defaults: &[(String, toml::Value)],
+    ) -> Result<Option<Variables>> {
+        if defaults.is_empty() {
+            return Ok(base);
+        }
+
+        // No file: the declarations are TOML already, so they become the base
+        // in their own model and nothing is converted at all.
+        let Some(mut base) = base else {
+            let mut table = toml::map::Map::new();
+            for (key, value) in defaults {
+                table.insert(key.clone(), value.clone());
+            }
+            return Ok(Some(Variables::Toml(toml::Value::Table(table))));
+        };
+
+        match &mut base {
+            Variables::Json(serde_json::Value::Object(map)) => {
+                for (key, value) in defaults {
+                    if map.contains_key(key) {
+                        continue;
+                    }
+                    let value = serde_json::Value::deserialize(value.clone())
+                        .map_err(|e| default_not_representable(key, "JSON", e))?;
+                    map.insert(key.clone(), value);
+                }
+            }
+            Variables::Toml(toml::Value::Table(table)) => {
+                for (key, value) in defaults {
+                    if table.contains_key(key) {
+                        continue;
+                    }
+                    table.insert(key.clone(), value.clone());
+                }
+            }
+            Variables::Yaml(serde_yaml::Value::Mapping(map)) => {
+                for (key, value) in defaults {
+                    let key = serde_yaml::Value::String(key.clone());
+                    if map.contains_key(&key) {
+                        continue;
+                    }
+                    let value = serde_yaml::Value::deserialize(value.clone()).map_err(|e| {
+                        default_not_representable(key.as_str().unwrap_or_default(), "YAML", e)
+                    })?;
+                    map.insert(key, value);
+                }
+            }
+            _ => return Err(top_level_not_a_table()),
+        }
+
+        Ok(Some(base))
+    }
+}
+
+/// A declared value the variables file's data model cannot hold. Separate from
+/// the override message so it points at `config.toml` rather than a flag.
+fn default_not_representable(
+    key: &str,
+    format: &str,
+    err: impl std::fmt::Display,
+) -> anyhow::Error {
+    anyhow!(
+        "variable '{}' declared in config.toml cannot be merged into a {} variables file: {}",
+        key,
+        format,
+        err
+    )
 }
 
 fn top_level_not_a_table() -> anyhow::Error {
-    anyhow::anyhow!("--var-json requires the variables file's top level to be a table of keys")
+    anyhow!("--var-json requires the variables file's top level to be a table of keys")
 }
 
 fn no_null_in_toml(key: &str) -> anyhow::Error {
@@ -170,6 +268,266 @@ pub fn parse_var_override(arg: &str) -> Result<(String, serde_json::Value)> {
 /// Parses every `--var-json` argument, collecting them in the order given.
 pub fn parse_var_overrides(args: &[String]) -> Result<Vec<(String, serde_json::Value)>> {
     args.iter().map(|arg| parse_var_override(arg)).collect()
+}
+
+/// The type a declared variable's value carries, so a prompted number reaches
+/// SQL as a number rather than a quoted literal — the same distinction
+/// `--var-json` makes between `42` and `"42"`.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VariableType {
+    #[default]
+    String,
+    Number,
+    Boolean,
+}
+
+impl VariableType {
+    fn name(&self) -> &'static str {
+        match self {
+            VariableType::String => "string",
+            VariableType::Number => "number",
+            VariableType::Boolean => "boolean",
+        }
+    }
+
+    /// Whether a value already has this type, for checking a declared default.
+    fn matches(&self, value: &toml::Value) -> bool {
+        matches!(
+            (self, value),
+            (VariableType::String, toml::Value::String(_))
+                | (
+                    VariableType::Number,
+                    toml::Value::Integer(_) | toml::Value::Float(_)
+                )
+                | (VariableType::Boolean, toml::Value::Boolean(_))
+        )
+    }
+}
+
+/// How a variable declared in a script's `config.toml` gets its value.
+///
+/// Mirrors [`crate::secrets::SecretSource`]: a `source` key picks the variant,
+/// so further sources can be added later without changing what is already
+/// written in existing files.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum VariableDefinition {
+    /// A value written straight into `config.toml`, in TOML's own types.
+    Value { value: toml::Value },
+    /// Asked for when the script runs, unless a value was already supplied on
+    /// the command line.
+    Prompt {
+        #[serde(rename = "type", default)]
+        value_type: VariableType,
+        /// Offered as the pre-filled answer, and used as-is under
+        /// [`PromptMode::UseDefaults`].
+        #[serde(default)]
+        default: Option<toml::Value>,
+        /// Shown instead of the bare name when asking.
+        #[serde(default)]
+        description: Option<String>,
+    },
+}
+
+impl VariableDefinition {
+    /// Catches a default that contradicts its declared `type` when the config
+    /// is read, rather than when a prompt eventually tries to use it.
+    pub fn validate(&self, name: &str) -> Result<()> {
+        if let VariableDefinition::Prompt {
+            value_type,
+            default: Some(default),
+            ..
+        } = self
+        {
+            if !value_type.matches(default) {
+                return Err(anyhow!(
+                    "variable '{}': default {} is not a {}",
+                    name,
+                    default,
+                    value_type.name()
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Whether a declared variable still missing a value may be asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PromptMode {
+    /// Ask for anything still missing.
+    Ask,
+    /// Do not ask; take the declared default, and fail where there is none.
+    UseDefaults,
+    /// Do not ask and do not fall back to a default: missing is an error.
+    Never,
+}
+
+impl PromptMode {
+    /// The one place that decides whether a command may ask a question.
+    ///
+    /// `--use-defaults` wins outright. Otherwise anything unattended refuses
+    /// to ask: `unattended` for a command with a `--yes` to pass, and in
+    /// either case a stdin with no terminal behind it. `script build` has no
+    /// `--yes`, so it passes `false` and is decided by the terminal alone.
+    ///
+    /// stdin is the stream to test, not stdout: prompts are written to stderr
+    /// but read from stdin, so `spawn script build x > out.sql` can still ask.
+    pub fn resolve(use_defaults: bool, unattended: bool) -> Self {
+        if use_defaults {
+            PromptMode::UseDefaults
+        } else if unattended || !std::io::stdin().is_terminal() {
+            PromptMode::Never
+        } else {
+            PromptMode::Ask
+        }
+    }
+}
+
+/// Resolves the variables a script declares in its `config.toml`, skipping any
+/// the command line already supplied.
+///
+/// Only names listed there count. Writing `{{ variables.x }}` in the SQL
+/// declares nothing: an undeclared name is never prompted for, and has to come
+/// from `--variables` or `--var-json` or the render fails as undefined.
+///
+/// Returned in declaration order, which is the order prompts are shown in, and
+/// applied by [`Variables::with_defaults`].
+pub fn resolve_declared(
+    declared: &BTreeMap<String, VariableDefinition>,
+    supplied: Option<&Variables>,
+    mode: PromptMode,
+) -> Result<Vec<(String, toml::Value)>> {
+    let mut resolved = Vec::new();
+
+    for (name, definition) in declared {
+        definition.validate(name)?;
+
+        // Supplied by --variables or --var-json: treat it as answered. This is
+        // what keeps `--var-json 'email="..."'` from prompting anyway.
+        if supplied.is_some_and(|v| v.contains_key(name)) {
+            continue;
+        }
+
+        let value = match definition {
+            VariableDefinition::Value { value } => value.clone(),
+            VariableDefinition::Prompt {
+                value_type,
+                default,
+                description,
+            } => match mode {
+                PromptMode::Ask => {
+                    ask_for(name, *value_type, default.as_ref(), description.as_deref())?
+                }
+                PromptMode::UseDefaults => default
+                    .clone()
+                    .ok_or_else(|| no_default_to_use(name, *value_type))?,
+                PromptMode::Never => return Err(cannot_ask_for(name, *value_type)),
+            },
+        };
+
+        resolved.push((name.clone(), value));
+    }
+
+    Ok(resolved)
+}
+
+/// Shown when prompting is off — `--yes`, or no terminal to ask at — and the
+/// value was not supplied. Names both ways out so a failing CI job says what
+/// to add.
+fn cannot_ask_for(name: &str, value_type: VariableType) -> anyhow::Error {
+    anyhow!(
+        "variable '{}' needs a {} value and cannot be asked for here: pass --var-json '{}', \
+         or --use-defaults to take the declared default",
+        name,
+        value_type.name(),
+        example_for(name, value_type)
+    )
+}
+
+fn no_default_to_use(name: &str, value_type: VariableType) -> anyhow::Error {
+    anyhow!(
+        "variable '{}' declares no default for --use-defaults to take: pass --var-json '{}'",
+        name,
+        example_for(name, value_type)
+    )
+}
+
+/// A copy-pasteable `--var-json` argument, correctly quoted for the type —
+/// the quoting is the easiest thing to get wrong.
+fn example_for(name: &str, value_type: VariableType) -> String {
+    match value_type {
+        VariableType::String => format!("{}=\"...\"", name),
+        VariableType::Number => format!("{}=0", name),
+        VariableType::Boolean => format!("{}=true", name),
+    }
+}
+
+/// Asks for one value on the terminal, parsed into its declared type.
+fn ask_for(
+    name: &str,
+    value_type: VariableType,
+    default: Option<&toml::Value>,
+    description: Option<&str>,
+) -> Result<toml::Value> {
+    let label = match description {
+        Some(description) => format!("{} ({})", description, name),
+        None => name.to_string(),
+    };
+
+    match value_type {
+        VariableType::Boolean => {
+            // wait_for_newline for the same reason the run confirmation does:
+            // an unconsumed Enter would be read as an empty answer by whatever
+            // variable is asked for next.
+            let mut confirm = Confirm::new().with_prompt(label).wait_for_newline(true);
+            if let Some(toml::Value::Boolean(default)) = default {
+                confirm = confirm.default(*default);
+            }
+            Ok(toml::Value::Boolean(confirm.interact()?))
+        }
+        VariableType::Number => {
+            let mut input = Input::<String>::new().with_prompt(label);
+            if let Some(default) = default {
+                input = input.default(plain_text(default));
+            }
+            let text = input
+                .validate_with(|text: &String| match parse_number(text) {
+                    Some(_) => Ok(()),
+                    None => Err("expected a number"),
+                })
+                .interact_text()?;
+            // Already validated above, so the parse cannot fail here.
+            parse_number(&text).ok_or_else(|| anyhow!("'{}' is not a number", text))
+        }
+        VariableType::String => {
+            let mut input = Input::<String>::new().with_prompt(label).allow_empty(true);
+            if let Some(default) = default {
+                input = input.default(plain_text(default));
+            }
+            Ok(toml::Value::String(input.interact_text()?))
+        }
+    }
+}
+
+/// An integer where the text is one, so `42` does not become `42.0` and reach
+/// SQL as a float.
+fn parse_number(text: &str) -> Option<toml::Value> {
+    let text = text.trim();
+    if let Ok(integer) = text.parse::<i64>() {
+        return Some(toml::Value::Integer(integer));
+    }
+    text.parse::<f64>().ok().map(toml::Value::Float)
+}
+
+/// A scalar as the user would type it — `toml::Value`'s own Display quotes
+/// strings, which is wrong for a pre-filled prompt answer.
+fn plain_text(value: &toml::Value) -> String {
+    match value {
+        toml::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
 }
 
 #[cfg(test)]

@@ -11,8 +11,10 @@ import {
   scriptPinOptions,
   variablesOption,
   varJsonOption,
+  useDefaultsOption,
 } from "../../../components/cli-options";
 import Variables from "../../../partials/variables.mdx";
+import ScriptVariables from "../../../partials/script-variables.mdx";
 
 <CLICommand
   usage="spawn script run <script> [options]"
@@ -20,6 +22,7 @@ import Variables from "../../../partials/variables.mdx";
     ...scriptPinOptions,
     ...variablesOption,
     ...varJsonOption,
+    ...useDefaultsOption,
     { flag: "--yes", description: "Skip confirmation prompt" },
     ...environmentOption,
     ...targetOption,
@@ -83,6 +86,10 @@ Either way, the pin hash of the tree the run resolved against is recorded in the
 ## Variables
 
 <Variables />
+
+## Declared variables
+
+<ScriptVariables />
 
 ## Secrets
 

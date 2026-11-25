@@ -11,9 +11,11 @@ import {
   scriptPinOptions,
   variablesOption,
   varJsonOption,
+  useDefaultsOption,
   revealSecretsOption,
 } from "../../../components/cli-options";
 import Variables from "../../../partials/variables.mdx";
+import ScriptVariables from "../../../partials/script-variables.mdx";
 
 <CLICommand
   usage="spawn script build <script> [options]"
@@ -21,6 +23,7 @@ import Variables from "../../../partials/variables.mdx";
     ...scriptPinOptions,
     ...variablesOption,
     ...varJsonOption,
+    ...useDefaultsOption,
     ...revealSecretsOption,
     ...environmentOption,
     ...targetOption,
@@ -37,6 +40,10 @@ Renders a script to SQL and prints it, without touching the database. The counte
 ## Variables
 
 <Variables />
+
+## Declared variables
+
+<ScriptVariables />
 
 ## Secrets
 

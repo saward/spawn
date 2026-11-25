@@ -2,7 +2,7 @@ use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::script::{PinMode, Script};
 use crate::secrets::SecretsRenderMode;
-use crate::variables::Variables;
+use crate::variables::{resolve_declared, PromptMode, Variables};
 use anyhow::{anyhow, Result};
 
 pub struct BuildScript {
@@ -13,6 +13,8 @@ pub struct BuildScript {
     pub variables: Option<Variables>,
     /// Render real secret values instead of masked placeholders; local debugging only.
     pub reveal_secrets: bool,
+    /// Take declared defaults instead of asking, for unattended builds.
+    pub use_defaults: bool,
 }
 
 impl TelemetryDescribe for BuildScript {
@@ -24,6 +26,7 @@ impl TelemetryDescribe for BuildScript {
             ),
             ("has_variables", self.variables.is_some().to_string()),
             ("opt_reveal_secrets", self.reveal_secrets.to_string()),
+            ("opt_use_defaults", self.use_defaults.to_string()),
         ])
     }
 }
@@ -47,9 +50,18 @@ impl Command for BuildScript {
             SecretsRenderMode::Masked
         };
 
-        let gen = script
-            .generate_streaming(self.variables.clone(), secrets_mode)
-            .await?;
+        // A build renders what a run would execute, so it needs the same values
+        // and asks for them the same way. There is no confirmation to skip
+        // here, so only the terminal decides. Prompts go to stderr, leaving
+        // stdout pipeable.
+        let declared = resolve_declared(
+            script.declared_variables(),
+            self.variables.as_ref(),
+            PromptMode::resolve(self.use_defaults, false),
+        )?;
+        let variables = Variables::with_defaults(self.variables.clone(), &declared)?;
+
+        let gen = script.generate_streaming(variables, secrets_mode).await?;
 
         let mut buffer = Vec::new();
         gen.render_to_writer(&mut buffer)

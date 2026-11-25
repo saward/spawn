@@ -356,6 +356,7 @@ impl IntegrationTestHelper {
             pin_mode,
             variables,
             yes: true,
+            use_defaults: false,
         }
         .execute(&config)
         .await?;

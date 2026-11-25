@@ -60,6 +60,15 @@ export const varJsonOption: CLIOption[] = [
   },
 ];
 
+/** The --use-defaults flag for scripts that declare prompt variables. */
+export const useDefaultsOption: CLIOption[] = [
+  {
+    flag: "--use-defaults",
+    description:
+      "Take each declared default instead of asking for it, for unattended use. A prompt variable with no default is still an error.",
+  },
+];
+
 /** The --reveal-secrets flag used by build commands, which mask secret() values by default. */
 export const revealSecretsOption: CLIOption[] = [
   {

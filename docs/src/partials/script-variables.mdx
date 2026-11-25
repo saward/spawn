@@ -1,0 +1,67 @@
+{/_
+Shared explanation of a script's declared variables, rendered under a
+`## Declared variables` heading by the script pages that resolve them. That
+heading belongs in the page, not here: Starlight builds the right-hand table
+of contents from each page's own headings and does not see headings inside a
+partial. The `###` sub-headings below are therefore absent from the contents
+too — accepted deliberately, since a section this long is worse to read
+without them.
+_/}
+
+A script can declare the variables it expects in its own `config.toml`, so the script carries its inputs rather than leaving them to whoever remembers the right `--var-json`. Each entry names a `source`, exactly as a [secret](/guides/secrets/) does:
+
+```toml
+# scripts/make-admin/config.toml
+
+[variables.tier]
+source = "value"
+value = 3
+
+[variables.email]
+source = "prompt"
+type = "string"
+description = "Email of the user to promote"
+
+[variables.grant_all]
+source = "prompt"
+type = "boolean"
+default = true
+```
+
+`source = "value"` is a value written straight into the file, in TOML's own types — `value = 3` is a number and reaches SQL as `3`, not `'3'`.
+
+`source = "prompt"` is asked for when the script runs. `type` is `string` (the default), `number`, or `boolean`, and decides both how the answer is parsed and how it is escaped. `default` is offered as the pre-filled answer, and `description` replaces the bare name in the prompt. A `default` whose type contradicts `type` is an error when the config is read, not when the prompt reaches it.
+
+Only `config.toml` declares a variable. Writing `{{ variables.tenant }}` in `script.sql` does not: an undeclared name is never asked for, so it has to arrive from `--variables` or `--var-json`. A render that never gets one fails with `undefined value`, naming the file and line that wanted it.
+
+### Precedence
+
+A declaration is the _lowest_ priority source, so it never fights the command line:
+
+| source                    | beats                         |
+| ------------------------- | ----------------------------- |
+| `--var-json key=<json>`   | everything                    |
+| `--variables <file>`      | declarations in `config.toml` |
+| `config.toml` declaration | nothing                       |
+
+That ordering is what makes a prompt skippable. Supplying `email` any other way marks it answered, and it is not asked for:
+
+```bash
+spawn script run make-admin --var-json 'email="me@example.com"'
+```
+
+### When it asks, and when it refuses
+
+Prompting needs somewhere to ask and permission to do so. It happens only on a terminal, and only when the value is genuinely missing. Otherwise:
+
+- **Not a terminal** — piped, redirected, or running in CI — nothing is asked.
+- **`--yes`** means unattended, so it suppresses variable prompts as well as the run confirmation.
+
+In both of those cases a missing value is an error naming the variable and the flag that would supply it, rather than a hang:
+
+```
+Error: variable 'email' needs a string value and cannot be asked for here:
+pass --var-json 'email="..."', or --use-defaults to take the declared default
+```
+
+`--use-defaults` takes each declared `default` instead of asking, which is the unattended form of the same run. A prompt variable with no default is still an error, since there is nothing to fall back to — `--use-defaults` never invents a value.

@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::engine::{MigrationStatus, ScriptOutput, ScriptStatus};
 use crate::script::{PinMode, Script};
 use crate::secrets::{redact_secrets, SecretsRenderMode};
-use crate::variables::Variables;
+use crate::variables::{resolve_declared, PromptMode, Variables};
 use anyhow::{anyhow, Context, Result};
 use dialoguer::Confirm;
 use std::time::Instant;
@@ -16,6 +16,8 @@ pub struct RunScript {
     pub pin_mode: PinMode,
     pub variables: Option<Variables>,
     pub yes: bool,
+    /// Take declared defaults instead of asking, for unattended runs.
+    pub use_defaults: bool,
 }
 
 impl TelemetryDescribe for RunScript {
@@ -26,6 +28,7 @@ impl TelemetryDescribe for RunScript {
                 format!("{:?}", self.pin_mode).to_lowercase(),
             ),
             ("has_variables", self.variables.is_some().to_string()),
+            ("opt_use_defaults", self.use_defaults.to_string()),
         ])
     }
 }
@@ -50,11 +53,21 @@ impl Command for RunScript {
             return Ok(Outcome::Success);
         }
 
+        // Asked for after the confirmation, so a run aimed at the wrong target
+        // is abandoned before anything is typed into a prompt. `--yes` means
+        // unattended, so it suppresses these as well as the confirmation.
+        let declared = resolve_declared(
+            script.declared_variables(),
+            self.variables.as_ref(),
+            PromptMode::resolve(self.use_defaults, self.yes),
+        )?;
+        let variables = Variables::with_defaults(self.variables.clone(), &declared)?;
+
         let dialect = crate::template::engine_to_dialect(&config.target_config()?.engine);
 
         // Running means executing real SQL, so secrets must be revealed.
         let streaming = script
-            .generate_streaming(self.variables.clone(), SecretsRenderMode::Revealed)
+            .generate_streaming(variables, SecretsRenderMode::Revealed)
             .await
             .with_context(|| format!("failed to generate script '{}'", self.script))?;
 
@@ -157,9 +170,13 @@ impl RunScript {
         );
         println!();
 
+        // wait_for_newline so the Enter after `y` is consumed here rather than
+        // left in the buffer, where the first variable prompt would read it as
+        // an empty answer and silently take that variable's default.
         let confirmed = Confirm::new()
             .with_prompt("Do you want to run this script?")
             .default(false)
+            .wait_for_newline(true)
             .interact()?;
         println!();
 

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::config::FolderPather;
 use crate::hash::content_hash;
-use crate::source_config::{load_source_config, SourceConfig};
+use crate::source_config::{load_source_config, ScriptConfig, SourceConfig};
 use crate::store::{list_migration_fs_status, list_script_fs_status};
 
 #[derive(Debug)]
@@ -246,16 +246,20 @@ async fn verify_recorded_roots(fs: &Operator, pather: &FolderPather) -> Result<V
     }
 
     for (script, status) in list_script_fs_status(fs, pather).await? {
-        // Only a pinned script has a config.toml; an unpinned one records no root.
         if !status.has_config_toml {
             continue;
         }
 
         let config_path = pather.script_config_path(&script);
-        let source_config: SourceConfig = load_source_config(fs, &config_path)
+        let script_config: ScriptConfig = load_source_config(fs, &config_path)
             .await
             .with_context(|| format!("failed to load config for script {}", script))?;
-        roots.push((RootSource::Script, script, source_config.pin));
+
+        // A config.toml that only declares variables records no root, so there
+        // is no root for it to be missing.
+        if let Some(pin) = script_config.pin {
+            roots.push((RootSource::Script, script, pin));
+        }
     }
 
     for (source, name, pin) in roots {

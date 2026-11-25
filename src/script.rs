@@ -4,9 +4,12 @@
 //! diffed against a golden file, and lives outside the pinned component tree.
 
 use crate::config;
+use crate::source_config::ScriptConfig;
 use crate::template::{self, RenderKind};
+use crate::variables::VariableDefinition;
 
 use anyhow::{anyhow, Context, Result};
+use std::collections::BTreeMap;
 
 /// How a script chooses the component tree its includes resolve against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -28,6 +31,9 @@ pub struct Script {
     mode: PinMode,
     /// Resolve includes against this script's pinned component tree, not the live one.
     use_pinned: bool,
+    /// The script's `config.toml`, read once by [`Script::resolve`]. Empty for
+    /// a script built with [`Script::new`], which does no I/O.
+    script_config: ScriptConfig,
 }
 
 impl Script {
@@ -41,6 +47,7 @@ impl Script {
                 PinMode::Disabled
             },
             use_pinned,
+            script_config: ScriptConfig::default(),
         }
     }
 
@@ -48,9 +55,14 @@ impl Script {
     /// disk, so a pinned script is never silently run against other components.
     pub async fn resolve(config: &config::Config, name: &str, mode: PinMode) -> Result<Self> {
         let script = Script::new(config, name, false);
+        // Read once here rather than per question: the same file answers both
+        // whether the script is pinned and what variables it declares.
+        let script_config = script.load_script_config().await?;
+        let is_pinned = script_config.pin.is_some();
+
         let use_pinned = match mode {
-            PinMode::Auto => script.is_pinned().await?,
-            PinMode::Required if !script.is_pinned().await? => {
+            PinMode::Auto => is_pinned,
+            PinMode::Required if !is_pinned => {
                 return Err(anyhow!(
                     "script '{}' is not pinned: run `spawn script pin {}`, or drop --pinned",
                     name,
@@ -63,8 +75,14 @@ impl Script {
         Ok(Script {
             mode,
             use_pinned,
+            script_config,
             ..script
         })
+    }
+
+    /// The variables this script declares, in declaration order.
+    pub fn declared_variables(&self) -> &BTreeMap<String, VariableDefinition> {
+        &self.script_config.variables
     }
 
     /// Whether includes resolve against the pinned tree.
@@ -105,14 +123,32 @@ impl Script {
             .with_context(|| format!("failed to check for script '{}'", self.name))
     }
 
-    /// Whether this script has been pinned.
-    pub async fn is_pinned(&self) -> Result<bool> {
+    /// Reads the script's `config.toml`, or an empty config where there is
+    /// none.
+    ///
+    /// The file's mere existence no longer means the script is pinned: a
+    /// script may have a `config.toml` only to declare variables. Ask
+    /// [`ScriptConfig::pin`] instead.
+    pub async fn load_script_config(&self) -> Result<ScriptConfig> {
         let path = self.config.pather().script_config_path(&self.name);
-        self.config
+        let exists = self
+            .config
             .operator()
             .exists(&path)
             .await
-            .with_context(|| format!("failed to check source config for script '{}'", self.name))
+            .with_context(|| format!("failed to check source config for script '{}'", self.name))?;
+        if !exists {
+            return Ok(ScriptConfig::default());
+        }
+        self.config
+            .load_source_config(&path)
+            .await
+            .with_context(|| format!("failed to load config for script '{}'", self.name))
+    }
+
+    /// Whether this script has been pinned.
+    pub async fn is_pinned(&self) -> Result<bool> {
+        Ok(self.load_script_config().await?.pin.is_some())
     }
 
     pub async fn generate_streaming(
