@@ -20,21 +20,19 @@ pub use pin_verify::PinVerify;
 pub use script::{BuildScript, NewScript, PinScript, PinScriptError, RunScript};
 pub use test::{BuildTest, CompareTests, ExpectTest, NewTest, RunTest};
 
-/// Prints the target and environment a command is about to act on, flagging production.
-pub fn print_target_banner(config: &Config) -> Result<()> {
+/// Formats the target and environment a command is about to act on, flagging production.
+pub fn target_banner(config: &Config) -> Result<String> {
     let target_config = config.target_config()?;
     let target = config.target.as_deref().unwrap_or("unknown");
     let env = &target_config.environment;
 
-    println!();
-    println!("TARGET: {}", target);
-    if env.starts_with("prod") {
-        println!("ENVIRONMENT: {} \u{26a0}\u{fe0f}", env);
+    let environment = if env.starts_with("prod") {
+        format!("ENVIRONMENT: {} \u{26a0}\u{fe0f}", env)
     } else {
-        println!("ENVIRONMENT: {}", env);
-    }
+        format!("ENVIRONMENT: {}", env)
+    };
 
-    Ok(())
+    Ok(format!("\nTARGET: {}\n{}", target, environment))
 }
 
 /// Telemetry information for a command.

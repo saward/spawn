@@ -116,7 +116,7 @@ pub async fn get_pending_and_confirm(
         return Ok(None);
     }
 
-    crate::commands::print_target_banner(config)?;
+    println!("{}", crate::commands::target_banner(config)?);
     println!();
     println!(
         "The following {} migration{} will be {}:",

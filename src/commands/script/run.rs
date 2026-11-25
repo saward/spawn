@@ -1,5 +1,5 @@
 use crate::commands::script::DEFAULT_NAMESPACE;
-use crate::commands::{print_target_banner, Command, Outcome, TelemetryDescribe, TelemetryInfo};
+use crate::commands::{target_banner, Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::engine::{MigrationStatus, ScriptOutput, ScriptStatus};
 use crate::script::{PinMode, Script};
@@ -49,7 +49,7 @@ impl Command for RunScript {
         eprintln!("{}", script.pin_note());
 
         if !self.confirm(config, script.use_pinned())? {
-            println!("Aborted.");
+            eprintln!("Aborted.");
             return Ok(Outcome::Success);
         }
 
@@ -160,15 +160,15 @@ impl RunScript {
             return Ok(true);
         }
 
-        print_target_banner(config)?;
-        println!();
-        println!("The following script will be run:");
-        println!(
+        eprintln!("{}", target_banner(config)?);
+        eprintln!();
+        eprintln!("The following script will be run:");
+        eprintln!(
             "  {}{}",
             self.script,
             if use_pinned { " (pinned)" } else { "" }
         );
-        println!();
+        eprintln!();
 
         // wait_for_newline so the Enter after `y` is consumed here rather than
         // left in the buffer, where the first variable prompt would read it as
@@ -178,7 +178,7 @@ impl RunScript {
             .default(false)
             .wait_for_newline(true)
             .interact()?;
-        println!();
+        eprintln!();
 
         Ok(confirmed)
     }
