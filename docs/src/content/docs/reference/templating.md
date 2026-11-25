@@ -445,9 +445,8 @@ Spawn's auto-escaper handles different types appropriately:
 {{ true }}                 -- Output: TRUE
 {{ false }}                -- Output: FALSE
 
--- null/undefined → NULL
+-- null → NULL (an unset variable is an error, not NULL – see above)
 {{ none }}                 -- Output: NULL
-{{ undefined_var }}        -- Output:
 
 -- Array → PostgreSQL array literal
 {{ [1, 2, 3] }}            -- Output: ARRAY[1, 2, 3]
