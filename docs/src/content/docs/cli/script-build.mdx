@@ -15,7 +15,7 @@ import {
   revealSecretsOption,
 } from "../../../components/cli-options";
 import Variables from "../../../partials/variables.mdx";
-import ScriptVariables from "../../../partials/script-variables.mdx";
+import DeclaredVariables from "../../../partials/declared-variables.mdx";
 
 <CLICommand
   usage="spawn script build <script> [options]"
@@ -43,7 +43,14 @@ Renders a script to SQL and prints it, without touching the database. The counte
 
 ## Declared variables
 
-<ScriptVariables />
+<DeclaredVariables
+  kind="script"
+  file="config.toml"
+  entry="script.sql"
+  path="scripts/make-admin/config.toml"
+  command={`spawn script build make-admin --var-json 'email="me@example.com"'`}
+  confirm="run"
+/>
 
 ## Secrets
 

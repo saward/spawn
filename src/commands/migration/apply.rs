@@ -4,8 +4,8 @@ use crate::config::Config;
 use crate::engine::{Engine, MigrationError};
 use crate::migrator::Migrator;
 use crate::secrets::{redact_secrets, SecretsRenderMode};
-use crate::variables::Variables;
-use anyhow::{anyhow, Result};
+use crate::variables::{resolve_declared, PromptMode, Variables};
+use anyhow::{anyhow, Context, Result};
 
 pub struct ApplyMigration {
     pub migration: Option<String>,
@@ -14,6 +14,8 @@ pub struct ApplyMigration {
     pub yes: bool,
     pub retry: bool,
     pub reuse_connection: bool,
+    /// Take declared defaults instead of asking, for unattended applies.
+    pub use_defaults: bool,
 }
 
 impl TelemetryDescribe for ApplyMigration {
@@ -23,6 +25,7 @@ impl TelemetryDescribe for ApplyMigration {
             ("has_variables", self.variables.is_some().to_string()),
             ("apply_all", self.migration.is_none().to_string()),
             ("opt_reuse_connection", self.reuse_connection.to_string()),
+            ("opt_use_defaults", self.use_defaults.to_string()),
         ])
     }
 }
@@ -37,7 +40,47 @@ impl Command for ApplyMigration {
             },
         };
 
-        let total = migrations.len();
+        // The whole batch is prepared before any of it is applied, in two
+        // passes, because each pass can refuse the batch and the cheaper one
+        // should get to refuse first.
+        //
+        // Pass one: every pin. Nothing has been asked for or applied yet, so
+        // an unpinned migration anywhere in the batch costs nothing to
+        // discover. Reading each lock.toml here is also what pass two reads
+        // its declarations from.
+        let mut resolved: Vec<(String, Migrator)> = Vec::with_capacity(migrations.len());
+        for migration in migrations {
+            let mgrtr = Migrator::resolve(config, &migration, self.pinned)
+                .await
+                .with_context(|| {
+                    format!(
+                        "apply '{}' with --no-pin to use the current components",
+                        migration
+                    )
+                })?;
+            resolved.push((migration, mgrtr));
+        }
+
+        // Pass two: every declared variable, which may mean prompting. Asking
+        // inside the apply loop would strand a batch half-applied while a
+        // later migration's prompt waited for an answer, and asking before
+        // pass one would spend the answers on a batch that cannot run at all.
+        // `--yes` means unattended, so it suppresses these as well as the
+        // confirmation above.
+        let mut pending: Vec<(String, Migrator, Option<Variables>)> =
+            Vec::with_capacity(resolved.len());
+        for (migration, mgrtr) in resolved {
+            let declared = resolve_declared(
+                mgrtr.declared_variables(),
+                self.variables.as_ref(),
+                PromptMode::resolve(self.use_defaults, self.yes),
+            )
+            .with_context(|| format!("migration '{}'", migration))?;
+            let variables = Variables::with_defaults(self.variables.clone(), &declared)?;
+            pending.push((migration, mgrtr, variables));
+        }
+
+        let total = pending.len();
         let dialect = crate::template::engine_to_dialect(&config.target_config()?.engine);
 
         // Optionally reuse the same engine (database connection) across all migrations
@@ -47,7 +90,7 @@ impl Command for ApplyMigration {
             None
         };
 
-        for (i, migration) in migrations.into_iter().enumerate() {
+        for (i, (migration, mgrtr, variables)) in pending.into_iter().enumerate() {
             let counter = if total > 1 {
                 format!(
                     "[{:>width$}/{}] ",
@@ -58,10 +101,9 @@ impl Command for ApplyMigration {
             } else {
                 String::new()
             };
-            let mgrtr = Migrator::new(config, &migration, self.pinned);
             // Apply actually executes against the database, so secrets must always be revealed.
             match mgrtr
-                .generate_streaming(self.variables.clone(), SecretsRenderMode::Revealed)
+                .generate_streaming(variables, SecretsRenderMode::Revealed)
                 .await
             {
                 Ok(streaming) => {

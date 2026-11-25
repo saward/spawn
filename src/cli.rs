@@ -275,6 +275,11 @@ pub enum MigrationCommands {
         #[arg(long = "var-json", value_name = "KEY=JSON")]
         var_json: Vec<String>,
 
+        /// Take declared defaults for prompt variables instead of asking, for
+        /// unattended use
+        #[arg(long)]
+        use_defaults: bool,
+
         /// Render real secret() values instead of masked placeholders.
         /// Intended for local debugging only; build output is not executed.
         #[arg(long)]
@@ -299,6 +304,11 @@ pub enum MigrationCommands {
         /// --var-json 'name="acme"'; repeatable, overrides --variables
         #[arg(long = "var-json", value_name = "KEY=JSON")]
         var_json: Vec<String>,
+
+        /// Take declared defaults for prompt variables instead of asking, for
+        /// unattended use
+        #[arg(long)]
+        use_defaults: bool,
 
         /// Skip confirmation prompt
         #[arg(long)]
@@ -370,18 +380,21 @@ impl TelemetryDescribe for MigrationCommands {
                 pinned,
                 variables,
                 var_json,
+                use_defaults,
                 reveal_secrets,
                 ..
             } => TelemetryInfo::new("build").with_properties(vec![
                 ("opt_pinned", pinned.to_string()),
                 ("has_variables", variables.is_some().to_string()),
                 ("var_count", var_json.len().to_string()),
+                ("opt_use_defaults", use_defaults.to_string()),
                 ("opt_reveal_secrets", reveal_secrets.to_string()),
             ]),
             MigrationCommands::Apply {
                 no_pin,
                 variables,
                 var_json,
+                use_defaults,
                 migration,
                 retry,
                 reuse_connection,
@@ -391,6 +404,7 @@ impl TelemetryDescribe for MigrationCommands {
                 ("opt_retry", retry.to_string()),
                 ("has_variables", variables.is_some().to_string()),
                 ("var_count", var_json.len().to_string()),
+                ("opt_use_defaults", use_defaults.to_string()),
                 ("apply_all", migration.is_none().to_string()),
                 ("opt_reuse_connection", reuse_connection.to_string()),
             ]),
@@ -591,6 +605,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                     pinned,
                     variables,
                     var_json,
+                    use_defaults,
                     reveal_secrets,
                 }) => {
                     let vars = resolve_variables(config, variables, &var_json).await?;
@@ -599,6 +614,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                         pinned,
                         variables: vars,
                         reveal_secrets,
+                        use_defaults,
                     }
                     .execute(config)
                     .await
@@ -608,6 +624,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                     no_pin,
                     variables,
                     var_json,
+                    use_defaults,
                     yes,
                     retry,
                     reuse_connection,
@@ -620,6 +637,7 @@ async fn run_command(cli: Cli, config: &mut Config) -> Result<Outcome> {
                         yes,
                         retry,
                         reuse_connection,
+                        use_defaults,
                     }
                     .execute(config)
                     .await

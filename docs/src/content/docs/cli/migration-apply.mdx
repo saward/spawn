@@ -10,8 +10,10 @@ import {
   environmentOption,
   variablesOption,
   varJsonOption,
+  useDefaultsOption,
 } from "../../../components/cli-options";
 import Variables from "../../../partials/variables.mdx";
+import DeclaredVariables from "../../../partials/declared-variables.mdx";
 
 <CLICommand
   usage="spawn migration apply [migration] [options]"
@@ -19,6 +21,7 @@ import Variables from "../../../partials/variables.mdx";
     { flag: "--no-pin", description: "Allow unpinned migrations (use current components)" },
     ...variablesOption,
     ...varJsonOption,
+    ...useDefaultsOption,
     { flag: "--yes", description: "Skip confirmation prompt" },
     { flag: "--retry", description: "Retry a previous migration" },
     { flag: "--reuse-connection", description: "Reuse the same database connection across all migrations" },
@@ -54,7 +57,7 @@ Shows a list of pending migrations and prompts for confirmation before applying 
 
 ## Pin requirement
 
-By default, `apply` requires migrations to have a `lock.toml`. This ensures the exact same component versions are used every time. Use `--no-pin` to bypass this requirement and use current working tree components — **not recommended**, and never for production applies.
+By default, `apply` requires migrations to record a pin in their `lock.toml`. This ensures the exact same component versions are used every time. Use `--no-pin` to bypass this requirement and use current working tree components — **not recommended**, and never for production applies.
 
 With `--no-pin`, the `pin_hash` recorded to the audit trail is computed by walking the current component tree in a pass separate from the actual template render. If a component file on disk changes between (or during) those two passes, the recorded `pin_hash` can end up not matching what was actually rendered and executed. Only a pinned migration guarantees the components used are exactly the ones snapshotted in `lock.toml`, immune to concurrent edits — always apply pinned migrations in any shared or production environment.
 
@@ -63,6 +66,19 @@ With `--no-pin`, the `pin_hash` recorded to the audit trail is computed by walki
 <Variables />
 
 Both apply to the whole invocation, not to one migration: running `apply` without a migration name renders every pending migration against the same variables.
+
+## Declared variables
+
+<DeclaredVariables
+  kind="migration"
+  file="lock.toml"
+  entry="up.sql"
+  path="migrations/20260131120000-promote-user/lock.toml"
+  command={`spawn migration apply 20260131120000-promote-user --var-json 'email="me@example.com"'`}
+  confirm="apply"
+/>
+
+A batch is prepared in full before any of it is applied, in two passes. Every migration's pin is checked first, so an unpinned migration anywhere in the batch refuses the batch outright — before anything is applied and before you are asked for a single value. Declarations are resolved second, so a prompt belonging to the last migration in a batch cannot appear once the earlier ones have already been applied.
 
 ## Secrets
 

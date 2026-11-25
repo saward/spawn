@@ -230,6 +230,7 @@ impl MigrationTestHelper {
             pinned,
             variables,
             reveal_secrets: false,
+            use_defaults: false,
         };
 
         let outcome = cmd.execute(&config).await?;
@@ -241,6 +242,44 @@ impl MigrationTestHelper {
             } => Ok(content),
             _ => Err(anyhow::anyhow!("Unexpected outcome")),
         }
+    }
+
+    /// Builds a migration taking each declared `default` rather than asking,
+    /// so a test can never block on a prompt when run from a terminal.
+    pub async fn build_migration_with_defaults(
+        &self,
+        migration_name: &str,
+        pinned: bool,
+    ) -> Result<String, anyhow::Error> {
+        let config = self.load_config().await?;
+        let cmd = BuildMigration {
+            migration: migration_name.to_string(),
+            pinned,
+            variables: None,
+            reveal_secrets: false,
+            use_defaults: true,
+        };
+
+        match cmd.execute(&config).await? {
+            Outcome::BuiltMigration { content, .. } => Ok(content),
+            _ => Err(anyhow::anyhow!("Unexpected outcome")),
+        }
+    }
+
+    /// Writes a migration's `lock.toml` at `name` (relative to `migrations/`).
+    pub async fn write_migration_lock(&self, name: &str, contents: &str) -> Result<()> {
+        let cfg = self.load_config().await?;
+        let path = cfg.pather().migration_lock_file_path(name);
+        self.fs.write(&path, contents.to_string()).await?;
+        Ok(())
+    }
+
+    /// Reads a migration's `lock.toml` back as text.
+    pub async fn read_migration_lock(&self, name: &str) -> Result<String> {
+        let cfg = self.load_config().await?;
+        let path = cfg.pather().migration_lock_file_path(name);
+        let bytes = self.fs.read(&path).await?.to_bytes();
+        Ok(String::from_utf8(bytes.to_vec())?)
     }
 
     /// Pins a migration using the PinMigration command
@@ -985,6 +1024,7 @@ COMMIT;"#;
         pinned: false,
         variables: None,
         reveal_secrets: false,
+        use_defaults: false,
     };
 
     let outcome = cmd.execute(&config).await?;
@@ -996,6 +1036,7 @@ COMMIT;"#;
         pinned: true,
         variables: None,
         reveal_secrets: false,
+        use_defaults: false,
     };
 
     let outcome_pinned = cmd_pinned.execute(&config).await?;
@@ -1324,6 +1365,7 @@ async fn test_migration_build_with_secrets() -> Result<(), Box<dyn std::error::E
         pinned: false,
         variables: None,
         reveal_secrets: false,
+        use_defaults: false,
     }
     .execute(&config)
     .await?;
@@ -1342,6 +1384,7 @@ async fn test_migration_build_with_secrets() -> Result<(), Box<dyn std::error::E
         pinned: false,
         variables: None,
         reveal_secrets: true,
+        use_defaults: false,
     }
     .execute(&config)
     .await?;
@@ -1625,6 +1668,233 @@ async fn test_script_build_rejects_an_unknown_script() -> Result<(), Box<dyn std
         .unwrap_err();
 
     assert!(err.to_string().contains("not found"), "got: {}", err);
+
+    Ok(())
+}
+
+// --- A migration's lock.toml without a pin -----------------------------------
+//
+// `lock.toml` records a pin *and* whatever variables the migration declares,
+// and either may be absent. These cover the half that was previously
+// impossible: a lock file that pins nothing.
+
+/// A lock.toml holding only declarations pins nothing, so the build resolves
+/// against the current components and still sees the declared value.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_a_migration_may_declare_variables_without_being_pinned(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration = helper.create_migration("declares-variables").await?;
+    helper
+        .write_migration(&migration, "SELECT {{ variables.tenant }};\n")
+        .await?;
+    helper
+        .write_migration_lock(
+            &migration,
+            r#"[variables.tenant]
+source = "value"
+value = 42
+"#,
+        )
+        .await?;
+
+    let built = helper.build_migration(&migration, false).await?;
+    assert_eq!(built, "SELECT 42;");
+
+    Ok(())
+}
+
+/// The pin is what makes a migration pinned, never the file's existence.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_requiring_a_pin_fails_on_a_variables_only_lock(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration = helper.create_migration("declares-variables").await?;
+    helper
+        .write_migration_lock(
+            &migration,
+            "[variables.tenant]\nsource = \"value\"\nvalue = 42\n",
+        )
+        .await?;
+
+    let err = helper
+        .build_migration(&migration, true)
+        .await
+        .expect_err("a lock.toml with no pin must not count as pinned");
+    let msg = format!("{:#}", err);
+    assert!(
+        msg.contains("is not pinned"),
+        "expected a 'not pinned' error, got: {}",
+        msg
+    );
+
+    Ok(())
+}
+
+/// `check` reports the same thing, rather than being satisfied by the file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_check_reports_a_variables_only_lock_as_unpinned(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration = helper.create_migration("declares-variables").await?;
+    helper
+        .write_migration_lock(
+            &migration,
+            "[variables.tenant]\nsource = \"value\"\nvalue = 1\n",
+        )
+        .await?;
+
+    let config = helper.load_config().await?;
+    assert!(matches!(
+        Check.execute(&config).await?,
+        Outcome::CheckFailed
+    ));
+
+    Ok(())
+}
+
+/// Pinning rewrites lock.toml in place, so declarations already in it survive.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pinning_a_migration_keeps_its_declared_variables(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration = helper.create_migration("declares-variables").await?;
+    helper
+        .write_migration(&migration, "SELECT {{ variables.tenant }};\n")
+        .await?;
+    helper
+        .write_migration_lock(
+            &migration,
+            r#"[variables.tenant]
+source = "value"
+value = 42
+"#,
+        )
+        .await?;
+
+    let hash = helper.pin_migration(&migration).await?;
+
+    let lock = helper.read_migration_lock(&migration).await?;
+    assert!(
+        lock.contains(&format!("pin = \"{}\"", hash)),
+        "pin should be recorded, got: {}",
+        lock
+    );
+    assert!(
+        lock.contains("[variables.tenant]"),
+        "declarations should survive pinning, got: {}",
+        lock
+    );
+
+    // And the migration now builds pinned, still seeing the declared value.
+    assert_eq!(
+        helper.build_migration(&migration, true).await?,
+        "SELECT 42;"
+    );
+
+    Ok(())
+}
+
+/// A declared prompt default is taken under `--use-defaults`, as for a script.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_a_declared_migration_default_is_taken_with_use_defaults(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration = helper.create_migration("prompts").await?;
+    helper
+        .write_migration(&migration, "SELECT {{ variables.batch }};\n")
+        .await?;
+    helper
+        .write_migration_lock(
+            &migration,
+            r#"[variables.batch]
+source = "prompt"
+type = "number"
+default = 7
+"#,
+        )
+        .await?;
+
+    assert_eq!(
+        helper
+            .build_migration_with_defaults(&migration, false)
+            .await?,
+        "SELECT 7;"
+    );
+
+    Ok(())
+}
+
+/// A declaration is the lowest-priority source, so the command line wins.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_var_json_beats_a_declared_migration_variable(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration = helper.create_migration("declares-variables").await?;
+    helper
+        .write_migration(&migration, "SELECT {{ variables.tenant }};\n")
+        .await?;
+    helper
+        .write_migration_lock(
+            &migration,
+            "[variables.tenant]\nsource = \"value\"\nvalue = 1\n",
+        )
+        .await?;
+
+    let built = helper
+        .build_migration_with_variable_overrides(
+            &migration,
+            false,
+            None,
+            &[("tenant".to_string(), serde_json::json!(99))],
+        )
+        .await?;
+    assert_eq!(built, "SELECT 99;");
+
+    Ok(())
+}
+
+/// A pin recorded beside declarations is still a pin: cleanup must walk it
+/// rather than treat the lock as variables-only and collect its tree.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pin_cleanup_keeps_a_pin_recorded_beside_declared_variables(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    helper
+        .write_component("greeting.sql", "SELECT 'hello';\n")
+        .await?;
+    let migration = helper.create_migration("declares-variables").await?;
+    helper
+        .write_migration_lock(
+            &migration,
+            "[variables.tenant]\nsource = \"value\"\nvalue = 1\n",
+        )
+        .await?;
+    helper.pin_migration(&migration).await?;
+
+    let config = helper.load_config().await?;
+    let files_before = helper.collect_all_files().await?;
+
+    let Outcome::PinCleanup {
+        orphaned,
+        referenced_count,
+        ..
+    } = (PinCleanup { dry_run: false }).execute(&config).await?
+    else {
+        panic!("Expected Outcome::PinCleanup");
+    };
+
+    assert!(
+        orphaned.is_empty(),
+        "nothing should be orphaned: {:?}",
+        orphaned
+    );
+    assert!(referenced_count > 0, "the pin's tree should be referenced");
+    assert_eq!(
+        files_before,
+        helper.collect_all_files().await?,
+        "cleanup should not touch a referenced tree"
+    );
 
     Ok(())
 }

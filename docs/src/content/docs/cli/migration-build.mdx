@@ -10,16 +10,19 @@ import {
   environmentOption,
   variablesOption,
   varJsonOption,
+  useDefaultsOption,
   revealSecretsOption,
 } from "../../../components/cli-options";
 import Variables from "../../../partials/variables.mdx";
+import DeclaredVariables from "../../../partials/declared-variables.mdx";
 
 <CLICommand
-  usage="spawn migration build <migration> [--pinned] [--variables <path>] [--var-json KEY=JSON] [--reveal-secrets]"
+  usage="spawn migration build <migration> [--pinned] [--variables <path>] [--var-json KEY=JSON] [--use-defaults] [--reveal-secrets]"
   options={[
     { flag: "--pinned", description: "Use pinned component versions from lock.toml" },
     ...variablesOption,
     ...varJsonOption,
+    ...useDefaultsOption,
     ...revealSecretsOption,
     ...environmentOption,
     ...targetOption,
@@ -45,6 +48,17 @@ Without `--pinned`, the migration uses the current working tree versions of comp
 ## Variables
 
 <Variables />
+
+## Declared variables
+
+<DeclaredVariables
+  kind="migration"
+  file="lock.toml"
+  entry="up.sql"
+  path="migrations/20260131120000-promote-user/lock.toml"
+  command={`spawn migration build 20260131120000-promote-user --var-json 'email="me@example.com"'`}
+  confirm="apply"
+/>
 
 ## Secrets
 

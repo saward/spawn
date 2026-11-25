@@ -75,15 +75,14 @@ async fn collect_referenced_hashes(
             .await
             .with_context(|| format!("failed to load lock file for migration {}", name))?;
 
+        let Some(pin) = source_config.pin else {
+            continue;
+        };
+
         // Walk tree and collect all hashes
-        walk_tree_hashes(
-            fs,
-            &pather.pinned_folder(),
-            &source_config.pin,
-            &mut referenced,
-        )
-        .await
-        .with_context(|| format!("failed to walk tree for migration {}", name))?;
+        walk_tree_hashes(fs, &pather.pinned_folder(), &pin, &mut referenced)
+            .await
+            .with_context(|| format!("failed to walk tree for migration {}", name))?;
     }
 
     for (script, status) in list_script_fs_status(fs, pather).await? {

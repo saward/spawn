@@ -11,29 +11,22 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Config values shared by every source type; today just the pin.
+/// Config values shared by every source type: an optional pin, and whatever
+/// variables the source declares.
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct SourceConfig {
-    // Reference to the pinned files: an xxhash from spawn's pinner, a git root hash, etc.
-    pub pin: String,
-}
-
-/// A script's `config.toml`.
-///
-/// Unlike a migration's `lock.toml`, the pin is optional: a script may have a
-/// `config.toml` purely to declare variables, and never be pinned at all.
-/// Anything reading this to find a pinned tree must treat `None` as "not
-/// pinned" rather than assuming the file's existence implies one.
-#[derive(Debug, Default, Deserialize, Serialize)]
-pub struct ScriptConfig {
-    /// The pinned component tree's root hash, when the script has been pinned.
+    /// The pinned component tree's root hash, when the source has been pinned:
+    /// an xxhash from spawn's pinner, a git root hash, etc.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin: Option<String>,
-    /// Variables the script declares, by name. Ordered so a rewrite by
-    /// `spawn script pin` does not reshuffle the file.
+    /// Variables the source declares, by name. Ordered so a rewrite by
+    /// `spawn migration pin` or `spawn script pin` does not reshuffle the file.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub variables: BTreeMap<String, VariableDefinition>,
 }
+
+/// A script's `config.toml`. The same shape as a migration's `lock.toml`;
+pub type ScriptConfig = SourceConfig;
 
 /// Reads and parses a source config file at `path`. Callers wanting the failure
 /// attributed to a specific migration or script should add their own context.

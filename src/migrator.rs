@@ -1,7 +1,10 @@
 use crate::config;
+use crate::source_config::SourceConfig;
 use crate::template;
+use crate::variables::VariableDefinition;
 
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
+use std::collections::BTreeMap;
 
 static BASE_MIGRATION: &str = "BEGIN;
 
@@ -16,6 +19,9 @@ pub struct Migrator {
     name: String,
     /// Whether to use pinned components
     use_pinned: bool,
+    /// The migration's `lock.toml`, read once by [`Migrator::resolve`]. Empty
+    /// for a migrator built with [`Migrator::new`], which does no I/O.
+    migration_config: SourceConfig,
 }
 
 impl Migrator {
@@ -24,7 +30,68 @@ impl Migrator {
             config: config.clone(),
             name: name.to_string(),
             use_pinned,
+            migration_config: SourceConfig::default(),
         }
+    }
+
+    /// Builds a migrator with its `lock.toml` already read, so a migration
+    /// asked to use its pin is never silently rendered against other
+    /// components.
+    ///
+    /// Mirrors [`crate::script::Script::resolve`], minus the `Auto` mode:
+    /// `build` opts in with `--pinned` and `apply` opts out with `--no-pin`,
+    /// so the caller always knows which it wants.
+    pub async fn resolve(config: &config::Config, name: &str, use_pinned: bool) -> Result<Self> {
+        let migrator = Migrator::new(config, name, use_pinned);
+        // Read once here rather than per question: the same file answers both
+        // whether the migration is pinned and what variables it declares.
+        let migration_config = migrator.load_migration_config().await?;
+
+        if use_pinned && migration_config.pin.is_none() {
+            return Err(anyhow!(
+                "migration '{}' is not pinned: run `spawn migration pin {}`",
+                name,
+                name
+            ));
+        }
+
+        Ok(Migrator {
+            migration_config,
+            ..migrator
+        })
+    }
+
+    /// Reads the migration's `lock.toml`, or an empty config where there is
+    /// none.
+    ///
+    /// The file's mere existence does not mean the migration is pinned: it may
+    /// be there only to declare variables. Ask [`SourceConfig::pin`] instead.
+    pub async fn load_migration_config(&self) -> Result<SourceConfig> {
+        let path = self.config.pather().migration_lock_file_path(&self.name);
+        let exists = self
+            .config
+            .operator()
+            .exists(&path)
+            .await
+            .with_context(|| format!("failed to check lock file for migration '{}'", self.name))?;
+        if !exists {
+            return Ok(SourceConfig::default());
+        }
+        self.config
+            .load_source_config(&path)
+            .await
+            .with_context(|| format!("failed to load lock file for migration '{}'", self.name))
+    }
+
+    /// Whether this migration has been pinned, as recorded by the `lock.toml`
+    /// [`Migrator::resolve`] read.
+    pub fn is_pinned(&self) -> bool {
+        self.migration_config.pin.is_some()
+    }
+
+    /// The variables this migration declares, in name order.
+    pub fn declared_variables(&self) -> &BTreeMap<String, VariableDefinition> {
+        &self.migration_config.variables
     }
 
     /// Creates the migration folder with blank setup.

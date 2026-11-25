@@ -15,7 +15,7 @@ use crate::sql_formatter::SqlDialect;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use uuid::Uuid;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use minijinja::context;
 use serde::Serialize;
 use std::sync::Arc;
@@ -462,15 +462,24 @@ pub async fn generate_streaming(
                 .load_source_config(&source_config_path)
                 .await
                 .context("could not load source config")?;
+            // Callers only pass a path once they have established there is a
+            // pin to render against, so a missing one here is a bug rather
+            // than a user's unpinned migration or script.
+            let pin = source_config.pin.ok_or_else(|| {
+                anyhow!(
+                    "source config '{}' records no pin to render against",
+                    source_config_path
+                )
+            })?;
             let pinner = Spawn::new_with_root_hash(
                 cfg.pather().pinned_folder(),
                 cfg.pather().components_folder(),
-                &source_config.pin,
+                &pin,
                 &cfg.operator(),
             )
             .await
             .context("could not get new root with hash")?;
-            (Box::new(pinner), Some(source_config.pin))
+            (Box::new(pinner), Some(pin))
         } else {
             let pinner = Latest::new(cfg.pather().spawn_folder_path())?;
             (Box::new(pinner), None)

@@ -316,6 +316,7 @@ impl IntegrationTestHelper {
             yes: true,
             retry: false,
             reuse_connection: false,
+            use_defaults: false,
         };
 
         let outcome = cmd.execute(&config).await?;
@@ -517,6 +518,7 @@ COMMIT;"#
                     yes: true,
                     retry: false,
                     reuse_connection,
+                    use_defaults: false,
                 };
                 let outcome = cmd.execute(&config).await?;
                 assert!(
@@ -647,7 +649,9 @@ COMMIT;"#
         )
         .await?;
 
-    // Create a pinned migration (write a lock.toml alongside up.sql)
+    // Create a pinned migration (write a lock.toml recording a pin alongside
+    // up.sql). The pin key is what makes it pinned, not the file's existence:
+    // a lock.toml may hold declared variables and no pin at all.
     let pinned_migration = helper
         .migration_helper
         .create_migration_manual(
@@ -665,7 +669,7 @@ COMMIT;"#
     helper
         .migration_helper
         .fs
-        .write(&lock_path, "# pinned\n")
+        .write(&lock_path, "pin = \"0123456789abcdef0123456789abcdef\"\n")
         .await?;
 
     // Create a migration that is pinned but has up.sql deleted (filesystem = false, pinned = true)
@@ -685,7 +689,10 @@ COMMIT;"#
     helper
         .migration_helper
         .fs
-        .write(&deleted_lock_path, "# pinned\n")
+        .write(
+            &deleted_lock_path,
+            "pin = \"0123456789abcdef0123456789abcdef\"\n",
+        )
         .await?;
     let deleted_up_path = pinned_config
         .pather()
@@ -1337,6 +1344,7 @@ COMMIT;"#;
         yes: true,
         retry: false,
         reuse_connection: false,
+        use_defaults: false,
     };
     let result = cmd.execute(&config).await;
     assert!(
@@ -1358,6 +1366,7 @@ COMMIT;"#;
         yes: true,
         retry: true,
         reuse_connection: false,
+        use_defaults: false,
     };
     let result = cmd.execute(&config).await;
     assert!(
@@ -1467,6 +1476,7 @@ COMMIT;"#;
         yes: true,
         retry: false,
         reuse_connection: false,
+        use_defaults: false,
     };
     let result = cmd.execute(&config).await;
     assert!(
@@ -1643,6 +1653,7 @@ async fn test_migration_history_records_expected_checksum_and_pin_hash() -> Resu
             yes: true,
             retry: true,
             reuse_connection: false,
+            use_defaults: false,
         }
         .execute(config)
         .await?;
@@ -2088,6 +2099,7 @@ COMMIT;"#;
         yes: true,
         retry: false,
         reuse_connection: false,
+        use_defaults: false,
     };
     let result = cmd.execute(&config).await;
     assert!(
@@ -2109,6 +2121,7 @@ COMMIT;"#;
         yes: true,
         retry: false,
         reuse_connection: false,
+        use_defaults: false,
     };
     let result = cmd.execute(&config).await;
     assert!(result.is_ok(), "apply with --no-pin should succeed");
@@ -2210,6 +2223,7 @@ COMMIT;"#
         yes: true,
         retry: false,
         reuse_connection: false,
+        use_defaults: false,
     };
     cmd.execute(&config).await?;
 
@@ -2263,6 +2277,7 @@ COMMIT;"#
         yes: true,
         retry: false,
         reuse_connection: false,
+        use_defaults: false,
     };
     cmd2.execute(&config2).await.expect(
         "Re-applying the same migration should succeed (detected as already applied), \
@@ -2842,6 +2857,70 @@ async fn test_pinned_script_run_uses_and_records_its_pin() -> Result<()> {
         format!("SUCCESS|{}", pin),
         "a pinned run should record the pin it resolved against"
     );
+
+    Ok(())
+}
+
+/// A batch apply prepares the whole batch before running any of it, so an
+/// unpinned migration partway through refuses the batch outright rather than
+/// applying the earlier ones and failing on reaching it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_an_unpinned_migration_refuses_the_whole_batch() -> Result<()> {
+    let helper =
+        IntegrationTestHelper::new("test_an_unpinned_migration_refuses_the_whole_batch", None)
+            .await?;
+
+    let first = helper
+        .migration_helper
+        .create_migration_manual(
+            "first-pinned",
+            "BEGIN;\nCREATE TABLE batch_first (id SERIAL PRIMARY KEY);\nCOMMIT;".to_string(),
+        )
+        .await?;
+    let second = helper
+        .migration_helper
+        .create_migration_manual(
+            "second-unpinned",
+            "BEGIN;\nCREATE TABLE batch_second (id SERIAL PRIMARY KEY);\nCOMMIT;".to_string(),
+        )
+        .await?;
+
+    // Only the first is pinned, so the default (pinned) apply cannot run the
+    // second. Migration names are timestamped, so `first` sorts first.
+    helper.migration_helper.pin_migration(&first).await?;
+
+    let config = helper.migration_helper.load_config().await?;
+    let err = (ApplyMigration {
+        migration: None,
+        pinned: true,
+        variables: None,
+        yes: true,
+        retry: false,
+        reuse_connection: false,
+        use_defaults: false,
+    })
+    .execute(&config)
+    .await;
+    // Outcome is not Debug, so this cannot be expect_err.
+    let err = match err {
+        Ok(_) => panic!("an unpinned migration in the batch should refuse the batch"),
+        Err(e) => e,
+    };
+
+    let msg = format!("{:#}", err);
+    assert!(
+        msg.contains(&second) && msg.contains("is not pinned"),
+        "the error should name the unpinned migration, got: {}",
+        msg
+    );
+
+    // The pinned migration that sorts ahead of it must not have been applied.
+    assert!(
+        !helper.table_exists("public", "batch_first")?,
+        "nothing in the batch should have been applied"
+    );
+    assert!(!helper.table_exists("public", "batch_second")?);
 
     Ok(())
 }

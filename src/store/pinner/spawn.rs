@@ -242,7 +242,12 @@ async fn verify_recorded_roots(fs: &Operator, pather: &FolderPather) -> Result<V
         let source_config: SourceConfig = load_source_config(fs, &lock_path)
             .await
             .with_context(|| format!("failed to load lock file for migration {}", name))?;
-        roots.push((RootSource::Migration, name, source_config.pin));
+
+        // A lock.toml that only declares variables records no root, so there
+        // is no root for it to be missing.
+        if let Some(pin) = source_config.pin {
+            roots.push((RootSource::Migration, name, pin));
+        }
     }
 
     for (script, status) in list_script_fs_status(fs, pather).await? {

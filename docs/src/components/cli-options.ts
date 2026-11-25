@@ -60,7 +60,7 @@ export const varJsonOption: CLIOption[] = [
   },
 ];
 
-/** The --use-defaults flag for scripts that declare prompt variables. */
+/** The --use-defaults flag for a migration or script that declares prompt variables. */
 export const useDefaultsOption: CLIOption[] = [
   {
     flag: "--use-defaults",

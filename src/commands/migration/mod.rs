@@ -18,6 +18,7 @@ pub const DEFAULT_NAMESPACE: &str = "default";
 
 use crate::config::Config;
 use crate::engine::{MigrationDbInfo, MigrationHistoryStatus};
+use crate::migrator::Migrator;
 use crate::store::list_migration_fs_status;
 use anyhow::Result;
 use dialoguer::Confirm;
@@ -63,23 +64,30 @@ pub async fn get_combined_migration_status(
         .cloned()
         .collect();
 
-    let mut results: Vec<MigrationStatusRow> = all_migration_names
-        .into_iter()
-        .map(|name| {
-            let fs = fs_status.get(&name);
-            let db_info = db_migrations.get(&name);
+    let mut results: Vec<MigrationStatusRow> = Vec::with_capacity(all_migration_names.len());
+    for name in all_migration_names {
+        let fs = fs_status.get(&name);
+        let db_info = db_migrations.get(&name);
 
-            MigrationStatusRow {
-                migration_name: name.clone(),
-                exists_in_filesystem: fs.map_or(false, |s| s.has_up_sql),
-                is_pinned: fs.map_or(false, |s| s.has_lock_toml),
-                exists_in_db: db_info.is_some(),
-                last_status: db_info.and_then(|info| info.last_status),
-                last_activity: db_info.and_then(|info| info.last_activity.clone()),
-                checksum: db_info.and_then(|info| info.checksum.clone()),
-            }
-        })
-        .collect();
+        let is_pinned = match fs {
+            Some(status) if status.has_lock_toml => Migrator::new(config, &name, false)
+                .load_migration_config()
+                .await?
+                .pin
+                .is_some(),
+            _ => false,
+        };
+
+        results.push(MigrationStatusRow {
+            migration_name: name.clone(),
+            exists_in_filesystem: fs.map_or(false, |s| s.has_up_sql),
+            is_pinned,
+            exists_in_db: db_info.is_some(),
+            last_status: db_info.and_then(|info| info.last_status),
+            last_activity: db_info.and_then(|info| info.last_activity.clone()),
+            checksum: db_info.and_then(|info| info.checksum.clone()),
+        });
+    }
 
     // Sort by migration name for consistent output
     results.sort_by(|a, b| a.migration_name.cmp(&b.migration_name));

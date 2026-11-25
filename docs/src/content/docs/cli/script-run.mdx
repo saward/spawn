@@ -14,7 +14,7 @@ import {
   useDefaultsOption,
 } from "../../../components/cli-options";
 import Variables from "../../../partials/variables.mdx";
-import ScriptVariables from "../../../partials/script-variables.mdx";
+import DeclaredVariables from "../../../partials/declared-variables.mdx";
 
 <CLICommand
   usage="spawn script run <script> [options]"
@@ -89,7 +89,14 @@ Either way, the pin hash of the tree the run resolved against is recorded in the
 
 ## Declared variables
 
-<ScriptVariables />
+<DeclaredVariables
+  kind="script"
+  file="config.toml"
+  entry="script.sql"
+  path="scripts/make-admin/config.toml"
+  command={`spawn script run make-admin --var-json 'email="me@example.com"'`}
+  confirm="run"
+/>
 
 ## Secrets
 
