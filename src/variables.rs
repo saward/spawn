@@ -115,18 +115,37 @@ impl Variables {
         Ok(Some(base))
     }
 
-    /// Whether a variable with this name already has a value.
+    /// Names the type of the value held under `key`, in the same words a
+    /// declared `type` uses. Doubles as the test for whether a name has a
+    /// value at all.
     ///
-    /// False when the variables are not a table of names at all, because then
-    /// no name has a value. `with_defaults` is where such a file is rejected.
-    pub fn contains_key(&self, key: &str) -> bool {
+    /// `None` when the variables are not a table of names, because then no
+    /// name has a value. `with_defaults` is where such a file is rejected.
+    pub fn type_name(&self, key: &str) -> Option<&'static str> {
         match self {
-            Variables::Json(serde_json::Value::Object(map)) => map.contains_key(key),
-            Variables::Toml(toml::Value::Table(table)) => table.contains_key(key),
-            Variables::Yaml(serde_yaml::Value::Mapping(map)) => {
-                map.contains_key(serde_yaml::Value::String(key.to_string()))
+            Variables::Json(serde_json::Value::Object(map)) => {
+                map.get(key).map(|value| match value {
+                    serde_json::Value::String(_) => "string",
+                    serde_json::Value::Number(_) => "number",
+                    serde_json::Value::Bool(_) => "boolean",
+                    serde_json::Value::Null => "null",
+                    serde_json::Value::Array(_) => "array",
+                    serde_json::Value::Object(_) => "table",
+                })
             }
-            _ => false,
+            Variables::Toml(toml::Value::Table(table)) => table.get(key).map(toml_type_name),
+            Variables::Yaml(serde_yaml::Value::Mapping(map)) => map
+                .get(serde_yaml::Value::String(key.to_string()))
+                .map(|value| match value {
+                    serde_yaml::Value::String(_) => "string",
+                    serde_yaml::Value::Number(_) => "number",
+                    serde_yaml::Value::Bool(_) => "boolean",
+                    serde_yaml::Value::Null => "null",
+                    serde_yaml::Value::Sequence(_) => "array",
+                    serde_yaml::Value::Mapping(_) => "table",
+                    serde_yaml::Value::Tagged(_) => "tagged value",
+                }),
+            _ => None,
         }
     }
 
@@ -290,18 +309,17 @@ impl VariableType {
             VariableType::Boolean => "boolean",
         }
     }
+}
 
-    /// Whether a value already has this type, for checking a declared default.
-    fn matches(&self, value: &toml::Value) -> bool {
-        matches!(
-            (self, value),
-            (VariableType::String, toml::Value::String(_))
-                | (
-                    VariableType::Number,
-                    toml::Value::Integer(_) | toml::Value::Float(_)
-                )
-                | (VariableType::Boolean, toml::Value::Boolean(_))
-        )
+/// Names a TOML value's type in the same words a declared `type` uses.
+fn toml_type_name(value: &toml::Value) -> &'static str {
+    match value {
+        toml::Value::String(_) => "string",
+        toml::Value::Integer(_) | toml::Value::Float(_) => "number",
+        toml::Value::Boolean(_) => "boolean",
+        toml::Value::Array(_) => "array",
+        toml::Value::Table(_) => "table",
+        toml::Value::Datetime(_) => "datetime",
     }
 }
 
@@ -340,7 +358,7 @@ impl VariableDefinition {
             ..
         } = self
         {
-            if !value_type.matches(default) {
+            if toml_type_name(default) != value_type.name() {
                 return Err(anyhow!(
                     "variable '{}': default {} is not a {}",
                     name,
@@ -404,9 +422,15 @@ pub fn resolve_declared(
     for (name, definition) in declared {
         definition.validate(name)?;
 
-        // Supplied by --variables or --var-json: treat it as answered. This is
-        // what keeps `--var-json 'email="..."'` from prompting anyway.
-        if supplied.is_some_and(|v| v.contains_key(name)) {
+        // Supplied by --variables or --var-json: treat it as answered, once it
+        // matches the declared type. This is what keeps `--var-json
+        // 'email="..."'` from prompting anyway.
+        if let Some(supplied) = supplied.and_then(|v| v.type_name(name)) {
+            if let VariableDefinition::Prompt { value_type, .. } = definition {
+                if supplied != value_type.name() {
+                    return Err(wrong_type(name, *value_type, supplied));
+                }
+            }
             continue;
         }
 
@@ -442,6 +466,20 @@ fn cannot_ask_for(name: &str, value_type: VariableType) -> anyhow::Error {
          or --use-defaults to take the declared default",
         name,
         value_type.name(),
+        example_for(name, value_type)
+    )
+}
+
+/// Shown when a supplied value contradicts the declared `type`. Spells out the
+/// quoting, since the usual cause is `--var-json 'x=42'` where `x='"42"'` was
+/// meant.
+fn wrong_type(name: &str, value_type: VariableType, supplied: &str) -> anyhow::Error {
+    anyhow!(
+        "variable '{}' is declared as a {}, but the supplied value is of type {}: \
+         pass --var-json '{}'",
+        name,
+        value_type.name(),
+        supplied,
         example_for(name, value_type)
     )
 }
@@ -771,5 +809,96 @@ n: 1
         // JSON is the override's own model, so null is fine with no file.
         assert!(matches!(result, Variables::Json(_)));
         assert_eq!(rendered(&result), serde_json::json!({"nothing": null}));
+    }
+
+    /// One `source = "prompt"` declaration, written the way a `config.toml`
+    /// writes it.
+    fn prompted(value_type: &str) -> BTreeMap<String, VariableDefinition> {
+        toml::from_str(&format!(
+            "[email]\nsource = \"prompt\"\ntype = \"{}\"\n",
+            value_type
+        ))
+        .unwrap()
+    }
+
+    /// `Never` so nothing can prompt: a supplied value is the only way past.
+    fn resolve(
+        declared: &BTreeMap<String, VariableDefinition>,
+        supplied: &Variables,
+    ) -> Result<Vec<(String, toml::Value)>> {
+        resolve_declared(declared, Some(supplied), PromptMode::Never)
+    }
+
+    #[test]
+    fn a_supplied_value_must_match_the_declared_type() {
+        for supplied in ["42", "true", "null", "[1,2]", r#"{"a":1}"#] {
+            let vars = Variables::with_overrides(None, &overrides(&[("email", supplied)]))
+                .unwrap()
+                .unwrap();
+            let err = resolve(&prompted("string"), &vars).unwrap_err();
+            assert!(
+                err.to_string().contains("declared as a string"),
+                "{} gave: {}",
+                supplied,
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn a_supplied_value_of_the_declared_type_is_accepted() {
+        let vars = Variables::with_overrides(None, &overrides(&[("email", r#""ok""#)]))
+            .unwrap()
+            .unwrap();
+        // Empty because a supplied name is already answered: nothing to add.
+        assert!(resolve(&prompted("string"), &vars).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_string_supplied_for_a_number_is_caught() {
+        // The quiet direction: Postgres coerces '42' to 42, so without this
+        // check nothing downstream would have complained.
+        let vars = Variables::with_overrides(None, &overrides(&[("email", r#""42""#)]))
+            .unwrap()
+            .unwrap();
+        let err = resolve(&prompted("number"), &vars).unwrap_err();
+        assert!(err.to_string().contains("declared as a number"), "{}", err);
+    }
+
+    #[test]
+    fn the_type_is_enforced_whatever_format_the_variables_file_is() {
+        for (format, text) in [
+            ("json", r#"{"email": 42}"#),
+            ("toml", "email = 42"),
+            ("yaml", "email: 42"),
+        ] {
+            let vars = Variables::from_str(format, text).unwrap();
+            let err = resolve(&prompted("string"), &vars).unwrap_err();
+            assert!(
+                err.to_string().contains("is of type number"),
+                "{} gave: {}",
+                format,
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn a_declaration_that_carries_its_own_value_has_no_type_to_enforce() {
+        let declared: BTreeMap<String, VariableDefinition> =
+            toml::from_str("[email]\nsource = \"value\"\nvalue = \"declared\"\n").unwrap();
+        let vars = Variables::with_overrides(None, &overrides(&[("email", "42")]))
+            .unwrap()
+            .unwrap();
+        assert!(resolve(&declared, &vars).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_default_that_contradicts_its_type_is_still_rejected() {
+        let declared: BTreeMap<String, VariableDefinition> =
+            toml::from_str("[email]\nsource = \"prompt\"\ntype = \"number\"\ndefault = \"8080\"\n")
+                .unwrap();
+        let err = resolve_declared(&declared, None, PromptMode::UseDefaults).unwrap_err();
+        assert!(err.to_string().contains("is not a number"), "{}", err);
     }
 }
