@@ -57,17 +57,29 @@ VALUES ({{ variables.admin_email }});
 
 #### Unset variables are an error
 
-Rendering a variable that was never set fails the build, naming the file and
-line, rather than quietly substituting nothing:
+Rendering a variable that was never set fails the build, naming the offending
+expression along with the file and line, rather than quietly substituting
+nothing:
 
 ```sh
 $ spawn migration build 20260101120000-add-users-table
-Error: undefined value (in migrations/20260101120000-add-users-table/up.sql:6)
+Error: undefined value in expression `variables.tenant`
+
+Caused by:
+    undefined value (in migrations/20260101120000-add-users-table/up.sql:6)
 ```
 
 This is intentional. An unset variable that rendered as an empty string could
 still produce valid SQL that acts on the wrong thing – an identifier missing
 its suffix, or an empty string literal in a `WHERE` clause.
+
+The quoted text is whichever operation failed, which is not always the variable
+you forgot. `{{ variables.tenant | upper }}` reports `upper`, because the filter
+is what received the unset value; and `{% set k = variables.missing %}` followed
+by `{{ k }}` reports `k`, never `variables.missing`. When the name is not enough
+on its own, the file and line in `Caused by:` point at the expression – inside a
+[component](#including-components) that is the component's own file, and the
+chain names both.
 
 A variable that is _set_ to an empty value is left alone: only never-having-
 been-set is an error, so `{{ variables.suffix }}` with `"suffix": ""` still

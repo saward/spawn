@@ -46,7 +46,7 @@ default = true
 
 `source = "prompt"` is asked for when the {props.kind} runs. `type` is `string` (the default), `number`, or `boolean`, and decides both how the answer is parsed and how it is escaped. There is no separate integer type: a `number` answered `100` stays an integer and `0.25` becomes a decimal, each reaching SQL as written. `default` is offered as the pre-filled answer, and `description` replaces the bare name in the prompt. A `default` whose type contradicts `type` is an error when the config is read, not when the prompt reaches it.
 
-Only <code>{props.file}</code> declares a variable. Writing `{{ variables.tenant }}` in <code>{props.entry}</code> does not: an undeclared name is never asked for, so it has to arrive from `--variables` or `--var-json`. A render that never gets one fails with `undefined value`, naming the file and line that wanted it.
+Only <code>{props.file}</code> declares a variable. Writing `{{ variables.tenant }}` in <code>{props.entry}</code> does not: an undeclared name is never asked for, so it has to arrive from `--variables` or `--var-json`. A render that never gets one fails with `undefined value`, naming the offending expression along with the file and line that wanted it.
 
 ### Precedence
 
