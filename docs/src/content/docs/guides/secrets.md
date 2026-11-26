@@ -74,11 +74,13 @@ Masking only affects the value _returned to the template_ — the secret is stil
 
 `test run`/`compare`/`expect` mask unconditionally, with no `--reveal-secrets` equivalent: unlike a terminal or a CI log, their output is diffed against — and, via `test expect`, written into — an `expected` file that gets committed to the repo. A revealed secret there wouldn't just risk a transient leak (e.g. a failing statement's diagnostics echoing it back); it would be permanently baked into git history the first time a test happened to touch it. If you need a test that depends on a secret's real value, that's a real limitation today — there's no per-test override, since a use case for one hasn't come up yet. Please open an issue outlining your use case, so that we can understand better why this might be needed and therefore how to provide it.
 
-## Secrets in failed applies
+## Secrets in failed applies and runs
 
-`migration apply` executes real SQL, and a failing statement can make the database echo a literal value back in its own error message — a unique or check constraint violation reporting the row's actual contents, an `invalid input syntax` error quoting the offending value, and so on. If that statement used `secret()`, the real value could otherwise end up in whatever captures `apply`'s output — a terminal, a CI log, anything.
+`migration apply` and `script run` execute real SQL, and a failing statement can make the database echo a literal value back in its own error message — a unique or check constraint violation reporting the row's actual contents, an `invalid input syntax` error quoting the offending value, and so on. If that statement used `secret()`, the real value could otherwise end up in whatever captures the output — a terminal, a CI log, anything.
 
-To prevent this, Spawn replaces every secret value a failed `apply` actually resolved with `***REDACTED***` in the returned error, before it's ever displayed or logged.
+To prevent this, both commands discard the diagnostics as they arrive, keep only a bounded tail – the part that explains a failure - and replace every secret value the run actually resolved with `***REDACTED***` in that tail before it is ever displayed or logged. `migration apply` redacts it into the returned error; [`script run`](/cli/script-run/) prints it to stderr once the run finishes. This is best efforts only, and not a guarantee that secrets will be redacted.
+
+A script's **results** on stdout are not redacted, so that users can intentionally output data from scripts.
 
 :::caution[This is a best-effort substitution, not a guarantee]
 The redaction works by matching the exact resolved value against the error text — it can't distinguish a secret's value from unrelated text that happens to be identical. That has one real consequence worth knowing: someone who can both **author** migrations and **apply** them against a target database could, in principle, deliberately craft a migration to test whether a guessed string matches a currently configured secret — by embedding the guess somewhere designed to fail, applying it, and checking whether the guess comes back redacted.

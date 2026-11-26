@@ -57,7 +57,9 @@ The script owns its own transaction, exactly as a migration's `up.sql` does. Wra
 
 ## Output
 
-Results are streamed to stdout as they arrive, and diagnostics (`NOTICE`, `ERROR`, and the rest) to stderr, so a long-running script reports progress as it goes and stdout stays pipeable.
+Results are streamed to stdout as they arrive, so a long report appears as it is produced and stdout stays pipeable.
+
+Diagnostics (`NOTICE`, `ERROR`, and the rest) are not streamed. They are collected while the script runs and the last of them is printed to stderr once it finishes, because they are the database's own output and may echo a `secret()` value back – see [Secrets](#secrets) below. Only a bounded tail is kept, which is the part that explains a failure, so a chatty script will not show every `NOTICE` it emitted.
 
 If any statement reports an error the command exits non-zero. Spawn sets `ON_ERROR_STOP` before every script, so the first failing statement stops the run; a script that turns that setting off is reporting its own success and will be recorded as having succeeded.
 
@@ -102,7 +104,9 @@ Either way, the pin hash of the tree the run resolved against is recorded in the
 
 `run` always reveals real `secret()` values, since it executes the rendered SQL. See the [Secrets guide](/guides/secrets/) for how secrets are configured, and [`spawn script build`](/cli/script-build/) for inspecting a script with them masked.
 
-Note that the diagnostics streamed to your terminal are the database's own and are not redacted: a failing statement can echo a literal back, and with secrets revealed that literal may be one.
+The diagnostics are the database's own, and a failing statement can echo a literal back, and with secrets revealed that literal may be one. Spawn replaces every secret value the run resolved with `***REDACTED***` before printing them, which it can only do once the run has finished and every `secret()` has actually resolved. The same [best-effort caveat](/guides/secrets/#secrets-in-failed-applies-and-runs) applies as for a failed `apply`.
+
+Results on stdout are intentionally **not** redacted, so that users can write scripts that output to the terminal.
 
 ## Audit trail
 

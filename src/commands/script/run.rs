@@ -3,7 +3,7 @@ use crate::commands::{target_banner, Command, Outcome, TelemetryDescribe, Teleme
 use crate::config::Config;
 use crate::engine::{MigrationStatus, ScriptOutput, ScriptStatus};
 use crate::script::{PinMode, Script};
-use crate::secrets::{redact_secrets, SecretsRenderMode};
+use crate::secrets::{redact_secrets, redact_text, SecretsRenderMode};
 use crate::variables::{resolve_declared, PromptMode, Variables};
 use anyhow::{anyhow, Context, Result};
 use dialoguer::Confirm;
@@ -84,12 +84,14 @@ impl Command for RunScript {
         let engine = config.new_engine().await?;
         let (script, secrets) = streaming.into_script_source();
 
-        // Streamed rather than collected: a long run should show output as it
-        // happens, on separate streams so stdout stays pipeable. The diagnostics
-        // are psql's own and unredacted — a failing statement can echo back a
-        // revealed secret.
+        // Results go to stdout as they arrive. Diagnostics do not: psql can
+        // quote a failing statement back, which may include a secret value.
+        // They are dropped here; the engine keeps the last of them, and those
+        // are printed once the render has finished, the first point at which
+        // every secret value is known and can be removed. Results are never
+        // redacted: a script that selects a secret asked for it.
         let mut results = tokio::io::stdout();
-        let mut diagnostics = tokio::io::stderr();
+        let mut diagnostics = tokio::io::sink();
 
         let started = Instant::now();
         let outcome = engine
@@ -103,9 +105,15 @@ impl Command for RunScript {
             .await;
         let elapsed = started.elapsed().as_secs_f32();
 
+        if let Ok(run) = &outcome {
+            if let Some(tail) = &run.diagnostics_tail {
+                eprintln!("{}", redact_text(tail, &secrets, dialect));
+            }
+        }
+
         let status = match &outcome {
-            Ok(ScriptStatus::Ok) => MigrationStatus::Success,
-            Ok(ScriptStatus::StatementFailed) | Err(_) => MigrationStatus::Failure,
+            Ok(run) if run.status == ScriptStatus::Ok => MigrationStatus::Success,
+            _ => MigrationStatus::Failure,
         };
 
         // Recorded before any failure is surfaced: the audit trail matters most
@@ -129,14 +137,14 @@ impl Command for RunScript {
         }
 
         match outcome {
-            Ok(ScriptStatus::Ok) => {
+            Ok(run) if run.status == ScriptStatus::Ok => {
                 eprintln!(
                     "Script '{}' ran successfully in {:.2}s",
                     self.script, elapsed
                 );
                 Ok(Outcome::Success)
             }
-            Ok(ScriptStatus::StatementFailed) => Err(redact_secrets(
+            Ok(_) => Err(redact_secrets(
                 anyhow!(
                     "script '{}' failed: a statement reported an error (see the output above)",
                     self.script

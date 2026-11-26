@@ -6,7 +6,7 @@ use crate::config::FolderPather;
 use crate::engine::{
     resolve_command_spec, Engine, EngineError, ExistingMigrationInfo, MigrationActivity,
     MigrationError, MigrationHistoryStatus, MigrationResult, MigrationStatus, ScriptOutput,
-    ScriptSource, ScriptStatus, TargetConfig,
+    ScriptRun, ScriptSource, ScriptStatus, TargetConfig,
 };
 use crate::escape::{EscapedIdentifier, EscapedLiteral, EscapedQuery, InsecureRawSql};
 use crate::secrets::SecretsRenderMode;
@@ -301,7 +301,7 @@ impl Engine for PSQL {
         &self,
         script: ScriptSource,
         out: ScriptOutput<'_>,
-    ) -> Result<ScriptStatus, EngineError> {
+    ) -> Result<ScriptRun, EngineError> {
         let ScriptOutput {
             results,
             diagnostics,
@@ -312,17 +312,28 @@ impl Engine for PSQL {
             .execute_with_writer(script, Some(results), &mut diagnostics)
             .await;
 
+        // Reported alongside the status as well as written to the caller's
+        // sink, so a caller that deliberately discarded the stream still has
+        // the part worth showing.
+        let tail = tail_summary(&diagnostics.tail, diagnostics.dropped);
+
         match outcome {
-            Ok(()) => Ok(ScriptStatus::Ok),
+            Ok(()) => Ok(ScriptRun {
+                status: ScriptStatus::Ok,
+                diagnostics_tail: tail,
+            }),
             // Exit 3 is a statement failing under ON_ERROR_STOP, which is on by
             // default but a script may turn off. Either way its diagnostics are
             // already written, so this is a normal outcome.
-            Err(EngineError::ExecutionFailed { exit_code: 3 }) => Ok(ScriptStatus::StatementFailed),
+            Err(EngineError::ExecutionFailed { exit_code: 3 }) => Ok(ScriptRun {
+                status: ScriptStatus::StatementFailed,
+                diagnostics_tail: tail,
+            }),
             // Exit 1 is psql itself failing, 2 a bad or lost connection. The
             // reason went to the caller's sink, so quote the tail of it here:
             // a caller streaming to disk cannot cheaply go back and look.
             Err(EngineError::ExecutionFailed { exit_code }) => {
-                let message = match tail_summary(&diagnostics.tail, diagnostics.dropped) {
+                let message = match tail {
                     Some(detail) => format!("psql exited with code {}: {}", exit_code, detail),
                     None => format!("psql exited with code {}", exit_code),
                 };

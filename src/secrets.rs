@@ -251,7 +251,21 @@ pub fn redact_secrets(
     secrets: &SecretsRepository,
     dialect: crate::sql_formatter::SqlDialect,
 ) -> anyhow::Error {
-    let mut text = format!("{:?}", err);
+    anyhow!(redact_text(&format!("{:?}", err), secrets, dialect))
+}
+
+/// [`redact_secrets`] over plain text, for output that is shown rather than
+/// returned — `script run` collects psql's diagnostics and passes the tail
+/// through this before printing it.
+///
+/// Safe to call only once the run is over: it can replace a value only if the
+/// render has already resolved it.
+pub fn redact_text(
+    text: &str,
+    secrets: &SecretsRepository,
+    dialect: crate::sql_formatter::SqlDialect,
+) -> String {
+    let mut text = text.to_string();
     let mut values = secrets.resolved_values();
     let escaped: Vec<String> = values
         .iter()
@@ -268,7 +282,7 @@ pub fn redact_secrets(
         }
         text = text.replace(&value, "***REDACTED***");
     }
-    anyhow!(text)
+    text
 }
 
 #[cfg(test)]
@@ -759,5 +773,40 @@ mod tests {
         let full_text = format!("{:?}", redacted);
         assert!(!full_text.contains("hunter"), "got: {}", full_text);
         assert!(full_text.contains("***REDACTED***"), "got: {}", full_text);
+    }
+
+    /// `script run` shows psql's diagnostics rather than returning them, so it
+    /// redacts the text directly. Both forms have to go, for the same reasons
+    /// as the error path: a `DETAIL` line echoes the parsed value, a `LINE 1:`
+    /// context echoes the escaped literal.
+    #[tokio::test]
+    async fn redact_text_strips_both_forms_from_collected_diagnostics() {
+        let definitions = defs(vec![(
+            "application_password",
+            SecretDefinition {
+                default: SecretSource::Literal {
+                    value: "hunter'2".to_string(),
+                    insecure: true,
+                },
+                environments: HashMap::new(),
+            },
+        )]);
+        let secrets = repo(definitions, "prod", SecretsRenderMode::Revealed);
+        secrets.resolve("application_password").await.unwrap();
+
+        let diagnostics = "ERROR:  duplicate key value violates unique constraint\n\
+                           DETAIL:  Key (password)=(hunter'2) already exists.\n\
+                           LINE 1: UPDATE u SET password = 'hunter''2';";
+
+        let redacted = redact_text(
+            diagnostics,
+            &secrets,
+            crate::sql_formatter::SqlDialect::Postgres,
+        );
+
+        assert!(!redacted.contains("hunter"), "got: {}", redacted);
+        assert!(redacted.contains("***REDACTED***"), "got: {}", redacted);
+        // The surrounding diagnostics are still readable.
+        assert!(redacted.contains("duplicate key value"), "got: {}", redacted);
     }
 }

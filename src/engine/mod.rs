@@ -399,6 +399,21 @@ pub enum ScriptStatus {
     StatementFailed,
 }
 
+/// What a completed script run reports back.
+///
+/// `diagnostics_tail` exists for a caller that did not keep the diagnostics
+/// itself: `script run` sinks them, because they are psql's own and a failing
+/// statement can echo a revealed secret back in them, so they must be redacted
+/// before they are shown — and that can only be done once the render has
+/// finished resolving. The engine captures a bounded tail regardless, so the
+/// caller gets the part that explains a failure without having to hold the
+/// whole stream in memory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptRun {
+    pub status: ScriptStatus,
+    pub diagnostics_tail: Option<String>,
+}
+
 #[async_trait]
 pub trait Engine: Send + Sync {
     /// Runs `script` against the target, writing its output to `out` as it goes.
@@ -410,7 +425,7 @@ pub trait Engine: Send + Sync {
         &self,
         script: ScriptSource,
         out: ScriptOutput<'_>,
-    ) -> Result<ScriptStatus, EngineError>;
+    ) -> Result<ScriptRun, EngineError>;
 
     /// Records the outcome of a script run in the audit trail.
     ///
