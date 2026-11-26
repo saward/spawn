@@ -50,14 +50,16 @@ impl Command for ApplyMigration {
         // its declarations from.
         let mut resolved: Vec<(String, Migrator)> = Vec::with_capacity(migrations.len());
         for migration in migrations {
-            let mgrtr = Migrator::resolve(config, &migration, self.pinned)
-                .await
-                .with_context(|| {
+            let mut mgrtr = Migrator::resolve(config, &migration, self.pinned).await;
+            if self.pinned {
+                mgrtr = mgrtr.with_context(|| {
                     format!(
                         "apply '{}' with --no-pin to use the current components",
                         migration
                     )
-                })?;
+                });
+            }
+            let mgrtr = mgrtr?;
             resolved.push((migration, mgrtr));
         }
 

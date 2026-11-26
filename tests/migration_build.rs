@@ -949,6 +949,29 @@ async fn test_check_passes_when_all_pinned() -> Result<(), Box<dyn std::error::E
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_check_reports_a_malformed_lock_toml() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration_name = helper.create_migration("will-be-corrupted").await?;
+    helper.pin_migration(&migration_name).await?;
+
+    let config = helper.load_config().await?;
+    helper
+        .fs
+        .write(
+            &config.pather().migration_lock_file_path(&migration_name),
+            "pin = [",
+        )
+        .await?;
+
+    // A warning rather than a hard error, so the rest of the check still runs;
+    // and not silence either, since this migration was passing before.
+    let outcome = Check.execute(&config).await?;
+    assert!(matches!(outcome, Outcome::CheckFailed));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pin_fails_when_migration_does_not_exist() -> Result<(), Box<dyn std::error::Error>> {
     let helper = MigrationTestHelper::new_empty().await?;
 

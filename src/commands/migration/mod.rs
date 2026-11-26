@@ -34,6 +34,8 @@ pub struct MigrationStatusRow {
     pub last_status: Option<MigrationHistoryStatus>,
     pub last_activity: Option<String>,
     pub checksum: Option<String>,
+    /// Why this migration's `lock.toml` could not be read, if it could not be.
+    pub config_error: Option<String>,
 }
 
 /// Get the combined status of all migrations from both filesystem and database.
@@ -69,13 +71,20 @@ pub async fn get_combined_migration_status(
         let fs = fs_status.get(&name);
         let db_info = db_migrations.get(&name);
 
-        let is_pinned = match fs {
-            Some(status) if status.has_lock_toml => Migrator::new(config, &name, false)
-                .load_migration_config()
-                .await?
-                .pin
-                .is_some(),
-            _ => false,
+        // Reads the migration's lock.toml to see whether it records a pin. A
+        // file that will not parse becomes this row's `config_error` instead
+        // of failing the whole listing.
+        let (is_pinned, config_error) = match fs {
+            Some(status) if status.has_lock_toml => {
+                match Migrator::new(config, &name, false)
+                    .load_migration_config()
+                    .await
+                {
+                    Ok(cfg) => (cfg.pin.is_some(), None),
+                    Err(e) => (false, Some(format!("{:#}", e))),
+                }
+            }
+            _ => (false, None),
         };
 
         results.push(MigrationStatusRow {
@@ -86,6 +95,7 @@ pub async fn get_combined_migration_status(
             last_status: db_info.and_then(|info| info.last_status),
             last_activity: db_info.and_then(|info| info.last_activity.clone()),
             checksum: db_info.and_then(|info| info.checksum.clone()),
+            config_error,
         });
     }
 

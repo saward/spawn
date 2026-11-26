@@ -32,7 +32,19 @@ impl Command for Check {
 
             let pinned = if status.has_lock_toml {
                 let migrator = Migrator::new(config, name, false);
-                migrator.load_migration_config().await?.pin.is_some()
+                match migrator.load_migration_config().await {
+                    Ok(cfg) => cfg.pin.is_some(),
+                    // Its own warning, rather than a hard failure that would
+                    // hide every other migration's.
+                    Err(e) => {
+                        warnings.push(format!(
+                            "Migration {} has an unreadable lock.toml: {:#}",
+                            style(name).yellow(),
+                            e
+                        ));
+                        continue;
+                    }
+                }
             } else {
                 false
             };

@@ -39,6 +39,15 @@ impl Command for MigrationStatus {
             return Ok(Outcome::Success);
         }
 
+        let config_errors: Vec<String> = status_rows
+            .iter()
+            .filter_map(|row| {
+                row.config_error
+                    .as_ref()
+                    .map(|e| format!("{}: {}", row.migration_name, e))
+            })
+            .collect();
+
         let display_rows: Vec<MigrationStatusDisplay> = status_rows
             .into_iter()
             .map(|row| {
@@ -48,7 +57,11 @@ impl Command for MigrationStatus {
                     style("✗").red().to_string()
                 };
 
-                let pinned = if row.is_pinned {
+                // Unreadable is not the same as unpinned: the pin may be there
+                // and simply unparseable, so neither tick nor cross is honest.
+                let pinned = if row.config_error.is_some() {
+                    style("⚠").yellow().to_string()
+                } else if row.is_pinned {
                     style("✓").green().to_string()
                 } else {
                     style("✗").red().to_string()
@@ -93,6 +106,13 @@ impl Command for MigrationStatus {
         let mut table = Table::new(display_rows);
         table.with(Style::sharp());
         println!("\n{}\n", table);
+
+        for error in &config_errors {
+            println!("{}  {}", style("⚠").yellow(), error);
+        }
+        if !config_errors.is_empty() {
+            println!();
+        }
 
         Ok(Outcome::Success)
     }
