@@ -22,8 +22,23 @@ impl TelemetryDescribe for NewScript {
     }
 }
 
+/// Rejects a name whose folder would not be `scripts/<name>/`. Commands that
+/// walk `scripts/` could not then find the script, so `spawn pin cleanup` would
+/// treat its pinned trees as orphaned and delete them.
+fn validate_script_path(script: &str) -> Result<()> {
+    if script.split('/').any(|seg| matches!(seg, "" | "." | "..")) {
+        return Err(anyhow!(
+            "invalid script name '{}': must be a relative path with no empty, '.' or '..' segments",
+            script
+        ));
+    }
+    Ok(())
+}
+
 impl Command for NewScript {
     async fn execute(&self, config: &Config) -> Result<Outcome> {
+        validate_script_path(&self.script)?;
+
         let script = Script::new(config, &self.script, false);
 
         // Names are chosen rather than timestamped, so overwriting could

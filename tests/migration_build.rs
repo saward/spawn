@@ -503,24 +503,64 @@ async fn test_create_test_with_custom_template() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-// Run a create script test:
+// Run a create script test, over the name shapes a project may reasonably use.
+// Only a segment that is exactly '.' or '..' is rejected, so dots within a
+// segment stay legal; the counterpart negative cases are in the test below.
 #[tokio::test]
 async fn test_create_script() -> Result<(), Box<dyn std::error::Error>> {
     let helper = MigrationTestHelper::new_empty().await?;
-
-    // Test that we can create a script
-    let script = helper
-        .create_script("maintenance/reindex")
-        .await
-        .expect("Failed to create script with helper");
-
     let cfg = helper.load_config().await?;
 
-    // Check that <script folder>/script.sql exists and has the default content:
-    let script_path = cfg.pather().script_file_path(&script);
-    let file_data = helper.fs.read(&script_path).await?.to_bytes();
-    let file_contents = String::from_utf8(file_data.to_vec())?;
-    assert_eq!(DEFAULT_SCRIPT_CONTENT, file_contents,);
+    for name in [
+        "reindex",
+        "maintenance/reindex",
+        "maintenance/weekly/vacuum-full",
+        "v1.2-cleanup",
+        "backfill.step1",
+        "..hidden",
+        "trailing.",
+    ] {
+        let script = helper
+            .create_script(name)
+            .await
+            .unwrap_or_else(|e| panic!("script name '{}' should be accepted: {}", name, e));
+        assert_eq!(name, script);
+
+        // The script lands in its own folder under scripts/, which is what lets
+        // the commands that walk scripts/ find it again.
+        let script_path = cfg.pather().script_file_path(&script);
+        assert!(
+            script_path.ends_with(&format!("/scripts/{}/script.sql", name)),
+            "unexpected path for '{}': {}",
+            name,
+            script_path
+        );
+
+        let file_data = helper.fs.read(&script_path).await?.to_bytes();
+        let file_contents = String::from_utf8(file_data.to_vec())?;
+        assert_eq!(DEFAULT_SCRIPT_CONTENT, file_contents);
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_create_script_rejects_names_outside_its_own_folder(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    for name in ["", ".", "..", "/abs", "a//b", "a/../b", "nested/."] {
+        let err = helper
+            .create_script(name)
+            .await
+            .expect_err(&format!("script name '{}' should be rejected", name));
+        assert!(
+            err.to_string().contains("invalid script name"),
+            "unexpected error for '{}': {}",
+            name,
+            err
+        );
+    }
 
     Ok(())
 }
