@@ -12,6 +12,7 @@ use spawn_db::{
     engine::{CommandSpec, EngineType, TargetConfig},
     script::PinMode,
     secrets::{SecretDefinition, SecretSource},
+    source_config::SourceConfig,
     store,
     variables::Variables,
 };
@@ -944,6 +945,57 @@ async fn test_check_passes_when_all_pinned() -> Result<(), Box<dyn std::error::E
     let config = helper.load_config().await?;
     let outcome = Check.execute(&config).await?;
     assert!(matches!(outcome, Outcome::Success));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pin_preserves_a_hand_written_lock_toml() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration_name = helper.create_migration("hand-edited").await?;
+    let config = helper.load_config().await?;
+    let lock_path = config.pather().migration_lock_file_path(&migration_name);
+
+    let authored = r#"# why this migration declares anything at all
+future_key = "spawn does not recognise this one"
+
+[variables.tenant]
+source = "prompt"
+
+# alphabetically earlier, deliberately written second
+[variables.admin_email]
+source = "value"
+value = "admin@example.com"
+"#;
+    helper.fs.write(&lock_path, authored).await?;
+
+    helper.pin_migration(&migration_name).await?;
+
+    let written = String::from_utf8(helper.fs.read(&lock_path).await?.to_bytes().to_vec())?;
+    for kept in [
+        "# why this migration declares anything at all",
+        "# alphabetically earlier, deliberately written second",
+        "future_key = \"spawn does not recognise this one\"",
+    ] {
+        assert!(written.contains(kept), "lost {:?} from:\n{}", kept, written);
+    }
+    assert!(
+        written.find("[variables.tenant]") < written.find("[variables.admin_email]"),
+        "declarations were reordered:\n{}",
+        written
+    );
+    // The new key has to join the root table; appended after the first
+    // [variables.*] header it would silently become a variable instead.
+    assert!(
+        written.find("pin = ") < written.find('['),
+        "pin landed inside a table:\n{}",
+        written
+    );
+
+    // Still readable as a pinned config afterwards.
+    let reloaded: SourceConfig = config.load_source_config(&lock_path).await?;
+    assert!(reloaded.pin.is_some());
+    assert_eq!(2, reloaded.variables.len());
 
     Ok(())
 }

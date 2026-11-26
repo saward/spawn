@@ -40,3 +40,37 @@ pub async fn load_source_config<T: DeserializeOwned>(fs: &Operator, path: &str) 
         .with_context(|| format!("source config '{}' is not valid UTF-8", path))?;
     toml::from_str(&contents).with_context(|| format!("failed to parse source config '{}'", path))
 }
+
+/// Records `pin` in the source config at `path`, creating the file if there is
+/// none.
+///
+/// Edits the parsed document rather than re-serialising a [`SourceConfig`], so
+/// that comments, key order, and keys this version of spawn does not recognise
+/// all survive a pin. These files are hand-edited for their `[variables]`.
+pub async fn write_pin(fs: &Operator, path: &str, pin: &str) -> Result<()> {
+    let existing = if fs
+        .exists(path)
+        .await
+        .with_context(|| format!("failed to check source config '{}'", path))?
+    {
+        let contents = fs
+            .read(path)
+            .await
+            .with_context(|| format!("failed to read source config '{}'", path))?
+            .to_bytes();
+        String::from_utf8(contents.to_vec())
+            .with_context(|| format!("source config '{}' is not valid UTF-8", path))?
+    } else {
+        String::new()
+    };
+
+    let mut doc = existing
+        .parse::<toml_edit::DocumentMut>()
+        .with_context(|| format!("failed to parse source config '{}'", path))?;
+    doc["pin"] = toml_edit::value(pin);
+
+    fs.write(path, doc.to_string())
+        .await
+        .with_context(|| format!("failed to write source config '{}'", path))?;
+    Ok(())
+}

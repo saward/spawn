@@ -2430,6 +2430,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "toml 0.8.23",
+ "toml_edit",
  "twox-hash",
  "uuid",
 ]

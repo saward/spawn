@@ -1,6 +1,7 @@
 use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
 use crate::script::Script;
+use crate::source_config::write_pin;
 use crate::store::pinner::spawn::Spawn;
 use crate::store::pinner::Pinner;
 use anyhow::{Context, Result};
@@ -43,18 +44,10 @@ impl Command for PinScript {
             .await
             .context("error calling pinner snapshot")?;
 
-        // Read-modify-write rather than overwrite: config.toml may already
-        // declare variables, which pinning has no business discarding.
-        let mut script_config = script.load_script_config().await?;
-        script_config.pin = Some(root.clone());
-
+        // Sets only the `pin` key: config.toml may already declare variables,
+        // which pinning has no business discarding or reformatting.
         let config_path = config.pather().script_config_path(&self.script);
-        let toml_str = toml::to_string_pretty(&script_config)
-            .context("could not convert source config to toml")?;
-
-        config
-            .operator()
-            .write(&config_path, toml_str)
+        write_pin(config.operator(), &config_path, &root)
             .await
             .context("failed writing script config")?;
 
