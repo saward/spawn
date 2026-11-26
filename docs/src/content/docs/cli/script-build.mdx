@@ -1,0 +1,89 @@
+---
+title: spawn script build
+description: Render a script to SQL without running it.
+---
+
+import CLICommand from "../../../components/CLICommand.astro";
+import {
+  globalOptions,
+  targetOption,
+  environmentOption,
+  scriptPinOptions,
+  variablesOption,
+  varJsonOption,
+  useDefaultsOption,
+  revealSecretsOption,
+} from "../../../components/cli-options";
+import Variables from "../../../partials/variables.mdx";
+import DeclaredVariables from "../../../partials/declared-variables.mdx";
+
+<CLICommand
+  usage="spawn script build <script> [options]"
+  options={[
+    ...scriptPinOptions,
+    ...variablesOption,
+    ...varJsonOption,
+    ...useDefaultsOption,
+    ...revealSecretsOption,
+    ...environmentOption,
+    ...targetOption,
+    ...globalOptions
+  ]}
+>
+
+Renders a script to SQL and prints it, without touching the database. The counterpart to [`spawn script run`](/cli/script-run/), for checking what a run would actually execute.
+
+## Arguments
+
+- `<script>` — Required. Path to the script, relative to the scripts folder.
+
+## Variables
+
+<Variables />
+
+## Declared variables
+
+<DeclaredVariables
+  kind="script"
+  file="config.toml"
+  entry="script.sql"
+  path="scripts/make-admin/config.toml"
+  command={`spawn script build make-admin --var-json 'email="me@example.com"'`}
+/>
+
+## Secrets
+
+`build` masks `secret()` values by default, since its output is meant for reading rather than executing. The secrets are still resolved, so a misconfigured or unreachable one still fails the build — only the value printed is a placeholder. Pass `--reveal-secrets` to print real values when debugging locally.
+
+## Pinned builds
+
+`build` picks its component tree exactly as [`spawn script run`](/cli/script-run/) does, so what it prints is what a run would execute. A pinned script renders against its recorded tree; an unpinned one renders against the current components. Either way the choice is reported on stderr, so it stays out of the SQL on stdout:
+
+```
+Using the pinned component tree for 'maintenance/reindex' (scripts/maintenance/reindex/config.toml).
+```
+
+`--pinned` requires the script to be pinned, failing if it is not, and `--no-pin` renders against the current components even when it is — useful for seeing what re-pinning would change.
+
+## Examples
+
+Inspect what a run would execute:
+
+```bash
+spawn script build maintenance/reindex
+```
+
+Check how a variable will be escaped before running anything — the JSON quotes decide whether it reaches SQL as `42` or `'42'`:
+
+```bash
+spawn script build maintenance/backfill --var-json tenant_id=42
+spawn script build maintenance/backfill --var-json 'tenant_id="42"'
+```
+
+See what re-pinning would change, by rendering a pinned script against the current components:
+
+```bash
+spawn script build maintenance/backfill --no-pin
+```
+
+</CLICommand>

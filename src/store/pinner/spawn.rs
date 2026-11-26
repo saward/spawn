@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use crate::config::FolderPather;
 use crate::hash::content_hash;
-use crate::pinfile;
-use crate::store::list_migration_fs_status;
+use crate::source_config::{load_source_config, ScriptConfig, SourceConfig};
+use crate::store::{list_migration_fs_status, list_script_fs_status};
 
 #[derive(Debug)]
 pub struct Spawn {
@@ -131,7 +131,12 @@ impl Pinner for Spawn {
     }
 
     async fn snapshot(&mut self, object_store: &Operator) -> Result<String> {
-        super::snapshot(object_store, Some(self.pin_path.as_str()), &self.source_path).await
+        super::snapshot(
+            object_store,
+            Some(self.pin_path.as_str()),
+            &self.source_path,
+        )
+        .await
     }
 }
 
@@ -152,10 +157,27 @@ pub struct CorruptedFile {
     pub actual_hash: String,
 }
 
-/// A migration whose lock.toml points at a root hash that isn't in the store.
+/// What recorded a root hash: a migration's lock file or a script's config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RootSource {
+    Migration,
+    Script,
+}
+
+impl std::fmt::Display for RootSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            RootSource::Migration => write!(f, "migration"),
+            RootSource::Script => write!(f, "script"),
+        }
+    }
+}
+
+/// A migration or script whose recorded root hash isn't in the store.
 #[derive(Debug)]
 pub struct MissingRoot {
-    pub migration: String,
+    pub source: RootSource,
+    pub name: String,
     pub hash: String,
 }
 
@@ -166,7 +188,7 @@ pub struct VerifyResult {
     pub checked_count: usize,
     /// Pinned files whose contents don't match their path-encoded hash.
     pub corrupted: Vec<CorruptedFile>,
-    /// Migrations whose lock.toml root hash has no corresponding file in the store.
+    /// Migrations and scripts whose recorded root hash is missing from the store.
     pub missing_roots: Vec<MissingRoot>,
 }
 
@@ -204,33 +226,55 @@ async fn verify_store_contents(
     Ok((checked_count, corrupted))
 }
 
-/// Checks that every migration's lock.toml root hash has a corresponding file
-/// present in the pinned store.
-async fn verify_lock_roots(fs: &Operator, pather: &FolderPather) -> Result<Vec<MissingRoot>> {
+/// Checks that every root hash recorded by a migration or script exists in the store.
+async fn verify_recorded_roots(fs: &Operator, pather: &FolderPather) -> Result<Vec<MissingRoot>> {
     let mut missing = Vec::new();
 
     let statuses = list_migration_fs_status(fs, pather, None).await?;
 
+    let mut roots: Vec<(RootSource, String, String)> = Vec::new();
     for (name, status) in statuses {
         if !status.has_lock_toml {
             continue;
         }
 
         let lock_path = pather.migration_lock_file_path(&name);
-        let lock_data = pinfile::load_lock_file(fs, &lock_path)
+        let source_config: SourceConfig = load_source_config(fs, &lock_path)
             .await
             .with_context(|| format!("failed to load lock file for migration {}", name))?;
 
-        let root_path = format!(
-            "{}/{}",
-            pather.pinned_folder(),
-            super::hash_to_path(&lock_data.pin)?
-        );
+        // A lock.toml that only declares variables records no root, so there
+        // is no root for it to be missing.
+        if let Some(pin) = source_config.pin {
+            roots.push((RootSource::Migration, name, pin));
+        }
+    }
+
+    for (script, status) in list_script_fs_status(fs, pather).await? {
+        if !status.has_config_toml {
+            continue;
+        }
+
+        let config_path = pather.script_config_path(&script);
+        let script_config: ScriptConfig = load_source_config(fs, &config_path)
+            .await
+            .with_context(|| format!("failed to load config for script {}", script))?;
+
+        // A config.toml that only declares variables records no root, so there
+        // is no root for it to be missing.
+        if let Some(pin) = script_config.pin {
+            roots.push((RootSource::Script, script, pin));
+        }
+    }
+
+    for (source, name, pin) in roots {
+        let root_path = format!("{}/{}", pather.pinned_folder(), super::hash_to_path(&pin)?);
         let root_is_file = fs.exists(&root_path).await? && fs.stat(&root_path).await?.is_file();
         if !root_is_file {
             missing.push(MissingRoot {
-                migration: name,
-                hash: lock_data.pin,
+                source,
+                name,
+                hash: pin,
             });
         }
     }
@@ -239,11 +283,10 @@ async fn verify_lock_roots(fs: &Operator, pather: &FolderPather) -> Result<Vec<M
 }
 
 /// Verifies the Spawn pinned store: every file's contents must match its
-/// path-encoded hash, and every migration's lock.toml root hash must exist
-/// in the store.
+/// path-encoded hash, and every recorded root hash must exist in the store.
 pub async fn verify_store(fs: &Operator, pather: &FolderPather) -> Result<VerifyResult> {
     let (checked_count, corrupted) = verify_store_contents(fs, &pather.pinned_folder()).await?;
-    let missing_roots = verify_lock_roots(fs, pather).await?;
+    let missing_roots = verify_recorded_roots(fs, pather).await?;
 
     Ok(VerifyResult {
         checked_count,

@@ -34,7 +34,7 @@ impl Command for PinCleanup {
                 }
             }
             println!(
-                "\n{} pinned file(s) are still referenced by migrations.",
+                "\n{} pinned file(s) are still referenced.",
                 result.referenced_count
             );
             println!("\nRun without --dry-run to delete orphaned files.");
@@ -43,7 +43,7 @@ impl Command for PinCleanup {
         } else {
             println!("Deleted {} orphaned pinned file(s).", result.orphaned.len());
             println!(
-                "{} pinned file(s) are still referenced by migrations.",
+                "{} pinned file(s) are still referenced.",
                 result.referenced_count
             );
         }

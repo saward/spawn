@@ -39,16 +39,16 @@ impl Command for PinVerify {
         }
 
         if result.missing_roots.is_empty() {
-            println!("All migration lock files point to a root hash that exists in the store.");
+            println!("All recorded pins point to a root hash that exists in the store.");
         } else {
             println!(
-                "{} migration(s) point to a missing root hash:",
+                "{} recorded pin(s) point to a missing root hash:",
                 result.missing_roots.len()
             );
             for missing in &result.missing_roots {
                 println!(
-                    "  {} — missing root hash '{}'",
-                    missing.migration, missing.hash
+                    "  {} {} — missing root hash '{}'",
+                    missing.source, missing.name, missing.hash
                 );
             }
         }

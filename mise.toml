@@ -17,3 +17,14 @@ run = ["cargo test", "cargo test -- --ignored"]
 description = "Run the documentation dev server"
 dir = "docs"
 run = "npm run dev"
+
+[tasks.cspawn]
+description = "Build spawn and point ~/.cargo/bin/cspawn at the debug binary"
+dir = "{{config_root}}"
+run = [
+  "cargo build",
+  # A symlink rather than a copy: any later `cargo build`, from anywhere,
+  # keeps cspawn current instead of silently leaving a stale snapshot.
+  "ln -sf {{config_root}}/target/debug/spawn $HOME/.cargo/bin/cspawn",
+  "$HOME/.cargo/bin/cspawn --version",
+]

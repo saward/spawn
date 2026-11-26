@@ -1,5 +1,6 @@
 use crate::commands::{Command, Outcome, TelemetryDescribe, TelemetryInfo};
 use crate::config::Config;
+use crate::migrator::Migrator;
 use crate::store::list_migration_fs_status;
 use anyhow::Result;
 use console::style;
@@ -25,7 +26,29 @@ impl Command for Check {
         let fs_status = list_migration_fs_status(config.operator(), &config.pather(), None).await?;
 
         for (name, status) in &fs_status {
-            if status.has_up_sql && !status.has_lock_toml {
+            if !status.has_up_sql {
+                continue;
+            }
+
+            let pinned = if status.has_lock_toml {
+                let migrator = Migrator::new(config, name, false);
+                match migrator.load_migration_config().await {
+                    Ok(cfg) => cfg.pin.is_some(),
+                    // Its own warning, rather than a hard failure that would
+                    // hide every other migration's.
+                    Err(e) => {
+                        warnings.push(format!(
+                            "Migration {} has an unreadable lock.toml: {:#}",
+                            style(name).yellow(),
+                            e
+                        ));
+                        continue;
+                    }
+                }
+            } else {
+                false
+            };
+            if !pinned {
                 warnings.push(format!("Migration {} is not pinned", style(name).yellow()));
             }
         }

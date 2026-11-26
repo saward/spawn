@@ -34,7 +34,9 @@ Pinning ensures migrations are reproducible:
 1. Scans the migration's `up.sql` for component includes
 2. Computes a content hash of all referenced components
 3. Stores snapshots in `pinned/<hash>/`
-4. Creates `lock.toml` in the migration directory
+4. Writes the hash as `pin` in the migration's `lock.toml`
+
+`lock.toml` is rewritten in place rather than replaced, so any [declared variables](/cli/migration-apply/#declared-variables) already in it survive being pinned. The `pin` key is what makes a migration pinned — a `lock.toml` holding only `[variables]` entries is an unpinned migration that happens to have a sidecar.
 
 ## Integrity
 

@@ -56,11 +56,11 @@ impl Tester {
         variables: Option<crate::variables::Variables>,
         secrets_mode: SecretsRenderMode,
     ) -> Result<String> {
-        let lock_file = None;
+        let source_config_path = None;
 
         let gen = template::generate_streaming(
             &self.config,
-            lock_file,
+            source_config_path,
             &self.script_path,
             template::RenderKind::Test,
             &self.test_file_path(),

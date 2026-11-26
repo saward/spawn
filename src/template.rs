@@ -3,38 +3,39 @@ use crate::engine::EngineType;
 use crate::escape::{EscapedIdentifier, EscapedLiteral};
 use crate::hash::content_hash;
 use crate::secrets::{SecretsRenderMode, SecretsRepository};
+use crate::source_config::SourceConfig;
 use crate::store::pinner::latest::Latest;
 use crate::store::pinner::spawn::Spawn;
 use crate::store::pinner::Pinner;
 use crate::store::Store;
 use crate::variables::Variables;
-use minijinja::{Environment, Value};
+use minijinja::{Environment, UndefinedBehavior, Value};
 
 use crate::sql_formatter::SqlDialect;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use uuid::Uuid;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use minijinja::context;
 use serde::Serialize;
 use std::sync::Arc;
 
-/// Whether a template is being rendered as part of a migration or a test.
-#[derive(Debug, Clone, Copy, Serialize)]
+/// What kind of thing is being rendered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RenderKind {
     Migration,
     Test,
+    Script,
 }
 
 /// Values describing the current render, exposed to templates as globals
 /// under the `builtin` namespace (e.g. `{{ builtin.script_name }}`).
 #[derive(Debug, Clone, Serialize)]
 pub struct BuiltinContext {
-    /// Name of the migration or test being rendered (e.g. as passed to
-    /// `Migrator::new`/`Tester::new`), not the object-store file path.
+    /// Name of the migration, test or script being rendered, not the object-store file path.
     pub script_name: String,
-    /// Whether this render is a migration or a test.
+    /// What kind of render this is.
     pub script_type: RenderKind,
     /// The target engine (e.g. `postgres-psql`).
     pub engine: EngineType,
@@ -76,6 +77,17 @@ pub fn template_env(
     builtin: BuiltinContext,
 ) -> Result<Environment<'static>> {
     let mut env = Environment::new();
+
+    // An unset variable is a mistake, not an empty string: rendering nothing
+    // can leave valid SQL that acts on the wrong thing. SemiStrict rather than
+    // Strict so `{% if variables.x %}` and `| default(..)` still cover
+    // genuinely optional variables.
+    env.set_undefined_behavior(UndefinedBehavior::SemiStrict);
+
+    // Debug mode copies the values in scope — secrets included — into every
+    // error it builds. Set explicitly because minijinja otherwise defaults it
+    // to `cfg!(debug_assertions)`, so dev and release would differ.
+    env.set_debug(false);
 
     env.add_global("builtin", Value::from_serialize(&builtin));
 
@@ -347,6 +359,70 @@ fn parse_yaml_filter(value: &str) -> Result<Value, minijinja::Error> {
     Ok(Value::from_serialize(&vars))
 }
 
+/// Longest expression reported in an error message, in characters.
+const EXPRESSION_LIMIT: usize = 120;
+
+/// The source text of the expression that failed, e.g. `variables.tenant`.
+///
+/// minijinja reports no variable name, only the byte range of the expression,
+/// so the text is read back out of the template.
+///
+/// The range covers whichever operation raised, which is not always the
+/// variable you forgot: `{{ v.x | upper }}` gives `upper`. Never present this
+/// as a variable name.
+fn undefined_expression(env: &Environment<'_>, err: &minijinja::Error) -> Option<String> {
+    // An `{% include %}` wraps the real error in one pointing at the include
+    // tag, so the innermost error is the useful one.
+    let mut frame = err;
+    while let Some(source) = std::error::Error::source(frame)
+        .and_then(|source| source.downcast_ref::<minijinja::Error>())
+    {
+        frame = source;
+    }
+
+    if frame.kind() != minijinja::ErrorKind::UndefinedError {
+        return None;
+    }
+
+    // Via the environment, not `Error::template_source`, which needs the debug
+    // mode that `template_env` deliberately leaves off. Already compiled, so
+    // this is a lookup rather than a re-render.
+    let template = env.get_template(frame.name()?).ok()?;
+
+    // `get` rather than `[..]`, which panics if the range does not line up.
+    let expression = template.source().get(frame.range()?)?.trim();
+
+    if expression.is_empty() {
+        return None;
+    }
+
+    // Bounded because this ends up in logs: an expression can span lines, and
+    // a newline would let a template split a log line.
+    let mut flattened = expression.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flattened.chars().count() > EXPRESSION_LIMIT {
+        flattened = flattened
+            .chars()
+            .take(EXPRESSION_LIMIT)
+            .chain("...".chars())
+            .collect();
+    }
+
+    Some(flattened)
+}
+
+/// Adds the failing expression to the message of an undefined-value error.
+///
+/// A `context` layer rather than a replacement, so the original error stays in
+/// the chain — callers search it for an `io::Error` to spot a closed pipe.
+fn name_undefined_expression(env: &Environment<'_>, err: minijinja::Error) -> anyhow::Error {
+    match undefined_expression(env, &err) {
+        Some(expression) => {
+            anyhow::Error::new(err).context(format!("undefined value in expression `{expression}`"))
+        }
+        None => anyhow::Error::new(err),
+    }
+}
+
 pub struct Generation {
     pub content: String,
 }
@@ -359,20 +435,17 @@ pub struct StreamingGeneration {
     /// The template's real path, used as its minijinja template name so render
     /// errors name the file on disk.
     template_label: String,
-    /// Name of the migration or test being rendered, exposed to templates
-    /// as `builtin.script_name` (see `BuiltinContext`).
+    /// Name of the migration, test or script, exposed as `builtin.script_name`.
     script_name: String,
-    /// Whether this render is a migration or a test, exposed to templates
-    /// as `builtin.script_type`.
+    /// What kind of render this is, exposed as `builtin.script_type`.
     script_type: RenderKind,
     environment: String,
     variables: Variables,
     engine: EngineType,
     secrets: Arc<SecretsRepository>,
-    /// The pin loaded from lock.toml to build this render's component
-    /// store (`None` when generated with `--no-pin`), captured at the same
-    /// time that lock is read — a caller recording it to migration_history
-    /// should use this instead of re-reading lock.toml, which could race a
+    /// The pin used to build this render's component store (`None` with
+    /// `--no-pin`), captured when the source config was read — prefer it to
+    /// re-reading that config, which could race a
     /// concurrent re-pin and record a hash that doesn't match what was
     /// actually rendered.
     pin_hash: Option<String>,
@@ -393,7 +466,7 @@ impl StreamingGeneration {
 
     /// The pin actually used to build this render's component store — see
     /// the `pin_hash` field doc comment for why this should be preferred
-    /// over separately re-reading lock.toml.
+    /// over separately re-reading the source config.
     pub fn pin_hash(&self) -> Option<&str> {
         self.pin_hash.as_deref()
     }
@@ -412,7 +485,8 @@ impl StreamingGeneration {
         tmpl.render_to_write(
             context!(env => self.environment, variables => self.variables),
             writer,
-        )?;
+        )
+        .map_err(|err| name_undefined_expression(&env, err))?;
         Ok(())
     }
 
@@ -444,32 +518,42 @@ impl StreamingGeneration {
 /// This avoids materializing the entire SQL in memory.
 pub async fn generate_streaming(
     cfg: &config::Config,
-    lock_file: Option<String>,
+    // A migration's lock.toml or a script's config.toml; None renders live.
+    source_config_path: Option<String>,
     script_name: &str,
     script_type: RenderKind,
     path: &str,
     variables: Option<Variables>,
     secrets_mode: SecretsRenderMode,
 ) -> Result<StreamingGeneration> {
-    let (pinner, pin_hash): (Box<dyn Pinner>, Option<String>) = if let Some(lock_file) = lock_file
-    {
-        let lock = cfg
-            .load_lock_file(&lock_file)
+    let (pinner, pin_hash): (Box<dyn Pinner>, Option<String>) =
+        if let Some(source_config_path) = source_config_path {
+            let source_config: SourceConfig = cfg
+                .load_source_config(&source_config_path)
+                .await
+                .context("could not load source config")?;
+            // Callers only pass a path once they have established there is a
+            // pin to render against, so a missing one here is a bug rather
+            // than a user's unpinned migration or script.
+            let pin = source_config.pin.ok_or_else(|| {
+                anyhow!(
+                    "source config '{}' records no pin to render against",
+                    source_config_path
+                )
+            })?;
+            let pinner = Spawn::new_with_root_hash(
+                cfg.pather().pinned_folder(),
+                cfg.pather().components_folder(),
+                &pin,
+                &cfg.operator(),
+            )
             .await
-            .context("could not load pinned files lock file")?;
-        let pinner = Spawn::new_with_root_hash(
-            cfg.pather().pinned_folder(),
-            cfg.pather().components_folder(),
-            &lock.pin,
-            &cfg.operator(),
-        )
-        .await
-        .context("could not get new root with hash")?;
-        (Box::new(pinner), Some(lock.pin))
-    } else {
-        let pinner = Latest::new(cfg.pather().spawn_folder_path())?;
-        (Box::new(pinner), None)
-    };
+            .context("could not get new root with hash")?;
+            (Box::new(pinner), Some(pin))
+        } else {
+            let pinner = Latest::new(cfg.pather().spawn_folder_path())?;
+            (Box::new(pinner), None)
+        };
 
     let store = Store::new(pinner, cfg.operator().clone(), cfg.pather())
         .context("could not create new store for generate")?;
@@ -511,9 +595,9 @@ pub async fn generate_streaming_with_store(
 ) -> Result<StreamingGeneration> {
     // Read contents from our object store first:
     let contents = store
-        .load_migration(path)
+        .load_entry(path)
         .await
-        .context("generate_streaming_with_store could not read migration")?;
+        .with_context(|| format!("could not read script at '{}'", path))?;
 
     Ok(StreamingGeneration {
         store,
@@ -534,6 +618,7 @@ mod tests {
     use super::*;
     use crate::sql_formatter::{get_auto_escape_callback, get_formatter};
     use minijinja::{context, Environment, Value};
+    use serde_json::json;
 
     /// Helper to test SQL formatting of a value by rendering it in a .sql template
     fn render_sql_value(value: Value) -> String {
@@ -719,7 +804,13 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap();
+        let mut env = template_env(
+            store,
+            &EngineType::PostgresPSQL,
+            Arc::new(secrets),
+            BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL),
+        )
+        .unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
@@ -750,7 +841,13 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap();
+        let mut env = template_env(
+            store,
+            &EngineType::PostgresPSQL,
+            Arc::new(secrets),
+            BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL),
+        )
+        .unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "binary.dat"|read_file|base64_encode|safe }}"#,
@@ -778,7 +875,13 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap();
+        let mut env = template_env(
+            store,
+            &EngineType::PostgresPSQL,
+            Arc::new(secrets),
+            BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL),
+        )
+        .unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "nonexistent.txt"|read_file|to_string_lossy }}"#,
@@ -825,7 +928,13 @@ mod tests {
         let secrets = SecretsRepository::empty(op.clone());
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
 
-        let mut env = template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap();
+        let mut env = template_env(
+            store,
+            &EngineType::PostgresPSQL,
+            Arc::new(secrets),
+            BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL),
+        )
+        .unwrap();
         env.add_template(
             "test.sql",
             r#"{{ "test.txt"|read_file|to_string_lossy|safe }}"#,
@@ -847,7 +956,65 @@ mod tests {
             spawn_folder: "".to_string(),
         };
         let store = Store::new(Box::new(pinner), op, pather).unwrap();
-        template_env(store, &EngineType::PostgresPSQL, Arc::new(secrets), BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL)).unwrap()
+        template_env(
+            store,
+            &EngineType::PostgresPSQL,
+            Arc::new(secrets),
+            BuiltinContext::new("test", RenderKind::Migration, EngineType::PostgresPSQL),
+        )
+        .unwrap()
+    }
+
+    /// Environment with no secrets, for tests about template-engine behaviour.
+    fn plain_env() -> Environment<'static> {
+        use opendal::services::Memory;
+        use opendal::Operator;
+        let op = Operator::new(Memory::default()).unwrap();
+        env_with_secrets(SecretsRepository::empty(op))
+    }
+
+    fn render(source: &str, vars: serde_json::Value) -> Result<String, minijinja::Error> {
+        let mut env = plain_env();
+        env.add_template("test.sql", source).unwrap();
+        let tmpl = env.get_template("test.sql").unwrap();
+        tmpl.render(context!(variables => Value::from_serialize(&vars)))
+    }
+
+    // The next four tests pin down the SemiStrict undefined behaviour set in
+    // `template_env`; Strict would also reject the truthiness test below.
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_printing_an_unset_variable_is_an_error() {
+        let err = render("-- {{ variables.missing }}", serde_json::json!({}))
+            .expect_err("printing an unset variable should fail, not render as empty");
+        assert_eq!(err.kind(), minijinja::ErrorKind::UndefinedError);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_a_variable_set_to_empty_is_not_undefined() {
+        // Quoted because the auto-escaping formatter makes a string a SQL literal.
+        let out = render("-- {{ variables.blank }}", serde_json::json!({"blank": ""})).unwrap();
+        assert_eq!(out, "-- ''");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_default_filter_still_rescues_an_unset_variable() {
+        let out = render(
+            r#"-- {{ variables.missing | default("fallback") }}"#,
+            serde_json::json!({}),
+        )
+        .unwrap();
+        assert_eq!(out, "-- 'fallback'");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_an_unset_variable_may_still_be_tested_for_truthiness() {
+        let out = render(
+            "{% if variables.flag %}on{% else %}off{% endif %}",
+            serde_json::json!({}),
+        )
+        .unwrap();
+        assert_eq!(out, "off");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -961,7 +1128,10 @@ mod tests {
         assert!(result.is_err());
     }
 
-    fn streaming_generation(template_contents: &str, secrets: SecretsRepository) -> StreamingGeneration {
+    fn streaming_generation(
+        template_contents: &str,
+        secrets: SecretsRepository,
+    ) -> StreamingGeneration {
         use crate::config::FolderPather;
         use opendal::services::Memory;
         use opendal::Operator;
@@ -1117,6 +1287,228 @@ mod tests {
         assert!(
             chain.contains("migrations/20260101000000-bootstrap/up.sql:3"),
             "the outer frame must name the migration's real path and line, got: {chain}"
+        );
+    }
+
+    /// Renders `template` with `vars`; returns the headline and the full chain.
+    fn undefined_error_chain(template: &str, vars: serde_json::Value) -> (String, String) {
+        let op = opendal::Operator::new(opendal::services::Memory::default()).unwrap();
+        let mut gen = streaming_generation(template, SecretsRepository::empty(op));
+        gen.variables = crate::variables::Variables::from_str("json", &vars.to_string()).unwrap();
+
+        let mut buffer = Vec::new();
+        let err = gen
+            .render_to_writer(&mut buffer)
+            .expect_err("an unset variable should fail the render");
+
+        (err.to_string(), format!("{err:?}"))
+    }
+
+    #[test]
+    fn undefined_variable_error_names_the_expression() {
+        let (headline, chain) = undefined_error_chain("SELECT {{ variables.tenant }};", json!({}));
+
+        assert_eq!(headline, "undefined value in expression `variables.tenant`");
+        assert!(
+            chain.contains("undefined value (in migrations/test/up.sql:1)"),
+            "the location must survive as the cause, got: {chain}"
+        );
+    }
+
+    #[test]
+    fn undefined_loop_iterable_is_named() {
+        let (headline, _) =
+            undefined_error_chain("{% for row in variables.rows %}x{% endfor %}", json!({}));
+
+        assert_eq!(headline, "undefined value in expression `variables.rows`");
+    }
+
+    #[test]
+    fn a_reported_expression_is_always_text_from_the_template() {
+        // minijinja attributes an undefined value to the operation that raised,
+        // not to the variable: these currently report `.b.c`, `upper` and `k`
+        // rather than the name that was never set. That is upstream's business
+        // and may improve. What spawn owes the reader either way is that the
+        // quoted text genuinely appears in the template — an invented name
+        // would send them hunting for code they never wrote.
+        let cases = [
+            (r#"SELECT {{ variables["dy" ~ "namic"] }};"#, json!({})),
+            ("SELECT {{ variables.a.b.c }};", json!({"a": {"b": {}}})),
+            ("SELECT {{ variables.tenant | upper }};", json!({})),
+            ("{% set k = variables.missing %}SELECT {{ k }};", json!({})),
+        ];
+
+        for (template, vars) in cases {
+            let (headline, _) = undefined_error_chain(template, vars);
+
+            let expression = headline
+                .strip_prefix("undefined value in expression `")
+                .and_then(|rest| rest.strip_suffix('`'))
+                .unwrap_or_else(|| panic!("unexpected message shape for {template}: {headline}"));
+
+            assert!(
+                !expression.is_empty() && template.contains(expression),
+                "{expression:?} is not text from {template:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn multibyte_source_before_the_expression_does_not_break_the_slice() {
+        // The span is a byte offset, so earlier multi-byte characters shift it.
+        let (headline, _) =
+            undefined_error_chain("-- 🚀 café 日本語\nSELECT {{ variables.nope }};", json!({}));
+
+        assert_eq!(headline, "undefined value in expression `variables.nope`");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undefined_inside_an_included_component_names_the_expression_not_the_include() {
+        use crate::config::FolderPather;
+        use opendal::services::Memory;
+        use opendal::Operator;
+
+        let op = Operator::new(Memory::default()).unwrap();
+        op.write("components/tenant.sql", "SELECT {{ variables.tenant }};")
+            .await
+            .unwrap();
+
+        let pather = FolderPather {
+            spawn_folder: "".to_string(),
+        };
+        let store = Store::new(Box::new(Latest::new("").unwrap()), op.clone(), pather).unwrap();
+
+        let gen = StreamingGeneration {
+            store,
+            template_contents: "BEGIN;\n\n{% include \"tenant.sql\" %}\n\nCOMMIT;\n".to_string(),
+            template_label: "migrations/20260101000000-bootstrap/up.sql".to_string(),
+            script_name: "20260101000000-bootstrap".to_string(),
+            script_type: RenderKind::Migration,
+            environment: "staging".to_string(),
+            variables: crate::variables::Variables::default(),
+            engine: EngineType::PostgresPSQL,
+            secrets: Arc::new(SecretsRepository::empty(op)),
+            pin_hash: None,
+        };
+
+        let mut buffer = Vec::new();
+        let err = gen
+            .render_to_writer(&mut buffer)
+            .expect_err("an unset variable in a component should fail the render");
+        let chain = format!("{err:?}");
+
+        // The wrapper error points at the include tag, so the message has to
+        // come from the inner error.
+        assert_eq!(
+            err.to_string(),
+            "undefined value in expression `variables.tenant`",
+            "expected the component's expression, not the include tag, got: {chain}"
+        );
+        assert!(
+            chain.contains("tenant.sql:1"),
+            "the cause must still name the component and line, got: {chain}"
+        );
+        assert!(
+            chain.contains("migrations/20260101000000-bootstrap/up.sql:3"),
+            "the outer frame must still name the migration and line, got: {chain}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_non_undefined_render_error_is_not_annotated_with_an_expression() {
+        // Other error kinds carry their own message, which says more.
+        let gen = streaming_generation(
+            r#"SELECT {{ secret("nope") }};"#,
+            SecretsRepository::empty(
+                opendal::Operator::new(opendal::services::Memory::default()).unwrap(),
+            ),
+        );
+
+        let mut buffer = Vec::new();
+        let err = gen.render_to_writer(&mut buffer).unwrap_err();
+        let chain = format!("{err:?}");
+
+        assert!(
+            !chain.contains("in expression"),
+            "only undefined-value errors should be annotated, got: {chain}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn no_formatter_can_print_the_debug_snapshot_from_a_render_error() {
+        // Guards `set_debug(false)` in `template_env`. Debug mode would put the
+        // values in scope into every error, so this fails if it is turned back
+        // on — including by deleting the line, since minijinja defaults it on
+        // in dev builds.
+        for template in [
+            r#"{% set pw = secret("application_password") %}{{ pw }}{{ variables.missing }}"#,
+            r#"{% set pw = secret("application_password") %}{{ pw }}{{ "gone.txt"|read_file }}"#,
+        ] {
+            let mut gen = streaming_generation(template, literal_secret_repo("hunter2"));
+            gen.variables =
+                crate::variables::Variables::from_str("json", r#"{"api_key":"swordfish"}"#)
+                    .unwrap();
+
+            let (script, _secrets) = gen.into_script_source();
+            let mut buffer = Vec::new();
+            let err = script(&mut buffer).expect_err("both templates fail to render");
+
+            for rendered in [
+                format!("{err}"),
+                format!("{err:#}"),
+                format!("{err:?}"),
+                format!("{err:#?}"),
+            ] {
+                assert!(
+                    !rendered.contains("hunter2"),
+                    "a resolved secret reached the output: {rendered}"
+                );
+                assert!(
+                    !rendered.contains("swordfish"),
+                    "a variable value reached the output: {rendered}"
+                );
+                assert!(
+                    !rendered.contains("Referenced variables"),
+                    "minijinja's debug snapshot reached the output: {rendered}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_write_failure_keeps_the_io_error_reachable_for_broken_pipe_detection() {
+        // The writer's error kind is found by searching the chain, so the
+        // expression must be added as a context layer rather than replacing the
+        // error. Nothing else covers this.
+        struct BrokenPipeWriter;
+
+        impl std::io::Write for BrokenPipeWriter {
+            fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "psql exited first",
+                ))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let gen = streaming_generation(
+            "SELECT 1;",
+            SecretsRepository::empty(
+                opendal::Operator::new(opendal::services::Memory::default()).unwrap(),
+            ),
+        );
+        let (script, _secrets) = gen.into_script_source();
+
+        let err = script(&mut BrokenPipeWriter).expect_err("the writer always fails");
+
+        assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::BrokenPipe,
+            "the writer's error kind must survive the minijinja and anyhow wrappers"
         );
     }
 

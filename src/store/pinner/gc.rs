@@ -1,14 +1,14 @@
 //! Garbage collection for the pinned content-addressable store.
 //!
-//! Finds and removes pinned files that are no longer referenced by any migration's lock.toml.
+//! Finds and removes pinned files no longer referenced by any migration or script.
 
 use anyhow::{Context, Result};
 use opendal::Operator;
 use std::collections::HashSet;
 
 use crate::config::FolderPather;
-use crate::pinfile;
-use crate::store::list_migration_fs_status;
+use crate::source_config::{load_source_config, ScriptConfig, SourceConfig};
+use crate::store::{list_migration_fs_status, list_script_fs_status};
 
 use super::{hash_to_path, read_hash_file, EntryKind, Tree};
 
@@ -54,7 +54,7 @@ async fn walk_tree_hashes(
     Ok(())
 }
 
-/// Collect all hashes referenced by all migrations' lock.toml files.
+/// Collect every hash referenced by a migration's lock.toml or a script's config.toml.
 async fn collect_referenced_hashes(
     fs: &Operator,
     pather: &FolderPather,
@@ -71,14 +71,39 @@ async fn collect_referenced_hashes(
 
         // Load lock.toml
         let lock_path = pather.migration_lock_file_path(&name);
-        let lock_data = pinfile::load_lock_file(fs, &lock_path)
+        let source_config: SourceConfig = load_source_config(fs, &lock_path)
             .await
             .with_context(|| format!("failed to load lock file for migration {}", name))?;
 
+        let Some(pin) = source_config.pin else {
+            continue;
+        };
+
         // Walk tree and collect all hashes
-        walk_tree_hashes(fs, &pather.pinned_folder(), &lock_data.pin, &mut referenced)
+        walk_tree_hashes(fs, &pather.pinned_folder(), &pin, &mut referenced)
             .await
             .with_context(|| format!("failed to walk tree for migration {}", name))?;
+    }
+
+    for (script, status) in list_script_fs_status(fs, pather).await? {
+        if !status.has_config_toml {
+            continue;
+        }
+
+        let config_path = pather.script_config_path(&script);
+        let script_config: ScriptConfig = load_source_config(fs, &config_path)
+            .await
+            .with_context(|| format!("failed to load config for script {}", script))?;
+
+        // A config.toml may exist only to declare variables. Without a pin the
+        // script keeps no root alive, so there is nothing to walk.
+        let Some(pin) = script_config.pin else {
+            continue;
+        };
+
+        walk_tree_hashes(fs, &pather.pinned_folder(), &pin, &mut referenced)
+            .await
+            .with_context(|| format!("failed to walk tree for script {}", script))?;
     }
 
     Ok(referenced)

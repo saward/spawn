@@ -5,13 +5,16 @@ use opendal::Operator;
 use pretty_assertions::assert_eq;
 use spawn_db::{
     commands::{
-        BuildMigration, Check, Command, NewMigration, NewTest, Outcome, PinCleanup, PinError,
-        PinMigration, PinVerify,
+        BuildMigration, BuildScript, Check, Command, NewMigration, NewScript, NewTest, Outcome,
+        PinCleanup, PinError, PinMigration, PinScript, PinVerify,
     },
     config::{Config, ConfigLoaderSaver},
     engine::{CommandSpec, EngineType, TargetConfig},
+    script::PinMode,
     secrets::{SecretDefinition, SecretSource},
+    source_config::SourceConfig,
     store,
+    variables::Variables,
 };
 use std::collections::HashMap;
 use tokio;
@@ -24,6 +27,12 @@ COMMIT;
 
 /// Expected default new test content:
 const DEFAULT_TEST_CONTENT: &str = "-- Test file\nSELECT 1;\n";
+
+/// Expected default new script content:
+const DEFAULT_SCRIPT_CONTENT: &str = r#"BEGIN;
+
+COMMIT;
+"#;
 
 /// Reusable test helper structure for setting up migration tests
 pub struct MigrationTestHelper {
@@ -107,6 +116,7 @@ impl MigrationTestHelper {
             environment: Some("dev".to_string()),
             template_up: None,
             template_test: None,
+            template_script: None,
             targets: Some(targets),
             secrets: None,
             project_id: None,
@@ -146,6 +156,21 @@ impl MigrationTestHelper {
         }
     }
 
+    /// Creates a new script using the NewScript command
+    pub async fn create_script(&self, script: &str) -> Result<String, anyhow::Error> {
+        let config = self.load_config().await?;
+        let cmd = NewScript {
+            script: script.to_string(),
+        };
+
+        let outcome = cmd.execute(&config).await?;
+
+        match outcome {
+            Outcome::NewScript { script, .. } => Ok(script),
+            _ => Err(anyhow::anyhow!("Script directory not found after creation")),
+        }
+    }
+
     /// Creates a migration and then replaces the content of it with provided
     /// value:
     pub async fn create_migration_manual(
@@ -180,18 +205,33 @@ impl MigrationTestHelper {
         pinned: bool,
         variables_path: Option<String>,
     ) -> Result<String, anyhow::Error> {
+        self.build_migration_with_variable_overrides(migration_name, pinned, variables_path, &[])
+            .await
+    }
+
+    /// Builds a migration with an optional variables file and `--var`
+    /// overrides layered on top, exactly as the CLI resolves them.
+    pub async fn build_migration_with_variable_overrides(
+        &self,
+        migration_name: &str,
+        pinned: bool,
+        variables_path: Option<String>,
+        overrides: &[(String, serde_json::Value)],
+    ) -> Result<String, anyhow::Error> {
         let config = self.load_config().await?;
 
-        let variables = match variables_path {
+        let base = match variables_path {
             Some(path) => Some(config.load_variables_from_path(&path).await?),
             None => None,
         };
+        let variables = Variables::with_overrides(base, overrides)?;
 
         let cmd = BuildMigration {
             migration: migration_name.to_string(),
             pinned,
             variables,
             reveal_secrets: false,
+            use_defaults: false,
         };
 
         let outcome = cmd.execute(&config).await?;
@@ -203,6 +243,44 @@ impl MigrationTestHelper {
             } => Ok(content),
             _ => Err(anyhow::anyhow!("Unexpected outcome")),
         }
+    }
+
+    /// Builds a migration taking each declared `default` rather than asking,
+    /// so a test can never block on a prompt when run from a terminal.
+    pub async fn build_migration_with_defaults(
+        &self,
+        migration_name: &str,
+        pinned: bool,
+    ) -> Result<String, anyhow::Error> {
+        let config = self.load_config().await?;
+        let cmd = BuildMigration {
+            migration: migration_name.to_string(),
+            pinned,
+            variables: None,
+            reveal_secrets: false,
+            use_defaults: true,
+        };
+
+        match cmd.execute(&config).await? {
+            Outcome::BuiltMigration { content, .. } => Ok(content),
+            _ => Err(anyhow::anyhow!("Unexpected outcome")),
+        }
+    }
+
+    /// Writes a migration's `lock.toml` at `name` (relative to `migrations/`).
+    pub async fn write_migration_lock(&self, name: &str, contents: &str) -> Result<()> {
+        let cfg = self.load_config().await?;
+        let path = cfg.pather().migration_lock_file_path(name);
+        self.fs.write(&path, contents.to_string()).await?;
+        Ok(())
+    }
+
+    /// Reads a migration's `lock.toml` back as text.
+    pub async fn read_migration_lock(&self, name: &str) -> Result<String> {
+        let cfg = self.load_config().await?;
+        let path = cfg.pather().migration_lock_file_path(name);
+        let bytes = self.fs.read(&path).await?.to_bytes();
+        Ok(String::from_utf8(bytes.to_vec())?)
     }
 
     /// Pins a migration using the PinMigration command
@@ -219,6 +297,69 @@ impl MigrationTestHelper {
 
         match outcome {
             Outcome::PinnedMigration { hash } => Ok(hash),
+            _ => Err(anyhow::anyhow!("Unexpected outcome")),
+        }
+    }
+
+    /// Writes a migration's up.sql at `name` (relative to `migrations/`).
+    pub async fn write_migration(&self, name: &str, contents: &str) -> Result<()> {
+        let cfg = self.load_config().await?;
+        let path = cfg.pather().migration_script_file_path(name);
+        self.fs.write(&path, contents.to_string()).await?;
+        Ok(())
+    }
+
+    /// Writes a component at `name` (relative to the components folder).
+    pub async fn write_component(&self, name: &str, contents: &str) -> Result<()> {
+        let cfg = self.load_config().await?;
+        let path = format!("{}/{}", cfg.pather().components_folder(), name);
+        self.fs.write(&path, contents.to_string()).await?;
+        Ok(())
+    }
+
+    /// Writes a script's entry template at `name` (relative to `scripts/`).
+    pub async fn write_script(&self, name: &str, contents: &str) -> Result<()> {
+        let cfg = self.load_config().await?;
+        let path = cfg.pather().script_file_path(name);
+        self.fs.write(&path, contents.to_string()).await?;
+        Ok(())
+    }
+
+    /// Builds a script using the BuildScript command.
+    pub async fn build_script(
+        &self,
+        script: &str,
+        pin_mode: PinMode,
+        variables: Option<Variables>,
+    ) -> Result<String, anyhow::Error> {
+        let config = self.load_config().await?;
+        let cmd = BuildScript {
+            script: script.to_string(),
+            pin_mode,
+            variables,
+            reveal_secrets: false,
+            use_defaults: false,
+        };
+
+        match cmd.execute(&config).await? {
+            Outcome::BuiltScript { content } => Ok(content),
+            _ => Err(anyhow::anyhow!("Unexpected outcome")),
+        }
+    }
+
+    /// Pins a script using the PinScript command.
+    pub async fn pin_script(&self, script: &str) -> Result<String, anyhow::Error> {
+        let config = self.load_config().await?;
+        let cmd = PinScript {
+            script: script.to_string(),
+        };
+
+        match cmd
+            .execute(&config)
+            .await
+            .context("error calling pin_script")?
+        {
+            Outcome::PinnedScript { hash, .. } => Ok(hash),
             _ => Err(anyhow::anyhow!("Unexpected outcome")),
         }
     }
@@ -363,6 +504,100 @@ async fn test_create_test_with_custom_template() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+// Run a create script test, over the name shapes a project may reasonably use.
+// Only a segment that is exactly '.' or '..' is rejected, so dots within a
+// segment stay legal; the counterpart negative cases are in the test below.
+#[tokio::test]
+async fn test_create_script() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let cfg = helper.load_config().await?;
+
+    for name in [
+        "reindex",
+        "maintenance/reindex",
+        "maintenance/weekly/vacuum-full",
+        "v1.2-cleanup",
+        "backfill.step1",
+        "..hidden",
+        "trailing.",
+    ] {
+        let script = helper
+            .create_script(name)
+            .await
+            .unwrap_or_else(|e| panic!("script name '{}' should be accepted: {}", name, e));
+        assert_eq!(name, script);
+
+        // The script lands in its own folder under scripts/, which is what lets
+        // the commands that walk scripts/ find it again.
+        let script_path = cfg.pather().script_file_path(&script);
+        assert!(
+            script_path.ends_with(&format!("/scripts/{}/script.sql", name)),
+            "unexpected path for '{}': {}",
+            name,
+            script_path
+        );
+
+        let file_data = helper.fs.read(&script_path).await?.to_bytes();
+        let file_contents = String::from_utf8(file_data.to_vec())?;
+        assert_eq!(DEFAULT_SCRIPT_CONTENT, file_contents);
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_create_script_rejects_names_outside_its_own_folder(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    for name in ["", ".", "..", "/abs", "a//b", "a/../b", "nested/."] {
+        let err = helper
+            .create_script(name)
+            .await
+            .expect_err(&format!("script name '{}' should be rejected", name));
+        assert!(
+            err.to_string().contains("invalid script name"),
+            "unexpected error for '{}': {}",
+            name,
+            err
+        );
+    }
+
+    Ok(())
+}
+
+// Run a create script test using a custom template_script:
+#[tokio::test]
+async fn test_create_script_with_custom_template() -> Result<(), Box<dyn std::error::Error>> {
+    const CUSTOM_TEMPLATE_CONTENT: &str = "-- custom script template\nVACUUM;\n";
+
+    let mem_op = Operator::new(Memory::default())?;
+    let mut config_loader = MigrationTestHelper::default_config_loadersaver();
+    config_loader.template_script = Some("templates/custom.sql".to_string());
+    let helper = MigrationTestHelper::new_from_operator_with_config(mem_op, config_loader).await?;
+
+    let cfg = helper.load_config().await?;
+    let template_path = cfg.pather().any_path("templates/custom.sql");
+    helper
+        .fs
+        .write(&template_path, CUSTOM_TEMPLATE_CONTENT)
+        .await?;
+
+    // Test that we can create a script
+    let script = helper
+        .create_script("maintenance/reindex")
+        .await
+        .expect("Failed to create script with helper");
+
+    // Check the contents are what we expect:
+    let script_path = cfg.pather().script_file_path(&script);
+    let file_data = helper.fs.read(&script_path).await?.to_bytes();
+    let file_contents = String::from_utf8(file_data.to_vec())?;
+    assert_eq!(CUSTOM_TEMPLATE_CONTENT, file_contents,);
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_migration_build_basic() -> Result<(), Box<dyn std::error::Error>> {
     let helper = MigrationTestHelper::new_empty().await?;
@@ -398,9 +633,8 @@ async fn test_migration_build_with_component() -> Result<(), Box<dyn std::error:
     let migration_name = "20240907212659-initial";
     let expected = concat!(
         r#"BEGIN;
--- Created by"#,
-        " \n", // prevents trim space from removing the extra space here
-        r#"-- Environment: dev
+-- Created by unknown
+-- Environment: dev
 
 
 -- uuid var: 9cf58fa3-ed23-5cf3-986c-bb1b76f74b2e
@@ -447,9 +681,8 @@ $$ LANGUAGE plpgsql;"#
     // But using the unpinned version should use the new function:
     let expected_new = concat!(
         r#"BEGIN;
--- Created by"#,
-        " \n",
-        r#"-- Environment: dev
+-- Created by unknown
+-- Environment: dev
 
 
 -- uuid var: 9cf58fa3-ed23-5cf3-986c-bb1b76f74b2e
@@ -514,13 +747,17 @@ async fn test_migration_build_with_variables() -> Result<(), Box<dyn std::error:
 
     let migration_name = "20240907212659-initial";
 
-    // Build without variables - should have empty/default values
-    let built_without_vars = helper.build_migration(&migration_name, false).await?;
-
-    // The template uses variables.X which will be empty without a variables file
-    // This verifies the migration builds but variables are not substituted
-    assert!(built_without_vars.contains("BEGIN;"));
-    assert!(built_without_vars.contains("COMMIT;"));
+    // Must fail rather than silently render an empty identifier and VARCHAR length.
+    let err = helper
+        .build_migration(&migration_name, false)
+        .await
+        .expect_err("a template referencing unset variables should not build");
+    let err_msg = format!("{:?}", err);
+    assert!(
+        err_msg.contains("undefined value"),
+        "expected an undefined-value error, got: {}",
+        err_msg
+    );
 
     // Build with variables file
     let built_with_vars = helper
@@ -545,6 +782,102 @@ CREATE TABLE "users" (
 COMMIT;"#;
 
     assert_eq!(expected, built_with_vars);
+
+    Ok(())
+}
+
+/// Every type `--var-json` accepts, rendered. The number/string and
+/// boolean/string pairs are the distinction the flag exists to make, and the
+/// boolean pair is the one that changes which branch runs rather than only how
+/// the value is escaped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_var_json_overrides_reach_sql_with_their_json_type(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    let template = r#"num:        {{ variables.num }}
+num_str:    {{ variables.num_str }}
+flag:       {{ variables.flag }}
+flag_str:   {{ variables.flag_str }}
+branch:     {% if variables.flag %}TRUE-BRANCH{% else %}FALSE-BRANCH{% endif %}
+branch_str: {% if variables.flag_str %}TRUE-BRANCH{% else %}FALSE-BRANCH{% endif %}
+tags:       {{ variables.tags }}
+nested:     {{ variables.limits.max }}
+bare:       VARCHAR({{ variables.num }})"#;
+
+    let migration = helper
+        .create_migration_manual("var-json-types", template.to_string())
+        .await?;
+
+    let built = helper
+        .build_migration_with_variable_overrides(
+            &migration,
+            false,
+            None,
+            &[
+                ("num".to_string(), serde_json::json!(42)),
+                ("num_str".to_string(), serde_json::json!("42")),
+                ("flag".to_string(), serde_json::json!(false)),
+                ("flag_str".to_string(), serde_json::json!("false")),
+                ("tags".to_string(), serde_json::json!(["a", "b"])),
+                ("limits".to_string(), serde_json::json!({"max": 10})),
+            ],
+        )
+        .await?;
+
+    let expected = r#"num:        42
+num_str:    '42'
+flag:       FALSE
+flag_str:   'false'
+branch:     FALSE-BRANCH
+branch_str: TRUE-BRANCH
+tags:       ARRAY['a', 'b']
+nested:     10
+bare:       VARCHAR(42)"#;
+
+    assert_eq!(expected, built);
+
+    Ok(())
+}
+
+/// `--var-json` layers over a `--variables` file for migrations, the same way
+/// it does for scripts: the override wins, and the keys it does not name keep
+/// the types the file gave them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_migration_build_with_var_overrides() -> Result<(), Box<dyn std::error::Error>> {
+    let helper =
+        MigrationTestHelper::new_from_local_folder("./static/tests/build_with_variables").await?;
+
+    let built = helper
+        .build_migration_with_variable_overrides(
+            "20240907212659-initial",
+            false,
+            Some("/db/variables.json".to_string()),
+            &[
+                ("table_name".to_string(), serde_json::json!("customers")),
+                ("author".to_string(), serde_json::json!("Override Author")),
+            ],
+        )
+        .await?;
+
+    // The override replaces the file's value for the keys it names...
+    assert!(
+        built.contains(r#"CREATE TABLE "customers""#),
+        "got: {}",
+        built
+    );
+    assert!(
+        built.contains("-- Author: Override Author"),
+        "got: {}",
+        built
+    );
+    // ...and leaves the rest of the file alone, typed as the file had them.
+    assert!(
+        built.contains("-- Migration: create-users-table"),
+        "got: {}",
+        built
+    );
+    assert!(built.contains("VARCHAR(255)"), "got: {}", built);
 
     Ok(())
 }
@@ -612,6 +945,105 @@ async fn test_check_passes_when_all_pinned() -> Result<(), Box<dyn std::error::E
     let config = helper.load_config().await?;
     let outcome = Check.execute(&config).await?;
     assert!(matches!(outcome, Outcome::Success));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_build_reports_an_unknown_migration_as_missing(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    helper.create_migration("real-migration").await?;
+
+    // Both modes, since neither a typo nor a real migration has a lock.toml
+    // until it is pinned.
+    for pinned in [true, false] {
+        let err = helper
+            .build_migration("20240101000000-typo", pinned)
+            .await
+            .expect_err("an unknown migration should not build");
+        let message = format!("{:#}", err);
+        assert!(
+            message.contains("not found"),
+            "pinned={}: {}",
+            pinned,
+            message
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pin_preserves_a_hand_written_lock_toml() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration_name = helper.create_migration("hand-edited").await?;
+    let config = helper.load_config().await?;
+    let lock_path = config.pather().migration_lock_file_path(&migration_name);
+
+    let authored = r#"# why this migration declares anything at all
+future_key = "spawn does not recognise this one"
+
+[variables.tenant]
+source = "prompt"
+
+# alphabetically earlier, deliberately written second
+[variables.admin_email]
+source = "value"
+value = "admin@example.com"
+"#;
+    helper.fs.write(&lock_path, authored).await?;
+
+    helper.pin_migration(&migration_name).await?;
+
+    let written = String::from_utf8(helper.fs.read(&lock_path).await?.to_bytes().to_vec())?;
+    for kept in [
+        "# why this migration declares anything at all",
+        "# alphabetically earlier, deliberately written second",
+        "future_key = \"spawn does not recognise this one\"",
+    ] {
+        assert!(written.contains(kept), "lost {:?} from:\n{}", kept, written);
+    }
+    assert!(
+        written.find("[variables.tenant]") < written.find("[variables.admin_email]"),
+        "declarations were reordered:\n{}",
+        written
+    );
+    // The new key has to join the root table; appended after the first
+    // [variables.*] header it would silently become a variable instead.
+    assert!(
+        written.find("pin = ") < written.find('['),
+        "pin landed inside a table:\n{}",
+        written
+    );
+
+    // Still readable as a pinned config afterwards.
+    let reloaded: SourceConfig = config.load_source_config(&lock_path).await?;
+    assert!(reloaded.pin.is_some());
+    assert_eq!(2, reloaded.variables.len());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_check_reports_a_malformed_lock_toml() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration_name = helper.create_migration("will-be-corrupted").await?;
+    helper.pin_migration(&migration_name).await?;
+
+    let config = helper.load_config().await?;
+    helper
+        .fs
+        .write(
+            &config.pather().migration_lock_file_path(&migration_name),
+            "pin = [",
+        )
+        .await?;
+
+    // A warning rather than a hard error, so the rest of the check still runs;
+    // and not silence either, since this migration was passing before.
+    let outcome = Check.execute(&config).await?;
+    assert!(matches!(outcome, Outcome::CheckFailed));
 
     Ok(())
 }
@@ -732,6 +1164,7 @@ COMMIT;"#;
         pinned: false,
         variables: None,
         reveal_secrets: false,
+        use_defaults: false,
     };
 
     let outcome = cmd.execute(&config).await?;
@@ -743,6 +1176,7 @@ COMMIT;"#;
         pinned: true,
         variables: None,
         reveal_secrets: false,
+        use_defaults: false,
     };
 
     let outcome_pinned = cmd_pinned.execute(&config).await?;
@@ -1045,6 +1479,7 @@ async fn test_migration_build_with_secrets() -> Result<(), Box<dyn std::error::E
         environment: Some("dev".to_string()),
         template_up: None,
         template_test: None,
+        template_script: None,
         targets: Some(targets),
         secrets: Some(secrets),
         project_id: None,
@@ -1070,6 +1505,7 @@ async fn test_migration_build_with_secrets() -> Result<(), Box<dyn std::error::E
         pinned: false,
         variables: None,
         reveal_secrets: false,
+        use_defaults: false,
     }
     .execute(&config)
     .await?;
@@ -1088,6 +1524,7 @@ async fn test_migration_build_with_secrets() -> Result<(), Box<dyn std::error::E
         pinned: false,
         variables: None,
         reveal_secrets: true,
+        use_defaults: false,
     }
     .execute(&config)
     .await?;
@@ -1097,6 +1534,507 @@ async fn test_migration_build_with_secrets() -> Result<(), Box<dyn std::error::E
     };
     assert!(revealed_content.contains("dev-secret"));
     assert!(!revealed_content.contains("prod-secret"));
+
+    Ok(())
+}
+
+/// A script renders like a migration: it includes components, and its
+/// variables are escaped the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_script_build_renders_includes_and_variables() -> Result<(), Box<dyn std::error::Error>>
+{
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    helper
+        .write_component("util/touch.sql", "SELECT touch_tenant();")
+        .await?;
+    helper
+        .write_script(
+            "maintenance/reindex",
+            "-- tenant {{ variables.tenant }}\n{% include \"util/touch.sql\" %}\n",
+        )
+        .await?;
+
+    let vars = Variables::with_overrides(None, &[("tenant".to_string(), serde_json::json!("42"))])?;
+    let content = helper
+        .build_script("maintenance/reindex", PinMode::Auto, vars)
+        .await?;
+
+    // A JSON string override is escaped as a SQL literal, so the formatter
+    // quotes it; minijinja eats the newline after the include's block tag.
+    assert_eq!(content, "-- tenant '42'\nSELECT touch_tenant();");
+
+    Ok(())
+}
+
+/// Pinning a script freezes the components it includes, but not the script
+/// itself: it lives outside the pinned tree and is always read live.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pinned_script_build_freezes_includes_but_not_the_script(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    helper
+        .write_component("util/touch.sql", "SELECT original_include();")
+        .await?;
+    helper
+        .write_script(
+            "maintenance/reindex",
+            "-- original entry\n{% include \"util/touch.sql\" %}\n",
+        )
+        .await?;
+
+    let hash = helper.pin_script("maintenance/reindex").await?;
+    assert!(!hash.is_empty());
+
+    let config = helper.load_config().await?;
+    let config_path = config.pather().script_config_path("maintenance/reindex");
+    assert_eq!(config_path, "/db/scripts/maintenance/reindex/config.toml");
+    assert!(helper.fs.exists(&config_path).await?);
+
+    // The config lives outside the component tree it records, so re-pinning
+    // an unchanged tree is stable.
+    let second_hash = helper.pin_script("maintenance/reindex").await?;
+    assert_eq!(
+        hash, second_hash,
+        "pinning an unchanged tree must be stable"
+    );
+
+    helper
+        .write_component("util/touch.sql", "SELECT edited_include();")
+        .await?;
+    helper
+        .write_script(
+            "maintenance/reindex",
+            "-- edited entry\n{% include \"util/touch.sql\" %}\n",
+        )
+        .await?;
+
+    // A pinned script builds against its pin without being asked to.
+    let pinned_content = helper
+        .build_script("maintenance/reindex", PinMode::Auto, None)
+        .await?;
+    assert_eq!(
+        pinned_content, "-- edited entry\nSELECT original_include();",
+        "a pinned build freezes the included component but reads the script live"
+    );
+
+    let live_content = helper
+        .build_script("maintenance/reindex", PinMode::Disabled, None)
+        .await?;
+    assert_eq!(
+        live_content, "-- edited entry\nSELECT edited_include();",
+        "--no-pin must show the current components"
+    );
+
+    Ok(())
+}
+
+/// Scripts sit beside `components/` rather than inside it so that adding,
+/// editing or pinning one leaves every migration's pin hash untouched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_scripts_do_not_perturb_a_migrations_pin() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    helper
+        .write_component("util/touch.sql", "SELECT touch();")
+        .await?;
+    helper
+        .write_migration("20260101000000-demo", "{% include \"util/touch.sql\" %}\n")
+        .await?;
+
+    let before = helper.pin_migration("20260101000000-demo").await?;
+
+    helper
+        .write_script("maintenance/reindex", "REINDEX DATABASE postgres;\n")
+        .await?;
+    helper.pin_script("maintenance/reindex").await?;
+
+    let after = helper.pin_migration("20260101000000-demo").await?;
+    assert_eq!(
+        before, after,
+        "a script must not change the component root a migration pins"
+    );
+
+    // Contrast: a real component edit does change it, so the check above is
+    // not vacuous.
+    helper
+        .write_component("util/touch.sql", "SELECT touched_differently();")
+        .await?;
+    let edited = helper.pin_migration("20260101000000-demo").await?;
+    assert_ne!(
+        before, edited,
+        "editing a component must still change the pin"
+    );
+
+    Ok(())
+}
+
+/// A script's config.toml is a pin reference like a migration's lock file,
+/// so collection must not treat its root as orphaned.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pin_cleanup_keeps_a_script_only_pin() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    helper
+        .write_component("util/touch.sql", "SELECT touch_tenant();")
+        .await?;
+    helper
+        .write_script("maintenance/reindex", "{% include \"util/touch.sql\" %}\n")
+        .await?;
+    helper.pin_script("maintenance/reindex").await?;
+
+    let files_before = helper.collect_all_files().await?;
+    let config = helper.load_config().await?;
+
+    let outcome = PinCleanup { dry_run: false }.execute(&config).await?;
+    let Outcome::PinCleanup {
+        orphaned,
+        referenced_count,
+        ..
+    } = outcome
+    else {
+        panic!("Expected Outcome::PinCleanup");
+    };
+
+    assert!(
+        orphaned.is_empty(),
+        "a script-only pin must not be collected: {:?}",
+        orphaned
+    );
+    assert!(referenced_count > 0, "the script's root must be counted");
+    assert_eq!(
+        files_before,
+        helper.collect_all_files().await?,
+        "nothing should have been deleted"
+    );
+
+    let content = helper
+        .build_script("maintenance/reindex", PinMode::Required, None)
+        .await?;
+    assert_eq!(content, "SELECT touch_tenant();");
+
+    Ok(())
+}
+
+/// An unpinned script builds against the current components without being
+/// asked to, so `--no-pin` is never needed just to build one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_an_unpinned_script_builds_against_current_components(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    helper
+        .write_component("util/touch.sql", "SELECT live();")
+        .await?;
+    helper
+        .write_script("maintenance/reindex", "{% include \"util/touch.sql\" %}\n")
+        .await?;
+
+    let content = helper
+        .build_script("maintenance/reindex", PinMode::Auto, None)
+        .await?;
+    assert_eq!(content, "SELECT live();");
+
+    Ok(())
+}
+
+/// `--pinned` is an assertion: a script with no pin fails rather than
+/// quietly falling back to the current components.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_requiring_a_pin_fails_on_an_unpinned_script() -> Result<(), Box<dyn std::error::Error>>
+{
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    helper
+        .write_component("util/touch.sql", "SELECT live();")
+        .await?;
+    helper
+        .write_script("maintenance/reindex", "{% include \"util/touch.sql\" %}\n")
+        .await?;
+
+    let err = helper
+        .build_script("maintenance/reindex", PinMode::Required, None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("is not pinned"), "got: {}", err);
+
+    Ok(())
+}
+
+/// `pin verify` reports a script whose recorded root has gone missing.
+#[tokio::test]
+async fn test_pin_verify_reports_a_missing_script_root() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    helper
+        .write_component("util/touch.sql", "SELECT 1;\n")
+        .await?;
+    helper
+        .write_script("maintenance/reindex", "{% include \"util/touch.sql\" %}\n")
+        .await?;
+    let hash = helper.pin_script("maintenance/reindex").await?;
+
+    let config = helper.load_config().await?;
+    let root_path = format!(
+        "{}/{}/{}",
+        config.pather().pinned_folder(),
+        &hash[..2],
+        &hash[2..]
+    );
+    helper.fs.delete(&root_path).await?;
+
+    let outcome = PinVerify.execute(&config).await?;
+    let Outcome::PinVerify {
+        missing_root_count, ..
+    } = outcome
+    else {
+        panic!("Expected Outcome::PinVerify");
+    };
+    assert_eq!(missing_root_count, 1);
+
+    Ok(())
+}
+
+/// Naming a script that isn't there says so, rather than failing deeper in
+/// the render.
+#[tokio::test]
+async fn test_script_build_rejects_an_unknown_script() -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+
+    let err = helper
+        .build_script("maintenance/nope", PinMode::Auto, None)
+        .await
+        .unwrap_err();
+
+    assert!(err.to_string().contains("not found"), "got: {}", err);
+
+    Ok(())
+}
+
+// --- A migration's lock.toml without a pin -----------------------------------
+//
+// `lock.toml` records a pin *and* whatever variables the migration declares,
+// and either may be absent. These cover the half that was previously
+// impossible: a lock file that pins nothing.
+
+/// A lock.toml holding only declarations pins nothing, so the build resolves
+/// against the current components and still sees the declared value.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_a_migration_may_declare_variables_without_being_pinned(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration = helper.create_migration("declares-variables").await?;
+    helper
+        .write_migration(&migration, "SELECT {{ variables.tenant }};\n")
+        .await?;
+    helper
+        .write_migration_lock(
+            &migration,
+            r#"[variables.tenant]
+source = "value"
+value = 42
+"#,
+        )
+        .await?;
+
+    let built = helper.build_migration(&migration, false).await?;
+    assert_eq!(built, "SELECT 42;");
+
+    Ok(())
+}
+
+/// The pin is what makes a migration pinned, never the file's existence.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_requiring_a_pin_fails_on_a_variables_only_lock(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration = helper.create_migration("declares-variables").await?;
+    helper
+        .write_migration_lock(
+            &migration,
+            "[variables.tenant]\nsource = \"value\"\nvalue = 42\n",
+        )
+        .await?;
+
+    let err = helper
+        .build_migration(&migration, true)
+        .await
+        .expect_err("a lock.toml with no pin must not count as pinned");
+    let msg = format!("{:#}", err);
+    assert!(
+        msg.contains("is not pinned"),
+        "expected a 'not pinned' error, got: {}",
+        msg
+    );
+
+    Ok(())
+}
+
+/// `check` reports the same thing, rather than being satisfied by the file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_check_reports_a_variables_only_lock_as_unpinned(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration = helper.create_migration("declares-variables").await?;
+    helper
+        .write_migration_lock(
+            &migration,
+            "[variables.tenant]\nsource = \"value\"\nvalue = 1\n",
+        )
+        .await?;
+
+    let config = helper.load_config().await?;
+    assert!(matches!(
+        Check.execute(&config).await?,
+        Outcome::CheckFailed
+    ));
+
+    Ok(())
+}
+
+/// Pinning rewrites lock.toml in place, so declarations already in it survive.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pinning_a_migration_keeps_its_declared_variables(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration = helper.create_migration("declares-variables").await?;
+    helper
+        .write_migration(&migration, "SELECT {{ variables.tenant }};\n")
+        .await?;
+    helper
+        .write_migration_lock(
+            &migration,
+            r#"[variables.tenant]
+source = "value"
+value = 42
+"#,
+        )
+        .await?;
+
+    let hash = helper.pin_migration(&migration).await?;
+
+    let lock = helper.read_migration_lock(&migration).await?;
+    assert!(
+        lock.contains(&format!("pin = \"{}\"", hash)),
+        "pin should be recorded, got: {}",
+        lock
+    );
+    assert!(
+        lock.contains("[variables.tenant]"),
+        "declarations should survive pinning, got: {}",
+        lock
+    );
+
+    // And the migration now builds pinned, still seeing the declared value.
+    assert_eq!(
+        helper.build_migration(&migration, true).await?,
+        "SELECT 42;"
+    );
+
+    Ok(())
+}
+
+/// A declared prompt default is taken under `--use-defaults`, as for a script.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_a_declared_migration_default_is_taken_with_use_defaults(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration = helper.create_migration("prompts").await?;
+    helper
+        .write_migration(&migration, "SELECT {{ variables.batch }};\n")
+        .await?;
+    helper
+        .write_migration_lock(
+            &migration,
+            r#"[variables.batch]
+source = "prompt"
+type = "number"
+default = 7
+"#,
+        )
+        .await?;
+
+    assert_eq!(
+        helper
+            .build_migration_with_defaults(&migration, false)
+            .await?,
+        "SELECT 7;"
+    );
+
+    Ok(())
+}
+
+/// A declaration is the lowest-priority source, so the command line wins.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_var_json_beats_a_declared_migration_variable(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    let migration = helper.create_migration("declares-variables").await?;
+    helper
+        .write_migration(&migration, "SELECT {{ variables.tenant }};\n")
+        .await?;
+    helper
+        .write_migration_lock(
+            &migration,
+            "[variables.tenant]\nsource = \"value\"\nvalue = 1\n",
+        )
+        .await?;
+
+    let built = helper
+        .build_migration_with_variable_overrides(
+            &migration,
+            false,
+            None,
+            &[("tenant".to_string(), serde_json::json!(99))],
+        )
+        .await?;
+    assert_eq!(built, "SELECT 99;");
+
+    Ok(())
+}
+
+/// A pin recorded beside declarations is still a pin: cleanup must walk it
+/// rather than treat the lock as variables-only and collect its tree.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_pin_cleanup_keeps_a_pin_recorded_beside_declared_variables(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    helper
+        .write_component("greeting.sql", "SELECT 'hello';\n")
+        .await?;
+    let migration = helper.create_migration("declares-variables").await?;
+    helper
+        .write_migration_lock(
+            &migration,
+            "[variables.tenant]\nsource = \"value\"\nvalue = 1\n",
+        )
+        .await?;
+    helper.pin_migration(&migration).await?;
+
+    let config = helper.load_config().await?;
+    let files_before = helper.collect_all_files().await?;
+
+    let Outcome::PinCleanup {
+        orphaned,
+        referenced_count,
+        ..
+    } = (PinCleanup { dry_run: false }).execute(&config).await?
+    else {
+        panic!("Expected Outcome::PinCleanup");
+    };
+
+    assert!(
+        orphaned.is_empty(),
+        "nothing should be orphaned: {:?}",
+        orphaned
+    );
+    assert!(referenced_count > 0, "the pin's tree should be referenced");
+    assert_eq!(
+        files_before,
+        helper.collect_all_files().await?,
+        "cleanup should not touch a referenced tree"
+    );
 
     Ok(())
 }

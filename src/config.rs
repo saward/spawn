@@ -1,5 +1,4 @@
 use crate::engine::{postgres_psql::PSQL, Engine, EngineType, TargetConfig};
-use crate::pinfile::LockData;
 use crate::secrets::SecretDefinition;
 use crate::variables::Variables;
 use anyhow::{anyhow, Context, Result};
@@ -11,7 +10,15 @@ use serde::{Deserialize, Serialize};
 /// Default configuration file name.
 pub const DEFAULT_CONFIG_FILE: &str = "spawn.toml";
 
-static PINFILE_LOCK_NAME: &str = "lock.toml";
+/// A migration's source config, pending a move to `config.toml` like scripts'.
+static MIGRATION_LOCK_NAME: &str = "lock.toml";
+
+/// Per-source config file name — scripts today, likely migrations and tests
+/// later; holds the pin now, but is intended for more.
+static SOURCE_CONFIG_NAME: &str = "config.toml";
+
+/// A script's entry template, counterpart to a migration's `up.sql`.
+static SCRIPT_FILE_NAME: &str = "script.sql";
 
 // 1. The "Blueprint" struct. Use this for Deserialization.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -24,6 +31,9 @@ pub struct ConfigLoaderSaver {
     pub targets: Option<HashMap<String, TargetConfig>>,
     /// Named secrets available to templates via the `secret()` function.
     pub secrets: Option<HashMap<String, SecretDefinition>>,
+    /// Allows you to override the default template for script new with a
+    /// custom one.
+    pub template_script: Option<String>,
     /// Allows you to override the default template for test new with a
     /// custom one.
     pub template_test: Option<String>,
@@ -49,6 +59,7 @@ impl ConfigLoaderSaver {
             target: self.target,
             targets: self.targets.unwrap_or_default(),
             secrets: self.secrets.unwrap_or_default(),
+            template_script: self.template_script,
             template_test: self.template_test,
             template_up: self.template_up,
             telemetry: self.telemetry.unwrap_or(true),
@@ -135,6 +146,37 @@ impl FolderPather {
         s
     }
 
+    /// Runnable scripts. Kept out of `components/` so editing one cannot change
+    /// the component root hash a migration's pin records.
+    pub fn scripts_folder(&self) -> String {
+        let mut s = self.spawn_folder_path().to_string();
+        s.push_str("/scripts");
+        s
+    }
+
+    /// Folder for one script; path is relative to `scripts/` and may nest.
+    pub fn script_folder(&self, script_path: &str) -> String {
+        let mut s = self.scripts_folder();
+        s.push('/');
+        s.push_str(script_path);
+        s
+    }
+
+    pub fn script_file_path(&self, script_path: &str) -> String {
+        let mut s = self.script_folder(script_path);
+        s.push('/');
+        s.push_str(SCRIPT_FILE_NAME);
+        s
+    }
+
+    /// Path to a script's source config, written by `spawn script pin`.
+    pub fn script_config_path(&self, script_path: &str) -> String {
+        let mut s = self.script_folder(script_path);
+        s.push('/');
+        s.push_str(SOURCE_CONFIG_NAME);
+        s
+    }
+
     pub fn migrations_folder(&self) -> String {
         let mut s = self.spawn_folder_path().to_string();
         s.push_str("/migrations");
@@ -178,7 +220,7 @@ impl FolderPather {
         s.push('/');
         s.push_str(script_path);
         s.push('/');
-        s.push_str(PINFILE_LOCK_NAME);
+        s.push_str(MIGRATION_LOCK_NAME);
         s
     }
 }
@@ -193,6 +235,9 @@ pub struct Config {
     pub targets: HashMap<String, TargetConfig>,
     /// Named secrets available to templates via the `secret()` function.
     pub secrets: HashMap<String, SecretDefinition>,
+    /// Allows you to override the default template for script new with a
+    /// custom one.
+    pub template_script: Option<String>,
     /// Allows you to override the default template for test new with a
     /// custom one.
     pub template_test: Option<String>,
@@ -254,8 +299,12 @@ impl Config {
         }
     }
 
-    pub async fn load_lock_file(&self, lock_file_path: &str) -> Result<LockData> {
-        crate::pinfile::load_lock_file(self.operator(), lock_file_path).await
+    /// Reads and parses a source config (migration `lock.toml`, script `config.toml`).
+    pub async fn load_source_config<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<T> {
+        crate::source_config::load_source_config(self.operator(), path).await
     }
 
     /// Load variables from a file path.

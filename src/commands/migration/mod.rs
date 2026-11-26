@@ -18,6 +18,7 @@ pub const DEFAULT_NAMESPACE: &str = "default";
 
 use crate::config::Config;
 use crate::engine::{MigrationDbInfo, MigrationHistoryStatus};
+use crate::migrator::Migrator;
 use crate::store::list_migration_fs_status;
 use anyhow::Result;
 use dialoguer::Confirm;
@@ -33,6 +34,8 @@ pub struct MigrationStatusRow {
     pub last_status: Option<MigrationHistoryStatus>,
     pub last_activity: Option<String>,
     pub checksum: Option<String>,
+    /// Why this migration's `lock.toml` could not be read, if it could not be.
+    pub config_error: Option<String>,
 }
 
 /// Get the combined status of all migrations from both filesystem and database.
@@ -63,23 +66,38 @@ pub async fn get_combined_migration_status(
         .cloned()
         .collect();
 
-    let mut results: Vec<MigrationStatusRow> = all_migration_names
-        .into_iter()
-        .map(|name| {
-            let fs = fs_status.get(&name);
-            let db_info = db_migrations.get(&name);
+    let mut results: Vec<MigrationStatusRow> = Vec::with_capacity(all_migration_names.len());
+    for name in all_migration_names {
+        let fs = fs_status.get(&name);
+        let db_info = db_migrations.get(&name);
 
-            MigrationStatusRow {
-                migration_name: name.clone(),
-                exists_in_filesystem: fs.map_or(false, |s| s.has_up_sql),
-                is_pinned: fs.map_or(false, |s| s.has_lock_toml),
-                exists_in_db: db_info.is_some(),
-                last_status: db_info.and_then(|info| info.last_status),
-                last_activity: db_info.and_then(|info| info.last_activity.clone()),
-                checksum: db_info.and_then(|info| info.checksum.clone()),
+        // Reads the migration's lock.toml to see whether it records a pin. A
+        // file that will not parse becomes this row's `config_error` instead
+        // of failing the whole listing.
+        let (is_pinned, config_error) = match fs {
+            Some(status) if status.has_lock_toml => {
+                match Migrator::new(config, &name, false)
+                    .load_migration_config()
+                    .await
+                {
+                    Ok(cfg) => (cfg.pin.is_some(), None),
+                    Err(e) => (false, Some(format!("{:#}", e))),
+                }
             }
-        })
-        .collect();
+            _ => (false, None),
+        };
+
+        results.push(MigrationStatusRow {
+            migration_name: name.clone(),
+            exists_in_filesystem: fs.map_or(false, |s| s.has_up_sql),
+            is_pinned,
+            exists_in_db: db_info.is_some(),
+            last_status: db_info.and_then(|info| info.last_status),
+            last_activity: db_info.and_then(|info| info.last_activity.clone()),
+            checksum: db_info.and_then(|info| info.checksum.clone()),
+            config_error,
+        });
+    }
 
     // Sort by migration name for consistent output
     results.sort_by(|a, b| a.migration_name.cmp(&b.migration_name));
@@ -108,17 +126,7 @@ pub async fn get_pending_and_confirm(
         return Ok(None);
     }
 
-    let target_config = config.target_config()?;
-    let target = config.target.as_deref().unwrap_or("unknown");
-    let env = &target_config.environment;
-
-    println!();
-    println!("TARGET: {}", target);
-    if env.starts_with("prod") {
-        println!("ENVIRONMENT: {} \u{26a0}\u{fe0f}", env);
-    } else {
-        println!("ENVIRONMENT: {}", env);
-    }
+    println!("{}", crate::commands::target_banner(config)?);
     println!();
     println!(
         "The following {} migration{} will be {}:",

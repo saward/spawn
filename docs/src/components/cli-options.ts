@@ -37,6 +37,38 @@ export const variablesOption: CLIOption[] = [
   },
 ];
 
+/** The pin flags shared by script run and script build, which pin automatically. */
+export const scriptPinOptions: CLIOption[] = [
+  {
+    flag: "--pinned",
+    description:
+      "Require the pinned component tree. Fails if the script has not been pinned.",
+  },
+  {
+    flag: "--no-pin",
+    description:
+      "Ignore the script's pin and resolve includes against the current components.",
+  },
+];
+
+/** The repeatable --var-json flag for setting a single variable from the command line. */
+export const varJsonOption: CLIOption[] = [
+  {
+    flag: "--var-json <KEY=JSON>",
+    description:
+      "Set a single variable from a JSON value, so it keeps its type. May be repeated, and overrides the same key from --variables. Keys may not contain '.', which is reserved for future nested overrides.",
+  },
+];
+
+/** The --use-defaults flag for a migration or script that declares prompt variables. */
+export const useDefaultsOption: CLIOption[] = [
+  {
+    flag: "--use-defaults",
+    description:
+      "Take each declared default instead of asking for it, for unattended use. A prompt variable with no default is still an error.",
+  },
+];
+
 /** The --reveal-secrets flag used by build commands, which mask secret() values by default. */
 export const revealSecretsOption: CLIOption[] = [
   {

@@ -41,11 +41,16 @@ use migration_build::MigrationTestHelper;
 use opendal::services::Memory;
 use opendal::Operator;
 use spawn_db::{
-    commands::{AdoptMigration, ApplyMigration, Command, CompareTests, ExpectTest, Outcome},
+    commands::{
+        AdoptMigration, ApplyMigration, Command, CompareTests, ExpectTest, Outcome, PinScript,
+        RunScript,
+    },
     config::{Config, ConfigLoaderSaver},
     engine::{CommandSpec, EngineType, TargetConfig},
     migrator::Migrator,
+    script::PinMode,
     secrets::{SecretDefinition, SecretSource, SecretsRenderMode},
+    variables::Variables,
 };
 use std::collections::HashMap;
 use std::env;
@@ -240,6 +245,7 @@ impl IntegrationTestHelper {
             spawn_folder: "/db".to_string(),
             target: Some("postgres_psql".to_string()),
             environment: None,
+            template_script: None,
             template_test: None,
             template_up: None,
             targets: Some(targets),
@@ -310,6 +316,7 @@ impl IntegrationTestHelper {
             yes: true,
             retry: false,
             reuse_connection: false,
+            use_defaults: false,
         };
 
         let outcome = cmd.execute(&config).await?;
@@ -335,6 +342,41 @@ impl IntegrationTestHelper {
             Outcome::AdoptedMigration => Ok(()),
             _ => Err(anyhow::anyhow!("Unexpected outcome from migration adopt")),
         }
+    }
+
+    /// Runs a script against the test database.
+    pub async fn run_script(
+        &self,
+        script: &str,
+        pin_mode: PinMode,
+        variables: Option<Variables>,
+    ) -> Result<()> {
+        let config = self.migration_helper.load_config().await?;
+        RunScript {
+            script: script.to_string(),
+            pin_mode,
+            variables,
+            yes: true,
+            use_defaults: false,
+        }
+        .execute(&config)
+        .await?;
+        Ok(())
+    }
+
+    /// Recorded run history for a script, oldest first, as `status|pin_hash` rows.
+    pub fn script_run_history(&self, script: &str) -> Result<Vec<String>> {
+        let sql = format!(
+            "SELECT status_id_status || '|' || coalesce(pin_hash, '')              FROM _spawn.script_run WHERE name = '{}' ORDER BY script_run_id",
+            script
+        );
+        let output = self.execute_sql(&sql)?;
+        Ok(output
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| line.contains('|'))
+            .map(|line| line.to_string())
+            .collect())
     }
 
     /// Executes raw SQL against the test database and returns the output
@@ -476,6 +518,7 @@ COMMIT;"#
                     yes: true,
                     retry: false,
                     reuse_connection,
+                    use_defaults: false,
                 };
                 let outcome = cmd.execute(&config).await?;
                 assert!(
@@ -606,7 +649,9 @@ COMMIT;"#
         )
         .await?;
 
-    // Create a pinned migration (write a lock.toml alongside up.sql)
+    // Create a pinned migration (write a lock.toml recording a pin alongside
+    // up.sql). The pin key is what makes it pinned, not the file's existence:
+    // a lock.toml may hold declared variables and no pin at all.
     let pinned_migration = helper
         .migration_helper
         .create_migration_manual(
@@ -624,7 +669,7 @@ COMMIT;"#
     helper
         .migration_helper
         .fs
-        .write(&lock_path, "# pinned\n")
+        .write(&lock_path, "pin = \"0123456789abcdef0123456789abcdef\"\n")
         .await?;
 
     // Create a migration that is pinned but has up.sql deleted (filesystem = false, pinned = true)
@@ -644,7 +689,10 @@ COMMIT;"#
     helper
         .migration_helper
         .fs
-        .write(&deleted_lock_path, "# pinned\n")
+        .write(
+            &deleted_lock_path,
+            "pin = \"0123456789abcdef0123456789abcdef\"\n",
+        )
         .await?;
     let deleted_up_path = pinned_config
         .pather()
@@ -1296,6 +1344,7 @@ COMMIT;"#;
         yes: true,
         retry: false,
         reuse_connection: false,
+        use_defaults: false,
     };
     let result = cmd.execute(&config).await;
     assert!(
@@ -1317,6 +1366,7 @@ COMMIT;"#;
         yes: true,
         retry: true,
         reuse_connection: false,
+        use_defaults: false,
     };
     let result = cmd.execute(&config).await;
     assert!(
@@ -1426,6 +1476,7 @@ COMMIT;"#;
         yes: true,
         retry: false,
         reuse_connection: false,
+        use_defaults: false,
     };
     let result = cmd.execute(&config).await;
     assert!(
@@ -1557,8 +1608,7 @@ async fn test_migration_history_records_expected_checksum_and_pin_hash() -> Resu
         .migration_helper
         .create_migration_manual(
             "checksum-and-pin-hash",
-            "BEGIN;\n\nSELECT {{ secret(\"application_password\") }}::text;\n\nCOMMIT;"
-                .to_string(),
+            "BEGIN;\n\nSELECT {{ secret(\"application_password\") }}::text;\n\nCOMMIT;".to_string(),
         )
         .await?;
 
@@ -1603,6 +1653,7 @@ async fn test_migration_history_records_expected_checksum_and_pin_hash() -> Resu
             yes: true,
             retry: true,
             reuse_connection: false,
+            use_defaults: false,
         }
         .execute(config)
         .await?;
@@ -1660,7 +1711,10 @@ async fn test_migration_history_records_expected_checksum_and_pin_hash() -> Resu
         .fs
         .write(&component_path, "-- component v1")
         .await?;
-    let pinned_hash = helper.migration_helper.pin_migration(&migration_name).await?;
+    let pinned_hash = helper
+        .migration_helper
+        .pin_migration(&migration_name)
+        .await?;
     assert_ne!(
         pin_hash, pinned_hash,
         "test setup error: adding a component should have changed the pin hash"
@@ -1696,8 +1750,7 @@ async fn test_migration_history_records_expected_checksum_and_pin_hash() -> Resu
 async fn test_test_run_masks_secrets_by_default() -> Result<()> {
     require_postgres()?;
 
-    let helper =
-        IntegrationTestHelper::new("test_test_run_masks_secrets_by_default", None).await?;
+    let helper = IntegrationTestHelper::new("test_test_run_masks_secrets_by_default", None).await?;
 
     let mut secrets = HashMap::new();
     secrets.insert(
@@ -2046,6 +2099,7 @@ COMMIT;"#;
         yes: true,
         retry: false,
         reuse_connection: false,
+        use_defaults: false,
     };
     let result = cmd.execute(&config).await;
     assert!(
@@ -2067,6 +2121,7 @@ COMMIT;"#;
         yes: true,
         retry: false,
         reuse_connection: false,
+        use_defaults: false,
     };
     let result = cmd.execute(&config).await;
     assert!(result.is_ok(), "apply with --no-pin should succeed");
@@ -2133,6 +2188,7 @@ async fn test_spawn_database_config() -> Result<()> {
         spawn_folder: "/db".to_string(),
         target: Some("postgres_psql".to_string()),
         environment: None,
+        template_script: None,
         template_test: None,
         template_up: None,
         targets: Some(targets),
@@ -2167,6 +2223,7 @@ COMMIT;"#
         yes: true,
         retry: false,
         reuse_connection: false,
+        use_defaults: false,
     };
     cmd.execute(&config).await?;
 
@@ -2220,6 +2277,7 @@ COMMIT;"#
         yes: true,
         retry: false,
         reuse_connection: false,
+        use_defaults: false,
     };
     cmd2.execute(&config2).await.expect(
         "Re-applying the same migration should succeed (detected as already applied), \
@@ -2548,6 +2606,321 @@ async fn test_broken_pipe_does_not_mask_the_psql_error() -> Result<()> {
         "psql died first, so this is not a writer failure, got: {}",
         chain
     );
+
+    Ok(())
+}
+
+/// A script run executes for real and records what happened.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_script_run_executes_and_records() -> Result<()> {
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new("test_script_run_executes_and_records", None).await?;
+
+    helper
+        .migration_helper
+        .write_script(
+            "maintenance/make_table",
+            "CREATE TABLE IF NOT EXISTS public.widget (id INT PRIMARY KEY);\n",
+        )
+        .await?;
+
+    helper
+        .run_script("maintenance/make_table", PinMode::Auto, None)
+        .await?;
+
+    assert!(
+        helper.table_exists("public", "widget")?,
+        "the script's SQL should actually have run"
+    );
+
+    let history = helper.script_run_history("maintenance/make_table")?;
+    assert_eq!(history.len(), 1, "got: {:?}", history);
+    assert!(history[0].starts_with("SUCCESS|"), "got: {:?}", history);
+    assert!(
+        history[0].len() > "SUCCESS|".len(),
+        "an unpinned run should still record a recomputed pin hash: {:?}",
+        history
+    );
+
+    Ok(())
+}
+
+/// Unlike a migration, a script may be re-run; each run appends to the audit trail.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_script_run_can_be_repeated() -> Result<()> {
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new("test_script_run_can_be_repeated", None).await?;
+
+    helper
+        .migration_helper
+        .write_script(
+            "maintenance/idempotent",
+            "CREATE TABLE IF NOT EXISTS public.widget (id INT PRIMARY KEY);\n",
+        )
+        .await?;
+
+    helper
+        .run_script("maintenance/idempotent", PinMode::Auto, None)
+        .await?;
+    helper
+        .run_script("maintenance/idempotent", PinMode::Auto, None)
+        .await?;
+
+    let history = helper.script_run_history("maintenance/idempotent")?;
+    assert_eq!(history.len(), 2, "got: {:?}", history);
+    assert!(
+        history.iter().all(|row| row.starts_with("SUCCESS|")),
+        "got: {:?}",
+        history
+    );
+
+    Ok(())
+}
+
+/// A failing statement fails the command and is still recorded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_script_run_records_a_failing_statement() -> Result<()> {
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_script_run_records_a_failing_statement", None).await?;
+
+    helper
+        .migration_helper
+        .write_script(
+            "maintenance/broken",
+            "SELECT * FROM public.table_that_does_not_exist;\n",
+        )
+        .await?;
+
+    let err = helper
+        .run_script("maintenance/broken", PinMode::Auto, None)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("statement reported an error"),
+        "got: {}",
+        err
+    );
+
+    let history = helper.script_run_history("maintenance/broken")?;
+    assert_eq!(history.len(), 1, "got: {:?}", history);
+    assert!(history[0].starts_with("FAILURE|"), "got: {:?}", history);
+
+    Ok(())
+}
+
+/// `--no-pin` is the way to run a pinned script against the current
+/// components — for trying a component edit before re-pinning.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_no_pin_runs_a_pinned_script_against_current_components() -> Result<()> {
+    require_postgres()?;
+
+    let helper = IntegrationTestHelper::new(
+        "test_no_pin_runs_a_pinned_script_against_current_components",
+        None,
+    )
+    .await?;
+
+    helper
+        .migration_helper
+        .write_component(
+            "seed/insert_tenant.sql",
+            "INSERT INTO public.tenant (name) VALUES ('pinned-value');\n",
+        )
+        .await?;
+    helper
+        .migration_helper
+        .write_script(
+            "maintenance/seed",
+            "CREATE TABLE IF NOT EXISTS public.tenant (name TEXT);\n\
+             {% include \"seed/insert_tenant.sql\" %}\n",
+        )
+        .await?;
+
+    let config = helper.migration_helper.load_config().await?;
+    let pin = match (PinScript {
+        script: "maintenance/seed".to_string(),
+    })
+    .execute(&config)
+    .await?
+    {
+        Outcome::PinnedScript { hash, .. } => hash,
+        _ => return Err(anyhow!("Unexpected outcome from script pin")),
+    };
+
+    helper
+        .migration_helper
+        .write_component(
+            "seed/insert_tenant.sql",
+            "INSERT INTO public.tenant (name) VALUES ('edited-after-pinning');\n",
+        )
+        .await?;
+
+    helper
+        .run_script("maintenance/seed", PinMode::Disabled, None)
+        .await?;
+
+    let rows = helper.execute_sql("SELECT name FROM public.tenant;")?;
+    assert!(
+        rows.contains("edited-after-pinning"),
+        "--no-pin must use the current components: {}",
+        rows
+    );
+
+    let history = helper.script_run_history("maintenance/seed")?;
+    assert_eq!(history.len(), 1, "got: {:?}", history);
+    assert!(history[0].starts_with("SUCCESS|"), "got: {:?}", history);
+    assert_ne!(
+        history[0],
+        format!("SUCCESS|{}", pin),
+        "a --no-pin run records the current tree, not the recorded pin"
+    );
+
+    Ok(())
+}
+
+/// `--var` overrides reach the script; a pinned script runs against its pin
+/// without being asked to, and records it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_pinned_script_run_uses_and_records_its_pin() -> Result<()> {
+    require_postgres()?;
+
+    let helper =
+        IntegrationTestHelper::new("test_pinned_script_run_uses_and_records_its_pin", None).await?;
+
+    helper
+        .migration_helper
+        .write_component(
+            "seed/insert_tenant.sql",
+            "INSERT INTO public.tenant (name) VALUES ({{ variables.tenant }});\n",
+        )
+        .await?;
+    helper
+        .migration_helper
+        .write_script(
+            "maintenance/seed",
+            "CREATE TABLE IF NOT EXISTS public.tenant (name TEXT);\n\
+             {% include \"seed/insert_tenant.sql\" %}\n",
+        )
+        .await?;
+
+    let config = helper.migration_helper.load_config().await?;
+    let pin_cmd = PinScript {
+        script: "maintenance/seed".to_string(),
+    };
+    let pin = match pin_cmd.execute(&config).await? {
+        Outcome::PinnedScript { hash, .. } => hash,
+        _ => return Err(anyhow!("Unexpected outcome from script pin")),
+    };
+
+    // Edit the *component* after pinning: the pinned run must not see this.
+    helper
+        .migration_helper
+        .write_component(
+            "seed/insert_tenant.sql",
+            "INSERT INTO public.tenant (name) VALUES ('edited-after-pinning');\n",
+        )
+        .await?;
+
+    let variables = Variables::with_overrides(
+        None,
+        &[("tenant".to_string(), serde_json::json!("acme-corp"))],
+    )?;
+    helper
+        .run_script("maintenance/seed", PinMode::Auto, variables)
+        .await?;
+
+    let rows = helper.execute_sql("SELECT name FROM public.tenant;")?;
+    assert!(
+        rows.contains("acme-corp"),
+        "the --var-json override should have reached the component: {}",
+        rows
+    );
+    assert!(
+        !rows.contains("edited-after-pinning"),
+        "a pinned run must ignore edits made to the component after pinning: {}",
+        rows
+    );
+
+    let history = helper.script_run_history("maintenance/seed")?;
+    assert_eq!(history.len(), 1, "got: {:?}", history);
+    assert_eq!(
+        history[0],
+        format!("SUCCESS|{}", pin),
+        "a pinned run should record the pin it resolved against"
+    );
+
+    Ok(())
+}
+
+/// A batch apply prepares the whole batch before running any of it, so an
+/// unpinned migration partway through refuses the batch outright rather than
+/// applying the earlier ones and failing on reaching it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn test_an_unpinned_migration_refuses_the_whole_batch() -> Result<()> {
+    let helper =
+        IntegrationTestHelper::new("test_an_unpinned_migration_refuses_the_whole_batch", None)
+            .await?;
+
+    let first = helper
+        .migration_helper
+        .create_migration_manual(
+            "first-pinned",
+            "BEGIN;\nCREATE TABLE batch_first (id SERIAL PRIMARY KEY);\nCOMMIT;".to_string(),
+        )
+        .await?;
+    let second = helper
+        .migration_helper
+        .create_migration_manual(
+            "second-unpinned",
+            "BEGIN;\nCREATE TABLE batch_second (id SERIAL PRIMARY KEY);\nCOMMIT;".to_string(),
+        )
+        .await?;
+
+    // Only the first is pinned, so the default (pinned) apply cannot run the
+    // second. Migration names are timestamped, so `first` sorts first.
+    helper.migration_helper.pin_migration(&first).await?;
+
+    let config = helper.migration_helper.load_config().await?;
+    let err = (ApplyMigration {
+        migration: None,
+        pinned: true,
+        variables: None,
+        yes: true,
+        retry: false,
+        reuse_connection: false,
+        use_defaults: false,
+    })
+    .execute(&config)
+    .await;
+    // Outcome is not Debug, so this cannot be expect_err.
+    let err = match err {
+        Ok(_) => panic!("an unpinned migration in the batch should refuse the batch"),
+        Err(e) => e,
+    };
+
+    let msg = format!("{:#}", err);
+    assert!(
+        msg.contains(&second) && msg.contains("is not pinned"),
+        "the error should name the unpinned migration, got: {}",
+        msg
+    );
+
+    // The pinned migration that sorts ahead of it must not have been applied.
+    assert!(
+        !helper.table_exists("public", "batch_first")?,
+        "nothing in the batch should have been applied"
+    );
+    assert!(!helper.table_exists("public", "batch_second")?);
 
     Ok(())
 }

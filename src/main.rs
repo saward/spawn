@@ -87,6 +87,9 @@ async fn async_main(cli: Cli) -> Result<()> {
                 eprintln!("\n\n⚠️  This migration has been pinned. Run with --pinned to see how it will be generated when applied to a database.");
             }
         }
+        Outcome::BuiltScript { content } => {
+            println!("{}", content);
+        }
         Outcome::CheckFailed => {
             std::process::exit(1);
         }
@@ -96,8 +99,14 @@ async fn async_main(cli: Cli) -> Result<()> {
         Outcome::NewTest(name) => {
             println!("New test created: {}", name);
         }
+        Outcome::NewScript { script, path } => {
+            println!("New script created: {} ({})", script, path);
+        }
         Outcome::PinnedMigration { hash } => {
             println!("Migration pinned: {}", hash);
+        }
+        Outcome::PinnedScript { script, hash } => {
+            println!("Script '{}' pinned: {}", script, hash);
         }
         Outcome::PinCleanup { .. } => {
             // Output is handled by the command itself

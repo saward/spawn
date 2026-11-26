@@ -389,19 +389,57 @@ impl Transcript {
     }
 }
 
+/// Whether a script that ran to completion reported a statement error.
+///
+/// Only as reliable as stop-on-error: a script that turns it off reports
+/// [`ScriptStatus::Ok`] despite failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScriptStatus {
+    Ok,
+    StatementFailed,
+}
+
+/// What a completed script run reports back.
+///
+/// `diagnostics_tail` exists for a caller that did not keep the diagnostics
+/// itself: `script run` sinks them, because they are psql's own and a failing
+/// statement can echo a revealed secret back in them, so they must be redacted
+/// before they are shown — and that can only be done once the render has
+/// finished resolving. The engine captures a bounded tail regardless, so the
+/// caller gets the part that explains a failure without having to hold the
+/// whole stream in memory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptRun {
+    pub status: ScriptStatus,
+    pub diagnostics_tail: Option<String>,
+}
+
 #[async_trait]
 pub trait Engine: Send + Sync {
     /// Runs `script` against the target, writing its output to `out` as it goes.
     ///
-    /// A failing statement is not an error: its diagnostics belong in the
-    /// output, so failure cases stay comparable against a golden file. `Err`
-    /// means the script could not be run, or was cut short. Bytes already
-    /// written to `out` are retained either way.
+    /// A failing statement is not an error: its diagnostics go to `out` and the
+    /// run returns [`ScriptStatus::StatementFailed`], keeping failures comparable
+    /// against a golden file. `Err` means it could not run; `out` keeps its bytes.
     async fn run_script(
         &self,
         script: ScriptSource,
         out: ScriptOutput<'_>,
-    ) -> Result<(), EngineError>;
+    ) -> Result<ScriptRun, EngineError>;
+
+    /// Records the outcome of a script run in the audit trail.
+    ///
+    /// Append-only; never gates a later run. `checksum` hashes the raw,
+    /// unrendered source, as in [`Engine::migration_apply`].
+    async fn record_script_run(
+        &self,
+        script_name: &str,
+        checksum: String,
+        pin_hash: Option<String>,
+        namespace: &str,
+        status: MigrationStatus,
+        execution_time: f32,
+    ) -> MigrationResult<()>;
 
     /// Applies a migration and records the outcome.
     /// - `checksum`: A fingerprint for the migration_history audit trail.
@@ -453,6 +491,8 @@ pub trait Engine: Send + Sync {
 #[async_trait]
 pub trait EngineExt {
     /// Runs `script` and collects the whole transcript in memory.
+    ///
+    /// Drops the [`ScriptStatus`]: failures already show in the diagnostics.
     async fn transcript(&self, script: ScriptSource) -> Result<Transcript, EngineError>;
 }
 

@@ -55,12 +55,61 @@ INSERT INTO {{ variables.table_name | escape_identifier }} (email)
 VALUES ({{ variables.admin_email }});
 ```
 
+#### Unset variables are an error
+
+Rendering a variable that was never set fails the build, naming the offending
+expression along with the file and line, rather than quietly substituting
+nothing:
+
+```sh
+$ spawn migration build 20260101120000-add-users-table
+Error: undefined value in expression `variables.tenant`
+
+Caused by:
+    undefined value (in migrations/20260101120000-add-users-table/up.sql:6)
+```
+
+This is intentional. An unset variable that rendered as an empty string could
+still produce valid SQL that acts on the wrong thing – an identifier missing
+its suffix, or an empty string literal in a `WHERE` clause.
+
+The quoted text is whichever operation failed, which is not always the variable
+you forgot. `{{ variables.tenant | upper }}` reports `upper`, because the filter
+is what received the unset value; and `{% set k = variables.missing %}` followed
+by `{{ k }}` reports `k`, never `variables.missing`. When the name is not enough
+on its own, the file and line in `Caused by:` point at the expression – inside a
+[component](#including-components) that is the component's own file, and the
+chain names both.
+
+A variable that is _set_ to an empty value is left alone: only never-having-
+been-set is an error, so `{{ variables.suffix }}` with `"suffix": ""` still
+renders an empty literal.
+
+For a genuinely optional variable, say so explicitly – either with the
+`default` filter:
+
+```sql
+-- Created by {{ variables.author | default("unknown") }}
+```
+
+or by testing it, which is allowed without erroring:
+
+```sql
+{% if variables.enable_audit %}
+CREATE TABLE audit_log (id BIGSERIAL PRIMARY KEY);
+{% endif %}
+
+{% if variables.schema is defined %}
+SET search_path TO {{ variables.schema | escape_identifier }};
+{% endif %}
+```
+
 ### `builtin`
 
 Metadata about the current render. Currently exposes:
 
-- `builtin.script_name` — the name of the migration or test being rendered (e.g. `20260101120000-add-users-table`, or the test's directory name).
-- `builtin.script_type` — `"migration"` or `"test"`, depending on whether this render is a `spawn migration` command or a `spawn test` command.
+- `builtin.script_name` — the name of the migration, test or script being rendered (e.g. `20260101120000-add-users-table`, the test's directory name, or the script's path such as `maintenance/reindex`).
+- `builtin.script_type` — `"migration"`, `"test"` or `"script"`, depending on whether this render is a `spawn migration` command, a `spawn test` command, or a [`spawn script run`](/cli/script-run/).
 - `builtin.engine` — the target engine (e.g. `"postgres-psql"`).
 
 ```sql
@@ -71,6 +120,17 @@ WHERE email = 'vip@example.com';
 {% if builtin.script_type != "test" %}
 -- Only notify the real billing system outside of tests
 CALL notify_billing_system();
+{% endif %}
+```
+
+A component can be included into both a migration and a script, so
+`builtin.script_type` is how it tells those two cases apart:
+
+```sql
+{% if builtin.script_type == "script" %}
+-- Only meaningful during an operational run; a migration applies this once
+-- in order.
+RAISE NOTICE 'backfilling %', {{ variables.tenant }};
 {% endif %}
 ```
 
@@ -180,7 +240,7 @@ Filters transform values in template expressions. Minijinja provides many built-
 INSERT INTO logs (message) VALUES ('{{ variables.message | upper }}');
 
 -- Default value if undefined
-SELECT * FROM {{ variables.table | default(value="users") }};
+SELECT * FROM {{ variables.table | default("users") }};
 
 -- Length
 {% if variables.items | length > 0 %}
@@ -385,9 +445,8 @@ Spawn's auto-escaper handles different types appropriately:
 {{ true }}                 -- Output: TRUE
 {{ false }}                -- Output: FALSE
 
--- null/undefined → NULL
+-- null → NULL (an unset variable is an error, not NULL – see above)
 {{ none }}                 -- Output: NULL
-{{ undefined_var }}        -- Output:
 
 -- Array → PostgreSQL array literal
 {{ [1, 2, 3] }}            -- Output: ARRAY[1, 2, 3]

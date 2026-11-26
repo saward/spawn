@@ -79,6 +79,7 @@ This is a high-level overview of where Spawn is headed. Items here are subject t
 - 🔄 **Live preview** - Real-time SQL preview in editors (Neovim/VSCode)
 - 🔄 **Dependency tracking** - Alert when components need recreation
 - 🔄 **Script execution** - Run ad-hoc database scripts outside migrations
+- 🔄 **Progress output** - Support some official notice progress output
 - 🔄 **SQL validation** - Static analysis similar to sqlx
 
 ### Enhanced Testing & Safety

@@ -76,6 +76,7 @@ impl Init {
 
         // Create default config
         let config = ConfigLoaderSaver {
+            template_script: None,
             template_test: None,
             template_up: None,
             spawn_folder: "spawn".to_string(),
@@ -95,7 +96,7 @@ impl Init {
 
         // Create the spawn folder structure
         let spawn_folder = &config.spawn_folder;
-        let subfolders = ["migrations", "components", "tests", "pinned"];
+        let subfolders = ["migrations", "components", "scripts", "tests", "pinned"];
         let mut created_folders = Vec::new();
 
         for subfolder in &subfolders {
