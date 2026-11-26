@@ -20,19 +20,21 @@ import { globalOptions, targetOption } from "../../../components/cli-options";
 
 ## Overview
 
-Over time, your `pinned/` directory may accumulate orphaned files – snapshots of components that are no longer referenced by any migration's `lock.toml`. This can happen when you:
+Over time, your `pinned/` directory may accumulate orphaned files – snapshots of components that are no longer referenced by any migration's `lock.toml` or script's `config.toml`. This can happen when you:
 
-- Delete a migration
-- Re-pin a migration after changing components
+- Delete a migration or a script
+- Re-pin a migration or script after changing components
 
 The `cleanup` command identifies and removes these orphaned files to reclaim disk space and keep your repository clean.
 
 ## Behavior
 
-1. Scans all migrations for `lock.toml` files
-2. Walks the tree structure of each pinned snapshot to find all referenced hashes
+1. Scans every migration for a `lock.toml` and every script for a `config.toml`
+2. Walks the tree structure of each recorded pin to find all referenced hashes
 3. Lists all files in the `pinned/` directory
-4. Deletes files that exist in `pinned/` but aren't referenced by any migration
+4. Deletes files that exist in `pinned/` but aren't referenced by any pin
+
+A `lock.toml` or `config.toml` that declares variables without recording a pin keeps nothing alive — there is no tree to walk.
 
 ## Examples
 
@@ -51,7 +53,7 @@ Would delete 4 orphaned pinned file(s):
   c6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6
   fd1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a
 
-2 pinned file(s) are still referenced by migrations.
+2 pinned file(s) are still referenced.
 
 Run without --dry-run to delete orphaned files.
 ```
@@ -66,7 +68,7 @@ Output:
 
 ```
 Deleted 4 orphaned pinned file(s).
-2 pinned file(s) are still referenced by migrations.
+2 pinned file(s) are still referenced.
 ```
 
 ### Nothing to clean up
@@ -89,7 +91,7 @@ No orphaned pinned files found. Nothing to clean up.
 
 ## Safety
 
-The command only deletes files in the `pinned/` directory that are provably unreferenced. Files referenced by any migration's `lock.toml` are never deleted.
+The command only deletes files in the `pinned/` directory that are provably unreferenced. Files referenced by any migration's `lock.toml` or script's `config.toml` are never deleted.
 
 Use `--dry-run` first if you want to review what will be removed.
 

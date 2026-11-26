@@ -71,20 +71,20 @@ Using the pinned component tree for 'maintenance/reindex' (scripts/maintenance/r
 Inspect what a run would execute:
 
 ```bash
-spawn script build maintenance/reindex.sql
+spawn script build maintenance/reindex
 ```
 
 Check how a variable will be escaped before running anything — the JSON quotes decide whether it reaches SQL as `42` or `'42'`:
 
 ```bash
-spawn script build maintenance/backfill.sql --var-json tenant_id=42
-spawn script build maintenance/backfill.sql --var-json 'tenant_id="42"'
+spawn script build maintenance/backfill --var-json tenant_id=42
+spawn script build maintenance/backfill --var-json 'tenant_id="42"'
 ```
 
 See what re-pinning would change, by rendering a pinned script against the current components:
 
 ```bash
-spawn script build maintenance/backfill.sql --no-pin
+spawn script build maintenance/backfill --no-pin
 ```
 
 </CLICommand>
