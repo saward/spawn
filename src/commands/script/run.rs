@@ -185,7 +185,8 @@ impl RunScript {
             .with_prompt("Do you want to run this script?")
             .default(false)
             .wait_for_newline(true)
-            .interact()?;
+            .interact()
+            .context("could not ask for confirmation here: pass --yes to run unattended")?;
         eprintln!();
 
         Ok(confirmed)

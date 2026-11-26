@@ -80,7 +80,7 @@ impl Script {
         })
     }
 
-    /// The variables this script declares, in declaration order.
+    /// The variables this script declares, in name order.
     pub fn declared_variables(&self) -> &BTreeMap<String, VariableDefinition> {
         &self.script_config.variables
     }

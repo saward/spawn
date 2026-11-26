@@ -208,7 +208,12 @@ impl Variables {
                     map.insert(key, value);
                 }
             }
-            _ => return Err(top_level_not_a_table()),
+            _ => {
+                return Err(anyhow!(
+                    "declared variables require the variables file's \
+                     top level to be a table of keys"
+                ))
+            }
         }
 
         Ok(Some(base))
@@ -410,8 +415,9 @@ impl PromptMode {
 /// declares nothing: an undeclared name is never prompted for, and has to come
 /// from `--variables` or `--var-json` or the render fails as undefined.
 ///
-/// Returned in declaration order, which is the order prompts are shown in, and
-/// applied by [`Variables::with_defaults`].
+/// Returned in name order rather than the order the file lists them, since the
+/// declarations arrive as a `BTreeMap`. That is also the order prompts are
+/// shown in, and the order [`Variables::with_defaults`] applies them.
 pub fn resolve_declared(
     declared: &BTreeMap<String, VariableDefinition>,
     supplied: Option<&Variables>,
@@ -556,7 +562,12 @@ fn parse_number(text: &str) -> Option<toml::Value> {
     if let Ok(integer) = text.parse::<i64>() {
         return Some(toml::Value::Integer(integer));
     }
-    text.parse::<f64>().ok().map(toml::Value::Float)
+    // `nan` and `inf` parse as f64 but no variables file can hold them: JSON
+    // has no such literal, so the value would silently become null.
+    text.parse::<f64>()
+        .ok()
+        .filter(|number| number.is_finite())
+        .map(toml::Value::Float)
 }
 
 /// A scalar as the user would type it — `toml::Value`'s own Display quotes
@@ -900,5 +911,22 @@ n: 1
                 .unwrap();
         let err = resolve_declared(&declared, None, PromptMode::UseDefaults).unwrap_err();
         assert!(err.to_string().contains("is not a number"), "{}", err);
+    }
+
+    #[test]
+    fn a_number_answer_has_to_be_finite() {
+        assert_eq!(Some(toml::Value::Integer(42)), parse_number("42"));
+        assert_eq!(Some(toml::Value::Float(0.25)), parse_number("0.25"));
+        for rejected in ["nan", "inf", "-inf", "NaN", "infinity"] {
+            assert_eq!(None, parse_number(rejected), "accepted {:?}", rejected);
+        }
+    }
+
+    #[test]
+    fn a_declared_default_does_not_blame_var_json_when_none_was_given() {
+        let base = Variables::Json(serde_json::Value::Array(vec![]));
+        let defaults = vec![("tier".to_string(), toml::Value::Integer(3))];
+        let err = Variables::with_defaults(Some(base), &defaults).unwrap_err();
+        assert!(!err.to_string().contains("--var-json"), "{}", err);
     }
 }

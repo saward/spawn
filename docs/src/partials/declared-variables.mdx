@@ -1,4 +1,4 @@
-{/*
+{/\*
 Shared explanation of declared variables, rendered under a
 `## Declared variables` heading by the script and migration pages that resolve
 them. That heading belongs in the page, not here: Starlight builds the
@@ -10,21 +10,20 @@ worse to read without them.
 Props, because a migration declares its variables in `lock.toml` and a script
 in `config.toml`, and the two are otherwise identical:
 
-  kind    — "script" or "migration"
-  file    — the sidecar that declares them: "config.toml" or "lock.toml"
-  entry   — the template that uses them: "script.sql" or "up.sql"
-  path    — a sample path to `file`, shown above the example
-  command — a full command line, used to show a declaration being skipped
-  confirm — what --yes skips besides prompts: "run" or "apply" confirmation
+kind — "script" or "migration"
+file — the sidecar that declares them: "config.toml" or "lock.toml"
+entry — the template that uses them: "script.sql" or "up.sql"
+path — a sample path to `file`, shown above the example
+command — a full command line, used to show a declaration being skipped
 
 A prop interpolates in prose, but NOT inside a `backtick` span or a fenced
 code block, where MDX treats braces as literal text. Use <code>{"{props.x}"}</code>
 for inline code and Starlight's <Code /> for a whole block.
-*/}
+\*/}
 
 import { Code } from "@astrojs/starlight/components";
 
-A {props.kind} can declare the variables it expects in its own <code>{props.file}</code>, so the {props.kind} carries its inputs rather than leaving them to whoever remembers the right `--var-json`. Each entry names a `source`, exactly as a [secret](/guides/secrets/) does, in <code>{props.path}</code>:
+A {props.kind} can declare the variables it expects in its own <code>{props.file}</code>, so the {props.kind} carries its inputs rather than leaving them to whoever remembers the right `--var-json`. Each entry names a `source`, in the same shape a [secret](/guides/secrets/) uses, in <code>{props.path}</code>:
 
 ```toml
 [variables.tier]
@@ -44,7 +43,9 @@ default = true
 
 `source = "value"` is a value written straight into the file, in TOML's own types — `value = 3` is a number and reaches SQL as `3`, not `'3'`.
 
-`source = "prompt"` is asked for when the {props.kind} runs. `type` is `string` (the default), `number`, or `boolean`, and decides both how the answer is parsed and how it is escaped. There is no separate integer type: a `number` answered `100` stays an integer and `0.25` becomes a decimal, each reaching SQL as written. `default` is offered as the pre-filled answer, and `description` replaces the bare name in the prompt. A `default` whose type contradicts `type` is an error when the config is read, not when the prompt reaches it.
+`source = "prompt"` is asked for when the {props.kind} runs. `type` is `string` (the default), `number`, or `boolean`, and decides both how the answer is parsed and how it is escaped. There is no separate integer type: a `number` answered `100` stays an integer and `0.25` becomes a decimal, each reaching SQL as written. `default` is offered as the pre-filled answer, and `description` replaces the bare name in the prompt. A `default` whose type contradicts `type` is an error as soon as the declarations are resolved, before any prompt appears, and even for a variable that a supplied value would have skipped.
+
+The `source` shape is borrowed from secrets, but a variable is not one: its value is not masked in `build` output, and it is not redacted out of a failed run's diagnostics. Anything that needs those protections belongs in `[secrets]`, not here.
 
 Only <code>{props.file}</code> declares a variable. Writing `{{ variables.tenant }}` in <code>{props.entry}</code> does not: an undeclared name is never asked for, so it has to arrive from `--variables` or `--var-json`. A render that never gets one fails with `undefined value`, naming the offending expression along with the file and line that wanted it.
 
@@ -52,11 +53,11 @@ Only <code>{props.file}</code> declares a variable. Writing `{{ variables.tenant
 
 A declaration is the _lowest_ priority source, so it never fights the command line:
 
-| source                  | beats                                             |
-| ----------------------- | ------------------------------------------------- |
-| `--var-json key=<json>` | everything                                        |
-| `--variables <file>`    | declarations in <code>{props.file}</code>         |
-| a declaration           | nothing                                           |
+| source                  | beats                                     |
+| ----------------------- | ----------------------------------------- |
+| `--var-json key=<json>` | everything                                |
+| `--variables <file>`    | declarations in <code>{props.file}</code> |
+| a declaration           | nothing                                   |
 
 That ordering is what makes a prompt skippable. Supplying `email` any other way marks it answered, and it is not asked for:
 
@@ -67,7 +68,7 @@ That ordering is what makes a prompt skippable. Supplying `email` any other way 
 Prompting needs somewhere to ask and permission to do so. It happens only on a terminal, and only when the value is genuinely missing. Otherwise:
 
 - **Not a terminal** — piped, redirected, or running in CI — nothing is asked.
-- **`--yes`** means unattended, so it suppresses variable prompts as well as the {props.confirm} confirmation.
+- **`--yes`**, on the two commands that have it - [`spawn script run`](/cli/script-run/) and [`spawn migration apply`](/cli/migration-apply/) - means unattended, so it suppresses variable prompts as well as the confirmation.
 
 In both of those cases a missing value is an error naming the variable and the flag that would supply it, rather than a hang:
 

@@ -76,7 +76,7 @@ Using the current component tree for 'maintenance/reindex' (not pinned).
 
 Two flags override the choice:
 
-- `--pinned` asserts that the script must be pinned. If it has no `config.toml` the run fails instead of falling back to the current components — worth setting in CI, where a pin that silently disappeared should be an error rather than a different run.
+- `--pinned` asserts that the script must be pinned. If it records no pin the run fails instead of falling back to the current components. Worth setting in CI, where a pin that silently disappeared should be an error rather than a different run.
 - `--no-pin` ignores the pin and uses the current components, for trying a component edit before re-pinning. The stderr line reports `(--no-pin)` so the choice is on the record.
 
 Passing both is rejected.
@@ -97,7 +97,6 @@ Either way, the pin hash of the tree the run resolved against is recorded in the
   entry="script.sql"
   path="scripts/make-admin/config.toml"
   command={`spawn script run make-admin --var-json 'email="me@example.com"'`}
-  confirm="run"
 />
 
 ## Secrets

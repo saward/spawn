@@ -71,11 +71,21 @@ impl Command for ApplyMigration {
         // confirmation above.
         let mut pending: Vec<(String, Migrator, Option<Variables>)> =
             Vec::with_capacity(resolved.len());
+        let prompt_mode = PromptMode::resolve(self.use_defaults, self.yes);
+        let batch = resolved.len();
         for (migration, mgrtr) in resolved {
+            // A prompt names only the variable, so in a batch it has to be
+            // said which migration is the one asking.
+            if batch > 1
+                && matches!(prompt_mode, PromptMode::Ask)
+                && !mgrtr.declared_variables().is_empty()
+            {
+                println!("Variables for '{}':", migration);
+            }
             let declared = resolve_declared(
                 mgrtr.declared_variables(),
                 self.variables.as_ref(),
-                PromptMode::resolve(self.use_defaults, self.yes),
+                prompt_mode,
             )
             .with_context(|| format!("migration '{}'", migration))?;
             let variables = Variables::with_defaults(self.variables.clone(), &declared)?;

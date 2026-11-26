@@ -75,7 +75,6 @@ Both apply to the whole invocation, not to one migration: running `apply` withou
   entry="up.sql"
   path="migrations/20260131120000-promote-user/lock.toml"
   command={`spawn migration apply 20260131120000-promote-user --var-json 'email="me@example.com"'`}
-  confirm="apply"
 />
 
 A batch is prepared in full before any of it is applied, in two passes. Every migration's pin is checked first, so an unpinned migration anywhere in the batch refuses the batch outright — before anything is applied and before you are asked for a single value. Declarations are resolved second, so a prompt belonging to the last migration in a batch cannot appear once the earlier ones have already been applied.
