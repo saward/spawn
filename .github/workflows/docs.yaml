@@ -1,0 +1,41 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build docs
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: docs
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Versions mirror mise.toml, so a green run here means the same toolchain
+      # a contributor uses locally.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `astro dev` compiles a page only when it is requested, so a broken MDX
+      # file can sit unnoticed until someone visits the page that imports it.
+      # Only a full build transforms every page, which is what Cloudflare Pages
+      # runs on deploy.
+      - name: Build site
+        run: pnpm build
