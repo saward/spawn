@@ -1,6 +1,6 @@
 [package]
 name = "spawn-db"
-version = "0.3.4"
+version = "0.4.0"
 edition = "2021"
 repository = "https://github.com/saward/spawn"
 authors = ["Mark Saward <mark@manse.cloud>"]
@@ -50,14 +50,20 @@ object_store = { version = "0.12.3", features = ["fs"] }
 
 async-trait = "0.1.88"
 futures = "0.3"
-opendal = { version = ">=0.53, <1", features = ["services-fs", "services-memory"] }
+opendal = { version = ">=0.53, <1", features = [
+    "services-fs",
+    "services-memory",
+] }
 postgres-protocol = "0.6"
 
 include_dir = "0.7.4"
 thiserror = "2.0.17"
 pin-project = "1.1.10"
 
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
 shlex = "1.3.0"
 tabled = { version = "0.17", features = ["ansi"] }
 dialoguer = "0.11"
