@@ -13,6 +13,7 @@
   - [Reproducible builds](#reproducible-builds)
   - [Golden file tests](#golden-file-tests)
   - [Reusable test functions](#reusable-test-functions)
+  - [Scripts](#scripts)
   - [Helper functions and utilities](#helper-functions-and-utilities)
   - [Secure by default](#secure-by-default)
   - [Data from JSON](#data-from-json)
@@ -572,6 +573,60 @@ Related docs:
 - [spawn test run](https://docs.spawn.dev/cli/test-run/)
 - [Test Macros](https://docs.spawn.dev/recipes/test-macros/)
 - [Non-determinism in Tests](https://docs.spawn.dev/recipes/non-determinism-tests/)
+
+### Scripts
+
+Spawn allows you to create repeatable SQL snippets that you can run repeatedly, and can pass in variables to. This can be useful for seeding database with test data, making common updates, inspecting data, etc. You can set a variable to prompt for input if not explicitly set. For example:
+
+_`spawn/scripts/hello/script.sql`_:
+
+```sql
+SELECT {{ variables.email }};
+```
+
+A script can specify which variables are needed by the script, set defaults, and in this case prompt for input when running the script:
+
+_`spawn/scripts/hello/config.toml`_:
+
+```toml
+[variables.email]
+source = "prompt"
+type = "string"
+description = "Email address to look up"
+```
+
+```bash
+% spawn script run hello
+Using the current component tree for 'hello' (not pinned).
+
+TARGET: postgres_psql
+ENVIRONMENT: dev
+
+The following script will be run:
+  hello
+
+Do you want to run this script? yes
+
+Email address to look up (email): mark@example.com
+     ?column?
+------------------
+ mark@example.com
+(1 row)
+
+Script 'hello' ran successfully in 0.07s
+```
+
+Or supply the value and skip the prompt entirely:
+
+```bash
+% spawn script run hello --var-json 'email="mark@example.com"' --yes
+```
+
+Related docs:
+
+- [spawn script new](https://docs.spawn.dev/cli/script-new/)
+- [spawn script run](https://docs.spawn.dev/cli/script-run/)
+- [spawn script pin](https://docs.spawn.dev/cli/script-pin/)
 
 ### Helper functions and utilities
 
