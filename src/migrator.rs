@@ -43,6 +43,23 @@ impl Migrator {
     /// so the caller always knows which it wants.
     pub async fn resolve(config: &config::Config, name: &str, use_pinned: bool) -> Result<Self> {
         let migrator = Migrator::new(config, name, use_pinned);
+
+        // Asked first because the pin check below cannot tell a misspelled
+        // name from a real but unpinned migration: neither has a lock.toml.
+        let script_path = config.pather().migration_script_file_path(name);
+        if !config
+            .operator()
+            .exists(&script_path)
+            .await
+            .with_context(|| format!("failed to check migration '{}'", name))?
+        {
+            return Err(anyhow!(
+                "migration '{}' not found at '{}'",
+                name,
+                script_path
+            ));
+        }
+
         // Read once here rather than per question: the same file answers both
         // whether the migration is pinned and what variables it declares.
         let migration_config = migrator.load_migration_config().await?;

@@ -950,6 +950,31 @@ async fn test_check_passes_when_all_pinned() -> Result<(), Box<dyn std::error::E
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_build_reports_an_unknown_migration_as_missing(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helper = MigrationTestHelper::new_empty().await?;
+    helper.create_migration("real-migration").await?;
+
+    // Both modes, since neither a typo nor a real migration has a lock.toml
+    // until it is pinned.
+    for pinned in [true, false] {
+        let err = helper
+            .build_migration("20240101000000-typo", pinned)
+            .await
+            .expect_err("an unknown migration should not build");
+        let message = format!("{:#}", err);
+        assert!(
+            message.contains("not found"),
+            "pinned={}: {}",
+            pinned,
+            message
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_pin_preserves_a_hand_written_lock_toml() -> Result<(), Box<dyn std::error::Error>> {
     let helper = MigrationTestHelper::new_empty().await?;
     let migration_name = helper.create_migration("hand-edited").await?;
