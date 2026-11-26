@@ -164,10 +164,6 @@ impl Command for RunScript {
 impl RunScript {
     /// Asks whether to proceed; `Ok(true)` means go ahead.
     fn confirm(&self, config: &Config, use_pinned: bool) -> Result<bool> {
-        if self.yes {
-            return Ok(true);
-        }
-
         eprintln!("{}", target_banner(config)?);
         eprintln!();
         eprintln!("The following script will be run:");
@@ -177,6 +173,10 @@ impl RunScript {
             if use_pinned { " (pinned)" } else { "" }
         );
         eprintln!();
+
+        if self.yes {
+            return Ok(true);
+        }
 
         // wait_for_newline so the Enter after `y` is consumed here rather than
         // left in the buffer, where the first variable prompt would read it as
